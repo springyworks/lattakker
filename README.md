@@ -1,4 +1,4 @@
-# Lattakker Sheet
+# 1 Lattakker Sheet
 
 A Lattakker board combined with a spreadsheet. The board is a grid of cells
 like any other, each cell has an address (A1, C7, M14), and any cell below
@@ -8,12 +8,62 @@ Monaco editor is used for code editing.
 
 Live demo: https://springyworks.github.io/lattakker/
 
-## Requirements
+<a id="contents"></a>
+
+## Contents
+
+- [1 Lattakker Sheet](#1-lattakker-sheet) (this introduction)
+- [2 Requirements](#2-requirements)
+- [3 Running locally](#3-running-locally)
+- [4 Playing Lattakker](#4-playing-lattakker)
+- [5 Saved in your browser](#5-saved-in-your-browser)
+- [6 The sheet](#6-the-sheet)
+  - [6.1 Code follows the cells it names](#61-code-follows-the-cells-it-names)
+  - [6.2 Long sheets](#62-long-sheets)
+- [7 Your first program (start here)](#7-your-first-program-start-here)
+- [8 Programmer's manual: the cell API](#8-programmers-manual-the-cell-api)
+  - [8.1 Output and looks](#81-output-and-looks)
+  - [8.2 The cell itself and other cells](#82-the-cell-itself-and-other-cells)
+  - [8.3 The game](#83-the-game)
+  - [8.4 Time: sleep, every, after](#84-time-sleep-every-after)
+  - [8.5 Watching things: on](#85-watching-things-on)
+  - [8.6 Events: size, code, click, sheet](#86-events-size-code-click-sheet)
+  - [8.7 Known limits (what is still missing)](#87-known-limits-what-is-still-missing)
+  - [8.8 Examples](#88-examples)
+- [9 How the cell code is run (internals)](#9-how-the-cell-code-is-run-internals)
+  - [9.1 When does a cell run?](#91-when-does-a-cell-run)
+  - [9.2 Is this reactive programming?](#92-is-this-reactive-programming)
+  - [9.3 Multitasking: how several cells and timers run at once](#93-multitasking-how-several-cells-and-timers-run-at-once)
+- [10 How TypeScript runs inside a cell (for the curious)](#10-how-typescript-runs-inside-a-cell-for-the-curious)
+- [11 Working with an AI helper](#11-working-with-an-ai-helper)
+  - [11.1 An AI in the browser's sidebar](#111-an-ai-in-the-browsers-sidebar)
+    - [11.1.1 Looking](#1111-looking)
+    - [11.1.2 Suggesting](#1112-suggesting)
+    - [11.1.3 Suggesting inside the editor](#1113-suggesting-inside-the-editor)
+    - [11.1.4 Trying it on the live page](#1114-trying-it-on-the-live-page)
+  - [11.2 Other AI helpers](#112-other-ai-helpers)
+  - [11.3 Connect an external AI chat (MCP)](#113-connect-an-external-ai-chat-mcp)
+    - [11.3.1 Connect step by step](#1131-connect-step-by-step)
+    - [11.3.2 Talking to the AI from a cell](#1132-talking-to-the-ai-from-a-cell)
+    - [11.3.3 What to tell the AI](#1133-what-to-tell-the-ai)
+    - [11.3.4 Safety and limits](#1134-safety-and-limits)
+- [12 Rows](#12-rows)
+- [13 Project layout](#13-project-layout)
+- [14 Licence and artwork](#14-licence-and-artwork)
+- [15 Technology](#15-technology)
+- [16 Deployment](#16-deployment)
+- [17 Source](#17-source)
+
+## 2 Requirements
+
+[↑ Contents](#contents)
 
 - Node.js 18 or later
 - npm
 
-## Running locally
+## 3 Running locally
+
+[↑ Contents](#contents)
 
 ```
 npm install
@@ -31,7 +81,9 @@ npm run preview      # serve the production build locally
 npm run typecheck    # type-check only, no build output
 ```
 
-## Playing Lattakker
+## 4 Playing Lattakker
+
+[↑ Contents](#contents)
 
 - Both sides have 40 pieces. Red is yours, Blue's pieces are face down
   until revealed by combat.
@@ -56,9 +108,11 @@ npm run typecheck    # type-check only, no build output
   The big button at the left starts the battle, then becomes **Pause**,
   and while paused it says **Continue** (nobody can move, not even Blue).
   The others: shuffle, undo, new game, how to play, show code/output, and
-  the code editor for the last-selected cell.
+  the code editor for the last-selected cell (see [6](#6-the-sheet)).
 
-## Saved in your browser
+## 5 Saved in your browser
+
+[↑ Contents](#contents)
 
 The game (including Undo history) and every code cell are saved
 automatically in this browser's own storage (`localStorage`, key
@@ -66,7 +120,9 @@ automatically in this browser's own storage (`localStorage`, key
 where you stopped. Nothing is sent anywhere. To start completely fresh, run
 `localStorage.removeItem('lattakker:v1')` in the browser console and reload.
 
-## The sheet
+## 6 The sheet
+
+[↑ Contents](#contents)
 
 Cells outside the board (row 12 and below in the examples, but any row
 after the board works) can hold code. A cell with code shows either its
@@ -86,10 +142,49 @@ To edit a cell:
   and hold, and move. The block follows your finger and snaps to the grid.
   If the new place is not free it springs back.
 
+Code that names other cells is kept up to date when they move. See
+[6.1 Code follows the cells it names](#61-code-follows-the-cells-it-names),
+and for very large sheets [6.2 Long sheets](#62-long-sheets).
+
+### 6.1 Code follows the cells it names
+
+[↑ Contents](#contents)
+
+When cells move, code that names them keeps pointing at the same cells, like
+a spreadsheet formula. This holds for dragging a cell or block, swapping two
+cells and inserting a row (see [12 Rows](#12-rows)). Every address written as plain text in code is
+updated: `at('B20')`, `range('A1:B3')`, `range('C20-22')`, `on('E5', ...)`,
+`$B$20`, in any quote style, including the code of the cell that moved. A
+short message says how many references changed and in which cells (they
+flash), and the editor is refreshed so an old address cannot be saved back.
+
+- A swap works both ways at once: a reference to an empty square follows
+  its square, so moved code never lands on a mailbox by accident.
+- A range follows only when the whole range was inside the moved block. If a
+  move splits a range, nothing is guessed: the range stays as written and a
+  warning names the cell, so you check it instead of hitting another cell.
+- Comments, and the text parts of template strings, are left alone. Only a
+  string that is exactly one address or range counts, so `'B20 is full'` is
+  never changed.
+- Addresses built at run time (`'E' + n`) cannot be followed. Write the
+  address once, as a `const`, and build from that.
+
+### 6.2 Long sheets
+
+[↑ Contents](#contents)
+
+A strip on the right edge has a **Go to** box (type `Q120` or just `120`, then
+Enter) and a miniature of the whole sheet: a tick for every row that holds
+code (red for an error), with a window showing what is on screen. Click or
+drag the strip to scroll. A row you insert scrolls into view and glows green
+for half a second.
+
 Inside the popup editor: Ctrl+Enter runs the code once without closing the
 editor, Escape saves and closes.
 
-## Your first program (start here)
+## 7 Your first program (start here)
+
+[↑ Contents](#contents)
 
 You do not need to know any programming to begin. The game works as it is:
 press **Start the battle!**, click a red piece, click a dot. Below the board
@@ -119,14 +214,18 @@ TypeScript is JavaScript with labels that catch mistakes while you type
 (`let age: number = 10`; try `age = 'ten'` and the editor underlines it). If
 you know Java or C#, it will feel familiar: classes, interfaces, generics,
 `async`/`await`. It is "Java, only lighter and it runs in every browser".
-Everything you can use inside a cell is listed below.
+Everything you can use inside a cell is listed in [8 Programmer's manual: the cell API](#8-programmers-manual-the-cell-api).
 
-## Programmer's manual: the cell API
+## 8 Programmer's manual: the cell API
+
+[↑ Contents](#contents)
 
 Each cell's code runs in its own scope, so names never clash between cells.
 Top-level `await` works. The editor shows these names with help text as you type.
 
-### Output and looks
+### 8.1 Output and looks
+
+[↑ Contents](#contents)
 
 | Call | What it does |
 |---|---|
@@ -143,7 +242,9 @@ resize it is deliberately not offered: rewriting your `span(...)` line behind
 your back would fight with the code you are typing. The code is the single
 source of truth for the size.
 
-### The cell itself and other cells
+### 8.2 The cell itself and other cells
+
+[↑ Contents](#contents)
 
 `cell` is the cell the code lives in. `at('B7')` gives any other cell, and
 `range('A1:J10')` (or `range('C32-55')`, a column down) an array of cells.
@@ -164,9 +265,12 @@ Every cell reference has:
 A range also has `.color(fill)` and `.print(...)` that apply to every cell in it.
 Right-click any cell for the same information as menus: **Used by** and
 **Reads** list the cells (click one to jump to it), and **Stop timers** appears
-when the cell has timers running.
+when the cell has timers running. The reactive reads behind `.usedBy` and
+`.reads` are explained in [9.2 Is this reactive programming?](#92-is-this-reactive-programming).
 
-### The game
+### 8.3 The game
+
+[↑ Contents](#contents)
 
 | Call | Meaning |
 |---|---|
@@ -182,7 +286,9 @@ when the cell has timers running.
 
 Also: `sheet.mode` (`'run'`/`'view'`), `sheet.cols`, `sheet.rows`, `mode`.
 
-### Time: sleep, every, after
+### 8.4 Time: sleep, every, after
+
+[↑ Contents](#contents)
 
 | Call | Meaning |
 |---|---|
@@ -205,9 +311,11 @@ Rules that keep it simple and safe:
   twice. The next tick waits; no pile-up.
 - If code inside a tick throws an error, the cell shows it and that timer stops.
 - After every tick the cell is shown again and **cells that read it re-run**,
-  so a clock cell can feed other cells (see below).
+  so a clock cell can feed other cells (see [8.5](#85-watching-things-on) below).
 
-### Watching things: on
+### 8.5 Watching things: on
+
+[↑ Contents](#contents)
 
 ```ts
 on('B7', (square) => show(square.piece?.name ?? 'empty'))
@@ -229,7 +337,82 @@ remembering:
 - **Inside `every`/`on`/`after`**: reading is free and not tracked. Only the
   function runs again. Good for "keep a counter or a clock".
 
-### Examples
+### 8.6 Events: size, code, click, sheet
+
+[↑ Contents](#contents)
+
+`on` can watch more than "the content changed". Give it an event name:
+
+```ts
+on('I18', 'size',  (box) => show('I18 is now ' + box.cols + '×' + box.rows))  // resized
+on('E21', 'code',  (c)   => show('E21 was edited or moved'))                    // its code changed
+on('I21', 'click', ()    => print('clicked!'))                                  // clicked on the sheet
+on('sheet', 'rows', () => show('a row was inserted'))
+on('sheet', 'mode', (s) => show('mode is ' + s.mode))                           // run or view
+```
+
+So a cell can react when a child resizes a merged cell (right-click →
+**Size**), edits another cell's code by hand, or clicks a "button" cell.
+These are also readable at the top level of a cell, which makes the cell
+re-run on its own: `cell.cols`, `cell.rows`, `at('X').code`, `sheet.rows` and
+`sheet.mode`. (Calling `span(4, 2)` to *set* a size is not a read.)
+
+Two more tools make such cells behave:
+
+- `memory` is the cell's notebook. Everything you put in it
+  (`memory.count = (memory.count ?? 0) + 1`) survives re-runs, edits and
+  moving the cell, so timers do not start from zero every time. It is
+  cleared when the cell's code is cleared and it is not saved with the page.
+- `run.reason` tells you *why* the cell is running: `'edit'` (its code was
+  just written), `'moved'` (dragged or a row was inserted above) or
+  `'update'` (something it reads changed). `run.count` counts the runs.
+  The idiom for "choose a size once, then let the child resize it":
+  `if (run.reason === 'edit') span(4, 2)`. Moves that change `run.reason` are
+  part of [6.1 Code follows the cells it names](#61-code-follows-the-cells-it-names).
+
+A cell that writes into another cell (`at('Y27').show(...)` from a timer)
+wakes the cells that read it, but only when the text really changed.
+
+**Safeguards, because cells can start loops.** An `on` handler that wakes
+more than 50 times a second is stopped and the cell shows an error. If cells
+keep re-running each other (more than 400 passes in two seconds) the chain
+is stopped and the cells involved show "Stopped: cells keep re-running each
+other in a loop". A cell never wakes itself by writing to itself. Events that
+arrive after a cell has run again are dropped. Timers are described in
+[8.4](#84-time-sleep-every-after).
+
+The default sheet has about forty examples from row 18 down that use all of
+this: resize watchers, a click-button robot, a mailbox between cells, a
+countdown that stops itself, a slow loading bar. They build on
+[8.5 Watching things](#85-watching-things-on) and this section. Existing sheets keep their
+own cells; press F12 and run `loadExamples()` to fill every *empty* example
+cell (cells that hold code are never overwritten). The examples are listed in
+[8.8](#88-examples).
+
+### 8.7 Known limits (what is still missing)
+
+[↑ Contents](#contents)
+
+- Sizes (merges) and [`memory`](#86-events-size-code-click-sheet) are not saved when the page is reloaded; a cell
+  that sets its size with `span()` does so again when it runs.
+- You can resize a cell from code or from the right-click **Size** menu, but
+  not by dragging its corner.
+- Events carry no *old* value (a size handler sees the new size only) and no
+  "who did it" (child or code). There is no event for colour changes,
+  selection or hover, and no debounce option.
+- `on(range)` runs the handler once per pass with the first changed cell.
+- Reads inside timers and handlers are not tracked (by design).
+- Two slow cells that keep waking each other are only stopped by the loop
+  guard, not by the rate limit.
+- Inserting a row resets merged sizes.
+- Code that builds an address from pieces (`'E' + n`) is not updated when cells move; ranges split by a move are reported, not rewritten. See [6.1](#61-code-follows-the-cells-it-names).
+- Everything runs on the page's main thread. A tight loop without `await`
+  freezes the page, because there are no Web Workers yet. See [9.3](#93-multitasking-how-several-cells-and-timers-run-at-once).
+- The global `mode` is a snapshot while `sheet.mode` is live.
+
+### 8.8 Examples
+
+[↑ Contents](#contents)
 
 ```ts
 // A chess clock: counts only while it is Red's turn
@@ -249,10 +432,15 @@ print('three seconds later')
 ```
 
 The default sheet has a stopwatch in `N12` and a watcher in `N15` to copy from.
+More patterns are in [8.5 Watching things](#85-watching-things-on) and [8.6 Events](#86-events-size-code-click-sheet).
 
-## How the cell code is run (internals)
+## 9 How the cell code is run (internals)
 
-### When does a cell run?
+[↑ Contents](#contents)
+
+### 9.1 When does a cell run?
+
+[↑ Contents](#contents)
 
 A cell runs in exactly these situations (`src/sheet/Sheet.ts`, `runAll`):
 
@@ -264,7 +452,9 @@ Nothing else. A cell that reads nothing runs once and then waits until you
 touch it, just as a plain number in a spreadsheet does not recalculate. The
 board and `game` count as changed when a move, undo, shuffle or new game happens.
 
-### Is this reactive programming?
+### 9.2 Is this reactive programming?
+
+[↑ Contents](#contents)
 
 Yes. Reactive programming means: you describe *what depends on what*, and the
 system, not you, pushes changes through. A spreadsheet is the best-known
@@ -286,7 +476,8 @@ observables or computed values. Here it is implemented like this
    result. If cells read each other in a circle, a warning is logged and they
    run in grid order instead of hanging.
 4. **Events are the same machinery.** `on()` is a subscription on a node; the
-   same "this node changed" fact that re-runs readers also wakes watchers.
+   same "this node changed" fact that re-runs readers also wakes watchers
+   (see [8.5](#85-watching-things-on) and [8.6](#86-events-size-code-click-sheet)).
 
 What we deliberately do not have: cells are not individual formulas but whole
 programs, so a re-run starts the program from the top; and the only
@@ -295,7 +486,9 @@ cell that prints the same text again still counts as changed. We checked this
 by test: a cell reading `A12` re-runs when `A12` changes; a watcher on `A1`
 stays quiet when a piece moves elsewhere, and fires when `A6` changes.
 
-### Multitasking: how several cells and timers run at once
+### 9.3 Multitasking: how several cells and timers run at once
+
+[↑ Contents](#contents)
 
 The browser runs your JavaScript on **one thread**, so nothing in a cell
 runs truly in parallel. What we get is cooperative multitasking, the same
@@ -311,7 +504,7 @@ control back every time it does `await sleep(...)`, so others can run.
   background, so the cells after it are not held up. When it finishes, cells
   that read it run again to pick up its result.
 - Timers (`every`, `after`) use the browser's timers; `on` uses the same
-  change notifications that re-run cells.
+  change notifications that re-run cells (see [8.4](#84-time-sleep-every-after) and [8.5](#85-watching-things-on)).
 
 Limit to know about: **a loop that never awaits** (`while (true) {}`) cannot
 be interrupted, because there is only one thread, and it freezes the page.
@@ -319,7 +512,9 @@ Put `await sleep(0)` in a long loop to let others breathe. Web Workers could
 give real parallelism, but a worker cannot touch the board or other cells, so
 cell code would lose its main feature. We chose not to.
 
-## How TypeScript runs inside a cell (for the curious)
+## 10 How TypeScript runs inside a cell (for the curious)
+
+[↑ Contents](#contents)
 
 Short answer: it is a **transpiler plus the browser's own JavaScript
 engine**. We do not write a compiler or an interpreter ourselves, and
@@ -348,12 +543,12 @@ happens when a cell runs (`src/sheet/runtime.ts`, `src/editor/monaco.ts`):
    *async* function, `await` works at the top level of a cell.
    The names handed in (`print`, `at`, `range`, `game`, `sheet`, `color`,
    `span`, `sleep`, ...) are the parameters of that function. That is the
-   whole "cell API"; the code has no other special powers.
+   whole "cell API" (see [8](#8-programmers-manual-the-cell-api)); the code has no other special powers.
 4. **Reads are tracked.** `at()`, `range()` and `game.*` record which cells
    the code looked at (`src/sheet/reactivity.ts`). When one of them
    changes, only the cells that read it run again, like a spreadsheet
    formula. Timers, `on()` and the rules of running are described in
-   "How the cell code is run" above.
+   "How the cell code is run" above, in [9.1](#91-when-does-a-cell-run) and [9.3](#93-multitasking-how-several-cells-and-timers-run-at-once).
 
 So, in the words you asked about: not a compiler to machine code (the
 browser does that last step), not an interpreter we built, but a
@@ -376,7 +571,9 @@ Good to know:
 - The price of doing everything locally is download size: the Monaco
   editor and the TypeScript compiler are several megabytes.
 
-## Working with an AI helper
+## 11 Working with an AI helper
+
+[↑ Contents](#contents)
 
 There is **no chat or AI service built into the page**. By design the page
 makes no network calls and needs no API key. Instead the page is made easy
@@ -392,25 +589,356 @@ one that can use your browser or a coding assistant next to your editor:
   "Game state as text" (`#mms-text`), so assistants that read the
   accessibility tree see the same things.
 - If the browser supports WebMCP, the same actions are registered as tools.
+- An AI chat that runs *outside* the page (Claude Code, Claude Desktop, and
+  other MCP clients) can use the same tools through the dev server's `/mcp`
+  endpoint while you play in the browser. See
+  [11.3](#113-connect-an-external-ai-chat-mcp).
+- Every code cell has a stable `uid`, so an assistant can keep pointing at the
+  same code after cells move ([11.1.1](#1111-looking)).
 - `public/llms.txt` (served at `/llms.txt`) explains all this to an AI in
   plain words, including starter exercises.
 
-Today this works for assistants that can reach the page. The editor's own
+### 11.1 An AI in the browser's sidebar
+
+[↑ Contents](#contents)
+
+Many browsers now have an AI panel next to the page (a side panel, an
+extension, a "browse with an agent" mode). Such an assistant can use
+Lattakker as a live workbench, because everything it needs is on the page
+and nothing has to be uploaded anywhere.
+
+#### 11.1.1 Looking
+
+[↑ Contents](#contents)
+
+Reading, no risk:
+
+- *The cells:* `mms.cells()` lists every cell that has code, with its saved
+  code, its printed output and its error. `mms.getCell('E24')` gives one cell.
+  *Identity:* every code cell has a `uid` such as `c-1a2b3c4d`. The address is
+  only where the content sits right now. The uid is made when code is first
+  written, is kept through edits, moves, swaps, row inserts, saving and
+  reloading, and is gone when the cell is emptied. Keep the uid and call
+  `mms.resolve(uid)` to get the current address. `getCell`, `setCode`,
+  `runCell` and `clearCell` accept a uid wherever they accept an address.
+  The same list is in the accessibility tree under "Game state as text", so
+  an assistant that can only "see" the page text still finds it.
+- *The embedded code:* each cell's code is also a Monaco text model with the
+  address `file:///cells/E24.ts`, so it is real TypeScript with real types
+  (the model of the cell API is in `src/sheet/apiTypes.ts`). Press
+  "Show code" (`mms.setMode('view')`) and the cells show their code on the
+  sheet itself.
+- *The wiring:* inside a cell, `cell.usedBy` and `cell.reads` list who reads
+  whom, and right-click a cell shows the same lists. An assistant can ask a
+  cell for them with `mms.runCell` on a small helper cell, or read the code
+  of the neighbours. This answers "what breaks if I change this?". See
+  [8.2](#82-the-cell-itself-and-other-cells).
+- *The game:* `mms.state()`, `mms.board()`, `mms.legalMoves('red')`.
+  Blue's hidden pieces stay hidden for the assistant too.
+- *What the player is doing:* `mms.state().editorOpenOn` names the cell whose
+  editor is open right now, so "fix this" can mean the cell in front of the
+  child. Note that `cells()` shows the saved code, not text typed in the open
+  editor that is not saved yet (Esc saves, Ctrl+Enter saves and runs).
+
+#### 11.1.2 Suggesting
+
+[↑ Contents](#contents)
+
+What exists today:
+
+- `mms.setCode('E24', newCode, { run: true })` replaces the code of a cell and
+  runs it. It returns `{ ok, output }` or `{ ok: false, error }` straight
+  away, so the assistant can try its own idea, read the error, and fix it
+  before the child ever sees a mistake.
+- The write goes through the cell's Monaco model. If the cell's editor is
+  open, the child sees the new code appear in it. It is a whole-text
+  replacement, so the editor's undo history for that cell starts again.
+  A careful assistant should read the cell first, change only what is needed,
+  and say what it did with `mms.say('I changed the 1s to 500ms')`.
+- `mms.writeCodeLive('E24', newCode)` (async) is the visible version: it opens
+  the cell's editor and types the code in over a few seconds, then waits. The
+  child reads it and presses Esc (or Save) to keep and run it, or Close to
+  throw it away. Nothing runs until they decide.
+- Do not put suggestions into a cell you have not looked at. The child's own
+  code is the point of the exercise. Ask first, or use an empty spare cell
+  and describe the idea in `mms.say`.
+
+#### 11.1.3 Suggesting inside the editor
+
+[↑ Contents](#contents)
+
+Not built yet, but Monaco can do it. Monaco is the same editor VS Code is
+built on, and it has the pieces for showing an outside suggestion *in place*,
+where the child can accept or refuse it, instead of silently replacing the code:
+
+| Wish | Monaco feature |
+|---|---|
+| Show the AI's version next to the child's | `createDiffEditor`: two models, with changed lines highlighted. Accept = copy the right side into the left. |
+| Change only some lines and keep Ctrl+Z working | `editor.executeEdits('ai', [{ range, text }])` is one undoable step per call. |
+| Ghost text that Tab accepts, like Copilot | `registerInlineCompletionsProvider('typescript', ...)` |
+| "Why is this red?" explained by the AI | `setModelMarkers(model, 'ai', [...])` draws squiggles with an AI message, and a `registerCodeActionProvider` can attach "Apply fix" to them. (Lattakker switches the quick-fix light bulb off today to keep the editor calm.) |
+| Explain on hover | `registerHoverProvider` |
+
+A small bridge such as `mms.suggest('E24', newCode, 'why')` would open the
+cell's editor as a diff with Accept and Reject buttons. It would give a
+sidebar assistant a safe way to *propose* without *overwriting*. The
+building blocks are already here: one Monaco model per cell, a shared
+`window.mms` API, and an editor panel that knows which cell is open. Until
+it exists, `mms.setCode` is the way to apply a suggestion (see [11.1.2](#1112-suggesting)).
+
+For wiring cells together, assistants should prefer the reactive features
+(`on(x, 'size', ...)`, `cell.cols`, `memory`, `run.reason`) described in
+[8](#8-programmers-manual-the-cell-api) over timers and polling. See
+[8.6](#86-events-size-code-click-sheet) and [8.4](#84-time-sleep-every-after). They are what makes a cell wake up exactly when the
+thing it cares about changes.
+
+#### 11.1.4 Trying it on the live page
+
+[↑ Contents](#contents)
+
+The published page (https://springyworks.github.io/lattakker/) is a static
+site: no server, no `/mcp`, no key. An AI that lives in the browser (a side
+panel, an extension, an agent mode that can use the page) already has
+everything it needs there. This is the easiest way to try the AI features.
+
+What such an assistant can use, from the least to the most capable:
+
+- *It can only read the page.* It finds the region "Game state as text"
+  (`#mms-text`): the board, the last move and every code cell with its output
+  and error. It also sees the text of an open editor in the accessibility tree.
+- *It can run JavaScript in the page.* Then `window.mms` is there:
+  `mms.help()` is the full guide, and everything in
+  [11.1.1](#1111-looking) and [11.1.2](#1112-suggesting) works, including
+  `mms.setCode`, `mms.writeCodeLive` and `mms.say`.
+- *It can click and type.* Then it can also do what the child does: open a
+  cell, type in the editor, press Esc.
+
+**Chat by comments** works in the browser too. The child writes
+`// AI: ...` in a cell ([11.3.2](#1132-talking-to-the-ai-from-a-cell)), and the
+assistant answers with `// ↳ AI: ...` lines below it, using
+`mms.requests()` (what is asked right now, also the unsaved text in an open
+editor), `mms.waitForRequest(15)` (async, waits up to 20 seconds for a new
+question) and `mms.replyToRequest('E24', line, 'text')`. A page cannot call an
+assistant, so the assistant has to look: it asks again when the child says
+"I asked", or keeps calling `mms.waitForRequest`. The grey hint behind a
+question shows ⏳ while a `waitForRequest` call is running and 💤 when no
+assistant has looked for a while.
+
+Things worth knowing before you start:
+
+- Everything stays in the browser tab. Cells are saved in that browser's
+  local storage, so the assistant works on the same sheet the child sees.
+- The tools that write (`setCode`, `clearCell`, `move`, `newGame`) change what
+  the child sees at once. The child's own cells are the point of the
+  exercise, so an assistant should read first, ask before replacing, and use
+  `mms.say` or a `// ↳` reply to explain what it did.
+- Blue's hidden pieces stay hidden for the assistant too.
+- A good first test: double-click an empty cell, type `// AI: what does span do?`
+  and see whether the assistant answers in the editor.
+
+Suggested context to give an assistant (adjust freely, it is background, not
+a script):
+
+```
+This page is Lattakker Sheet: a Lattakker board that is also a spreadsheet
+of TypeScript cells, played by a child who is learning to program. It runs
+locally in the page. window.mms.help() describes the JSON API, and the region
+"Game state as text" mirrors the page for readers. The child may write
+"// AI: question" in a cell; answer with mms.replyToRequest in plain, short,
+friendly words and do not change their code unless asked. When you do change
+code, show it with mms.writeCodeLive so they can read it before it runs.
+```
+
+### 11.2 Other AI helpers
+
+[↑ Contents](#contents)
+
+Today the above works for assistants that can reach the page. The editor's own
 help is VS Code's *language* help (autocomplete, hover docs, signature
 hints, red squiggles with explanations), not the AI-assisted features of VS
 Code. Those are separate products and are not part of Monaco. The editor's
 "quick fix" light bulb is switched off to keep it calm for children. To
 share your code with any other AI chat, copy a cell's code and its error
-text, and paste them together with the contents of `public/llms.txt`.
+text, and paste them together with the contents of `public/llms.txt`. An
+assistant that can run MCP tools can do better: see
+[11.3](#113-connect-an-external-ai-chat-mcp).
 
-## Rows
+### 11.3 Connect an external AI chat (MCP)
+
+[↑ Contents](#contents)
+
+The page does not contain a chat. It acts as a tool server instead: while you
+play in the browser, an AI chat in another window can read the same game and
+cells and change them, using the same `window.mms` tools described above. You
+watch the board and the sheet react as the assistant works.
+
+How it works: `npm run dev` starts a small MCP endpoint at `/mcp` on the dev
+server (`scripts/mcp-bridge.ts`, plain JSON-RPC over HTTP, no extra package).
+It forwards each tool call over Vite's own live-reload socket to a browser
+page that was opened with `?mcp` in its address, and returns the answer. It
+exists only in the dev server. The built site (GitHub Pages) has no `/mcp`.
+
+#### 11.3.1 Connect step by step
+
+[↑ Contents](#contents)
+
+1. Start the dev server: `npm run dev` (see [3](#3-running-locally)). Note the
+   address it prints, for example `http://localhost:5178/`.
+2. Open the app **with `?mcp` added**: `http://localhost:5178/?mcp`. A page
+   opened without `?mcp` is never driven from outside. Keep that tab open
+   (a background tab is fine, but a closed one means "no page connected").
+3. Tell your AI client about the endpoint `http://localhost:5178/mcp`
+   (use your own port). For example:
+   - Claude Code: `claude mcp add --transport http lattakker http://localhost:5178/mcp`
+   - A client that only speaks stdio: `npx mcp-remote http://localhost:5178/mcp`
+   - Any other MCP client that supports "Streamable HTTP": add a server with
+     that URL and no key.
+4. Ask the assistant to call `get_state`. If it says no page is connected,
+   check step 2.
+
+To check by hand without any AI:
+`curl -s -X POST http://localhost:5178/mcp -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'`
+
+The tools are the ones in `mms.help()`: `get_state`, `get_board`,
+`legal_moves`, `make_move`, `shuffle_army`, `start_battle`, `pause_battle`,
+`resume_battle`, `undo_move`, `new_game`, `list_cells`, `get_cell`,
+`resolve_cell`, `set_cell_code`, `write_code_live`, `get_requests`,
+`wait_for_request`, `reply_to_request`, `run_cell`, `set_mode`, `say_to_player`
+and `export_svg`. The assistant gets the list from the page itself, so it is
+always current.
+
+#### 11.3.2 Talking to the AI from a cell
+
+[↑ Contents](#contents)
+
+MCP is ask-and-answer: the page cannot call the assistant, so the assistant
+cannot work on its own while the child plays. The child talks to it from
+inside a cell instead, as a chat made of comments. A comment line that starts
+with `// AI:` (or `// @ai`) is a question:
+
+```
+// AI: how do I make this cell blue?
+span(4, 2)
+```
+
+The assistant answers with `// ↳ AI: ...` lines right below the question and
+leaves a fresh, empty `// ` line under its answer. The cursor jumps there when
+it was on the question, so the child just keeps typing. A plain `//` line
+under an answer is the next question; no `AI:` needed:
+
+```
+// AI: how do I make this cell blue?
+// ↳ AI: call color('blue') on a line of its own.
+// and red?
+```
+
+While the editor is open, the cell checks every 3 seconds where the cursor is
+and writes a grey hint at the end of the line: on an empty `//` line it says
+what to type, and behind a question it says whether the assistant is listening
+(⏳ reading along, 💤 not listening right now).
+
+The assistant reads questions with `get_requests` (also the text the child is
+still typing in the open editor, before Save), or waits for one with
+`wait_for_request` (returns at once when a request exists, otherwise after at
+most 20 seconds; the assistant calls it again to keep listening). It answers
+with `reply_to_request`, live in the editor if it is open. A question with a
+`// ↳` line below it counts as answered. Changing code stays a separate,
+visible step (`write_code_live`).
+
+The page cannot wake the assistant, so something on the assistant's side has to
+keep listening: an assistant chat that repeats `wait_for_request`, or a
+scheduled loop (about one minute apart at best).
+
+#### 11.3.3 What to tell the AI
+
+[↑ Contents](#contents)
+
+Modern assistants can do more than call tools: they read files, make a plan,
+combine several steps and reason about code. So this is background for the
+assistant, not a script. It gives the goal, the facts only this app knows and
+a few safety rules, and leaves the method to the assistant. Paste it at the
+start of the chat:
+
+```
+You are helping a child who is playing Lattakker (a board game: Red = the
+child, Blue = the computer) in a web page that is also a spreadsheet. Cells
+below the board (A12 and lower) hold TypeScript that runs live.
+
+You may have MCP tools ("lattakker"), source files, browser inspection or
+other abilities, depending on your client. Use what you have. For the
+current state of the game and the sheet, trust the Lattakker tools over
+anything you read or remember: the page is the source of truth.
+
+Goal: the child learns to code by playing. Explain in simple, friendly
+words, and prefer teaching over silently changing things. If you write code
+while the child is watching, use write_code_live: the child sees the code
+appear in the editor and presses Esc (or Save) to keep it and run it.
+
+Before you change anything:
+- Look first: get_state, get_board, list_cells. Read a cell (get_cell)
+  before you modify it, and keep the child's own work. Try new ideas in an
+  empty spare cell.
+
+Facts about this app:
+- Every code cell has a uid (c-xxxxxxxx) that moves with its code. The
+  address (like B7) is only where it is now, and it changes when cells move
+  or rows are inserted. Keep uids; resolve_cell tells you the address. Tools
+  accept either.
+- Blue's pieces are hidden (B?) and the tools never show them. Do not guess
+  or hunt for them.
+- set_cell_code runs the code and returns the output or the error. Fix an
+  error before you show the result.
+- The sheet is reactive: a cell that reads other cells (at(), range(),
+  game.*) runs again when they change. Plain literal addresses in code
+  ('B7') follow their cell when it moves.
+- The child can talk to you from a cell: a comment line starting with
+  `// AI:`. Read them with get_requests or wait_for_request (call it again
+  and again to keep listening) and answer with reply_to_request.
+- If a tool says no page is connected, the child must open the app with
+  ?mcp in the address.
+```
+
+Everything else comes from the tool descriptions, which the page itself
+provides. An assistant that can read files can also use `public/llms.txt` (the
+same guide, served at `/llms.txt`) and section
+[8](#8-programmers-manual-the-cell-api) of this README. Some clients also
+pass on resources or prompts; nothing here depends on that.
+
+#### 11.3.4 Safety and limits
+
+[↑ Contents](#contents)
+
+- The endpoint only answers requests that come from `localhost`, `127.0.0.1`
+  or `::1` (it checks the `Origin` header, which protects against a web page
+  that tries to reach your dev server). It has no password. Do not expose the
+  dev server to a network (`vite --host`) while you use `?mcp`.
+- Only one page is driven, the one that connected most recently. Two `?mcp`
+  tabs open at once will compete.
+- A tool call that the page does not answer within 30 seconds returns an
+  error. `set_cell_code` also waits for the cell to settle, so a cell that
+  sleeps for a minute will time out in the tool while it keeps running.
+- Tool calls act on the real game and the real cells of that browser's
+  saved state (see [5](#5-saved-in-your-browser)). Use a separate address
+  (`localhost` and `127.0.0.1` keep separate saved states) for experiments.
+- To check the whole round trip (an outside AI talks to the bridge, the bridge
+  talks to the page, the page answers) run `node scripts/mcp-smoke.mjs` while
+  `npm run dev` runs and a tab is open at `http://localhost:5178/?mcp`. It plays
+  a scripted AI: reads state, writes and clears one scratch cell (`Z43`, or set
+  `SCRATCH=...`), plays and undoes a move, and checks the error cases.
+
+## 12 Rows
+
+[↑ Contents](#contents)
 
 Right-click a row header below the board to insert a row underneath it.
 Any address reference inside a cell's code (`at('A13')`, `range('A1:J10')`)
 is rewritten automatically to still point at the same logical cell after
-the shift.
+the shift. The rules are the same as for moved cells, see
+[6.1](#61-code-follows-the-cells-it-names).
 
-## Project layout
+## 13 Project layout
+
+[↑ Contents](#contents)
 
 ```
 src/sheet/        Sheet model: cells, addresses, dependency tracking (reactivity.ts), run contexts and timers (tasks.ts), the cell API (api.ts)
@@ -418,27 +946,36 @@ src/editor/       Monaco integration, popup editor, inline per-cell editor
 src/game/     Game rules, board state, AI move suggestions
 src/ui/           Control panel, phone dock, touch gestures
 src/storage.ts    Saves and restores the game and cells in localStorage
-src/ai/           window.mms, WebMCP tools and the text copy for AI helpers
+src/ai/           window.mms, WebMCP tools, the text copy for AI helpers, and bridge.ts (the page end of /mcp)
 src/theme.ts      The colour palette
 src/examples.ts   The code cells shown on first load
 public/llms.txt   Plain-words guide for AI helpers
 resources/        Piece icons (original) and reference files, see its README
-scripts/          make-piece-svgs.mjs writes resources/pieces/
+scripts/          make-piece-svgs.mjs writes resources/pieces/; mcp-bridge.ts is the dev-server /mcp endpoint; mcp-smoke.mjs plays a scripted outside AI against it
 ```
 
-## Licence and artwork
+## 14 Licence and artwork
+
+[↑ Contents](#contents)
 
 Code: MIT, see `LICENSE`. All artwork (piece tiles, insignia symbols, bomb and flag drawings) is original or plain Unicode text; no third-party game artwork or names are used. Dependencies (maxGraph, Monaco, Vite, TypeScript) keep their own licences.
 
-## Technology
+## 15 Technology
+
+[↑ Contents](#contents)
 
 TypeScript, maxGraph for all rendering and interaction (no other UI
 framework), Monaco for code editing, Vite for the dev server and build.
 
-## Deployment
+## 16 Deployment
+
+[↑ Contents](#contents)
 
 The `deploy` GitHub Actions workflow builds the project and publishes
 `dist/` to GitHub Pages on every push to `main`.
 
-## Source
+## 17 Source
+
+[↑ Contents](#contents)
+
 [L'Attaque wikipedia](https://en.wikipedia.org/wiki/L%27Attaque)

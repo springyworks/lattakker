@@ -10,7 +10,8 @@ Red is the player (bottom of the board, rows 7-10). Blue is the computer (top, r
 - `mms.state()` gives phase (`setup`, `play`, `over`), turn, winner, moveCount, lastMove and the message the player sees.
 - `mms.board()` gives 10 strings (row 1 first), a legend and a text grid. Tokens: `R10` visible Red piece rank 10 (`RS` spy, `RB` bomb, `RF` flag), `B?` hidden Blue piece, `b5` revealed Blue piece, `~~` lake, `..` empty. Hidden Blue pieces are never revealed to you.
 - The accessibility tree has a region "Game state as text" (`#mms-text`) with the same information: phase, message, board grid, captured pieces, last move, and every code cell with its output and error. It updates after each move and cell run.
-- If the browser supports WebMCP (`document.modelContext`, older drafts `navigator.modelContext`), tools are registered: `get_state`, `get_board`, `legal_moves`, `make_move`, `shuffle_army`, `start_battle`, `pause_battle`, `resume_battle`, `undo_move`, `new_game`, `list_cells`, `get_cell`, `set_cell_code`, `run_cell`, `set_mode`, `say_to_player`, `export_svg`. `mms.webmcp` shows what was registered.
+- If the browser supports WebMCP (`document.modelContext`, older drafts `navigator.modelContext`), tools are registered: `get_state`, `get_board`, `legal_moves`, `make_move`, `shuffle_army`, `start_battle`, `pause_battle`, `resume_battle`, `undo_move`, `new_game`, `list_cells`, `get_cell`, `resolve_cell`, `set_cell_code`, `write_code_live`, `get_requests`, `wait_for_request`, `reply_to_request`, `run_cell`, `set_mode`, `say_to_player`, `export_svg`. `mms.webmcp` shows what was registered.
+- Chat by comments: a player asks you something by writing `// AI: question` in a cell (a plain `//` line under one of your `// ↳` answers also counts). Read it with `get_requests` or `wait_for_request`, answer with `reply_to_request`; the answer appears as `// ↳ AI: ...` lines with a fresh `// ` line below for the next question. Changing code stays a separate step (`write_code_live`).
 
 ## window.mms API
 
@@ -19,10 +20,20 @@ All methods return plain JSON: `{ ok: true, ... }` or `{ ok: false, error: "..."
 - `help()` text guide, `state()`, `board()`, `legalMoves('red' | 'B7')`
 - `shuffle()` setup only; `start()` setup to play; `newGame()`; `undo()` takes back Red's last move and Blue's answer
 - `move('B7', 'B6')` (async) Red moves, waits for Blue's reply, returns the new state
-- `cells()` all code cells `{address, code, output, error, mode}`; `getCell('A12')`
+- `cells()` all code cells `{uid, address, code, output, error, mode}`; `getCell('A12')`; `resolve(uidOrAddress)` gives `{address, uid, hasCode}`
 - `setCode('A12', code, { run: true })` (async) write TypeScript into a cell and run it; `runCell('A12')` (async) returns `{output}` or `{error}`; `clearCell('A12')`
+- `writeCodeLive('A12', code)` (async) opens the cell's editor and types the code in slowly; the player presses Esc or Save to keep and run it, Close to discard
+- `requests()` questions the player wrote as `// AI: ...` comments; `waitForRequest(15)` (async, up to 20 s); `replyToRequest('A12', line, 'text')` writes the answer as `// ↳ AI: ...` below the question
 - `setMode('run' | 'view')` show output or code in cells; `say('text')` message bubble for the player
 - `exportSvg()` SVG snapshot; `exportModelXml()` maxGraph model XML
+
+## Stable cell identity (uid)
+
+Every code cell has a `uid` like `c-1a2b3c4d`. It stays with the code when the cell is moved, swapped, or rows are inserted, and survives reload. The address only says where the code sits now. Remember uids, not addresses; `mms.resolve(uid)` finds the current address, and `getCell`, `setCode`, `runCell`, `clearCell` accept a uid wherever they accept an address. The uid is gone once the cell is emptied.
+
+## Outside AI chats (MCP)
+
+An AI that runs outside the page can use the same tools over MCP. A developer runs `npm run dev`, opens the app with `?mcp` added to the address, and connects the client to `http://localhost:<port>/mcp` (Streamable HTTP; for stdio-only clients use `npx mcp-remote <url>`). Only pages opened with `?mcp` are driven. See README section 11.3.
 
 ## Cell code API (TypeScript; top-level await works)
 
@@ -33,7 +44,8 @@ All methods return plain JSON: `{ ok: true, ... }` or `{ ok: false, error: "..."
 - `game.move(from, to)` move a Red piece (Red's turn only), `game.say(text)` message bubble
 - `sheet.mode`, `sheet.cols`, `sheet.rows`, `mode`, `sleep(ms or '2s')`, `log(...values)`
 - `show(...values)` replaces the output (use it for live displays), `clear()` empties it; `span()` with no arguments returns `{cols, rows}`, `span(4)` keeps the rows
-- Timers and watchers (all stop by themselves when the cell runs again, is edited or cleared): `every('1s', (n) => ...)` (also '500ms', '1m', or a number of ms; `every(fn)` = once a second), `after('5s', fn)`, `on('B7' | 'A1:J10' | 'game', fn)` runs fn after that changes, `stop()` stops this cell's timers. Reads inside callbacks are not dependencies; only the top level of the cell is tracked. Several cells can wait or tick at once; a cell running longer than ~150 ms continues in the background. A tight loop with no `await` still freezes the page.
+- Timers and watchers (all stop by themselves when the cell runs again, is edited or cleared): `every('1s', (n) => ...)` (also '500ms', '1m', or a number of ms; `every(fn)` = once a second), `after('5s', fn)`, `on('B7' | 'A1:J10' | 'game', fn)` runs fn after that changes, `stop()` stops this cell's timers. Events: `on('I18', 'size' | 'code' | 'click', fn)` (resized, code edited or moved, clicked) and `on('sheet', 'rows' | 'mode', fn)`; reading `cell.cols`, `cell.rows`, `at(x).code`, `sheet.rows` or `sheet.mode` at the top level makes the cell re-run when they change. `memory` is a per-cell notebook that survives re-runs; `run.reason` is 'edit', 'moved' or 'update'. Prefer these over polling. To suggest code, read the cell first, then `mms.setCode(address, code, { run: true })` and check the returned error; do not overwrite a child's own code without asking. Reads inside callbacks are not dependencies; only the top level of the cell is tracked. Several cells can wait or tick at once; a cell running longer than ~150 ms continues in the background. A tight loop with no `await` still freezes the page.
+- When cells move (drag, swap, insert row) the address literals in all code are rewritten to follow them: `at('B7')`, `range('A1:B3')`, `'C32-55'`, `on('E5', ...)`. A range split by a move is left as written and reported to the player. Computed addresses (`'E' + n`) are not followed: write the literal once in a `const`.
 - `cell.usedBy` (cells that read this one) and `cell.reads` (what this cell read), both arrays of addresses
 - Reading a cell with `at()`, `range()` or `game.*` makes your cell re-run when that changes, like a spreadsheet formula. Hidden Blue pieces have rank `'?'`.
 - A piece is `{ color, rank, name, revealed, moved }`; rank is 1 (Spy) to 10 (Marshal), `'B'` bomb, `'F'` flag, `'?'` hidden.

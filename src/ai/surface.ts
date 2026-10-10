@@ -4,11 +4,13 @@ import type { GameView } from '../game/GameView';
 import type { Hud } from '../ui/Hud';
 import type { CellEditor } from '../editor/CellEditor';
 import { modelFor } from '../editor/monaco';
+import { isAnswered, replyBlock, requestAt } from './requests';
 import { BOARD_COLS, BOARD_ROWS, isLake, rankGlyph, type Piece } from '../game/model';
+import { installMcpBridge } from './bridge';
 
 /**
- * Makes the page usable by external AI agents (browser extensions, MCP-in-browser agents):
- * a visually-hidden text mirror of the game, window.mms, and WebMCP tools. All local, no network.
+ * Makes the page usable by external AI agents: a visually-hidden text mirror of the game, window.mms,
+ * WebMCP tools, and (with ?mcp, see bridge.ts) the same tools over the dev server's /mcp endpoint. All local.
  */
 
 export interface AiSurfaceDeps {
@@ -45,8 +47,9 @@ READ
   mms.state()                { phase: 'setup'|'play'|'over', turn, winner, moveCount, lastMove, message, busy, redPieces, bluePieces }
   mms.board()                { rows: [10 strings, row 1 first], legend, text }. Hidden Blue pieces stay hidden (B?).
   mms.legalMoves(x)          x = 'red' or a Red square like 'B7' -> [{from,to}]. Only Red is shown (Blue stays secret).
-  mms.cells()                all cells holding code: [{address, code, output, error, mode}]
-  mms.getCell('A12')         one cell: { code, output, error, text, mode, ... }
+  mms.cells()                all cells holding code: [{uid, address, code, output, error, mode}]
+  mms.getCell('A12')         one cell: { uid, address, code, output, error, text, mode, ... }. Also accepts a uid.
+  mms.resolve('c-1a2b3c4d')  where a cell is now: { address, uid, hasCode }. Takes an address or a uid.
   mms.exportSvg()            SVG string snapshot of the maxGraph canvas
   mms.exportModelXml()       maxGraph model as XML (large)
 
@@ -62,8 +65,15 @@ ACT
   mms.clearCell('A12')       empty a cell
   mms.setMode('run'|'view')  cells show output (run) or their code (view)
   mms.say('Nice move!')      show a message to the player in the speech bubble
+  mms.writeCodeLive('A12', code) (async)   open the cell's editor and type the code in slowly; the player presses Esc/Save to keep and run it
+  mms.requests()             questions the player wrote as "// AI: ..." comment lines: { requests: [{address, uid, line, text, answered, unsaved}] }
+  mms.waitForRequest(15) (async)   wait up to 20 s for a new question, then return like requests()
+  mms.replyToRequest('A12', line, 'text')   write your answer as "// ↳ AI: ..." right below the question (a fresh "// " line follows for the next one)
 
-WebMCP: if the browser supports it, the same actions are registered as tools: get_state, get_board, legal_moves, make_move, shuffle_army, start_battle, pause_battle, resume_battle, undo_move, new_game, list_cells, get_cell, set_cell_code, run_cell, set_mode, say_to_player, export_svg. mms.webmcp tells you what was registered.
+IDENTITY: every code cell has a uid such as c-1a2b3c4d. The uid stays with its content when cells move, swap or rows are inserted; the address changes. Keep the uid to find code again later; mms.resolve(uid) gives the current address.
+
+WebMCP: if the browser supports it, the same actions are registered as tools: get_state, get_board, legal_moves, make_move, shuffle_army, start_battle, pause_battle, resume_battle, undo_move, new_game, list_cells, get_cell, resolve_cell, set_cell_code, write_code_live, get_requests, wait_for_request, reply_to_request, run_cell, set_mode, say_to_player, export_svg. mms.webmcp tells you what was registered.
+An outside AI chat can use the same tools over MCP: run the dev server, open this page with ?mcp added to the URL, and connect to http://localhost:5178/mcp (see the README, section 11.3).
 The page also keeps an accessible text mirror in #mms-text (board grid, captured pieces, last move, code cells with output and errors).
 
 CELL CODE (TypeScript, async allowed, re-runs when things it reads change)
@@ -77,7 +87,10 @@ CELL CODE (TypeScript, async allowed, re-runs when things it reads change)
   sheet.mode sheet.cols sheet.rows   mode   sleep(ms|'2s')   log(...)
   show(...) replace output   clear()   span() read size, span(4) keep rows
   every('1s', n => ...)  after('5s', fn)  on('B7' | 'A1:J10' | 'game', fn)  stop()   (timers die when the cell re-runs)
+  on('I18', 'size' | 'code' | 'click', fn)  on('sheet', 'rows' | 'mode', fn)   events; also cell.cols/rows, at(x).code, sheet.rows/mode are reactive when read at top level
+  memory (notebook that survives re-runs)  run.reason ('edit'|'moved'|'update')  run.count
   cell.usedBy / cell.reads  addresses that read this cell / that this cell read
+  Moving, swapping or inserting rows rewrites address literals in all code ('B7', 'A1:B3', 'C32-55') so they follow their cells; a range split by a move is only reported. Keep addresses as plain literals ('E' + n is not followed).
   Hidden Blue pieces have rank '?'. Board squares are A1:J10; put code in A12 or below.
 
 EXAMPLES
@@ -103,7 +116,9 @@ interface ToolDef {
 
 const str = (description: string): Json => ({ type: 'string', description });
 const obj = (properties: Json, required: string[] = []): Json => ({ type: 'object', properties, required, additionalProperties: false });
-const ADDR = 'A cell address like A12 (code cells live below the board, row 12 or lower) or a board square like B7.';
+const ADDR =
+  'A cell address like A12 (code cells live below the board, row 12 or lower), a board square like B7, or a cell uid like c-1a2b3c4d (the uid follows the content when cells move).';
+const UID = /^c-[0-9a-f]{8}$/;
 
 export function installAiSurface({ sheet, view, hud, editor }: AiSurfaceDeps): void {
   // ------------------------------------------------------------ helpers
@@ -163,19 +178,26 @@ export function installAiSurface({ sheet, view, hud, editor }: AiSurfaceDeps): v
       redPieces: g.pieces('red').length,
       bluePieces: g.pieces('blue').length,
       editorOpenOn: editor.isOpen ? editor.address : null,
+      editorChars: editor.isOpen ? editor.valueLength : null,
       sheetMode: sheet.mode,
     };
   }
 
   function validCodeAddress(raw: unknown): { address: string } | { error: string } {
-    if (typeof raw !== 'string' || !raw.trim()) return { error: 'address must be a string like "A12"' };
-    const address = sheet.resolve(raw.trim().toUpperCase());
+    if (typeof raw !== 'string' || !raw.trim()) return { error: 'address must be a string like "A12" or a cell uid like "c-1a2b3c4d"' };
+    const text = raw.trim();
+    if (UID.test(text.toLowerCase())) {
+      const found = sheet.addressOfUid(text.toLowerCase());
+      return found ? { address: found } : { error: `No cell has uid "${text}" any more (its code was cleared or replaced).` };
+    }
+    const address = sheet.resolve(text.toUpperCase());
     if (!address) return { error: `"${raw}" is not a cell address (try something like A12; columns A-Z, rows 1-${sheet.rowCount})` };
     return { address };
   }
 
   function cellData(d: SheetCellData): Json {
     return {
+      uid: d.uid || null,
       address: d.address,
       code: d.code,
       output: d.output.join('\n'),
@@ -297,6 +319,29 @@ export function installAiSurface({ sheet, view, hud, editor }: AiSurfaceDeps): v
 
   // ------------------------------------------------------------- API
 
+  let listeningUntil = 0;
+  editor.aiListening = () => performance.now() < listeningUntil;
+
+  const collectRequests = (includeAnswered: boolean) => {
+    const found: Array<{ address: string; uid: string | null; line: number; text: string; answered: boolean; unsaved: boolean }> = [];
+    const addresses = new Set(sheet.codeCells().map((d) => d.address));
+    if (editor.isOpen && editor.address) addresses.add(editor.address);
+    for (const address of addresses) {
+      const d = sheet.dataAt(address);
+      if (!d) continue;
+      const live = editor.isOpen && editor.address === address;
+      const lines = (live ? editor.valueText ?? '' : d.code).split('\n');
+      lines.forEach((_l, i) => {
+        const text = requestAt(lines, i);
+        if (!text) return;
+        const answered = isAnswered(lines, i);
+        if (answered && !includeAnswered) return;
+        found.push({ address, uid: d.uid || null, line: i + 1, text, answered, unsaved: live });
+      });
+    }
+    return found;
+  };
+
   const api = {
     help: (): string => HELP,
 
@@ -374,6 +419,13 @@ export function installAiSurface({ sheet, view, hud, editor }: AiSurfaceDeps): v
 
     cells: (): Result => ok({ cells: sheet.codeCells().map(cellData) }),
 
+    resolve(addressOrUid: unknown): Result {
+      const a = validCodeAddress(addressOrUid);
+      if ('error' in a) return fail(a.error);
+      const d = sheet.dataAt(a.address)!;
+      return ok({ address: a.address, uid: d.uid || null, hasCode: d.code.trim() !== '' });
+    },
+
     getCell(address: unknown): Result {
       const a = validCodeAddress(address);
       if ('error' in a) return fail(a.error);
@@ -396,9 +448,13 @@ export function installAiSurface({ sheet, view, hud, editor }: AiSurfaceDeps): v
       if (sheet.isBoardAddress(a.address)) return fail(`${a.address} is a board square. Put code in row 12 or lower, e.g. A12.`);
       modelFor(a.address, code);
       sheet.setCode(a.address, code);
+      if (!code.trim()) {
+        flush();
+        return ok({ address: a.address, cleared: true });
+      }
       if (options?.run === false) {
         flush();
-        return ok({ address: a.address, started: true });
+        return ok({ address: a.address, uid: sheet.dataAt(a.address)!.uid, started: true });
       }
       return api.runCell(a.address);
     },
@@ -413,9 +469,67 @@ export function installAiSurface({ sheet, view, hud, editor }: AiSurfaceDeps): v
       const finished = await settle();
       flush();
       const output = d.output.join('\n');
-      if (!finished) return fail('Timed out waiting for the cell to finish (is it waiting on sleep() or looping?)', { address: a.address, output });
-      if (d.error) return fail(d.error, { address: a.address, output });
-      return ok({ address: a.address, output, text: sheet.displayText(d) });
+      if (!finished) return fail('Timed out waiting for the cell to finish (is it waiting on sleep() or looping?)', { address: a.address, uid: d.uid, output });
+      if (d.error) return fail(d.error, { address: a.address, uid: d.uid, output });
+      return ok({ address: a.address, uid: d.uid, output, text: sheet.displayText(d) });
+    },
+
+    async writeCodeLive(address: unknown, code: unknown): Promise<Result> {
+      const a = validCodeAddress(address);
+      if ('error' in a) return fail(a.error);
+      if (typeof code !== 'string' || !code.trim()) return fail('code must be a non-empty string of TypeScript');
+      if (code.length > MAX_CODE_CHARS) return fail(`code is too long (max ${MAX_CODE_CHARS} characters)`);
+      if (sheet.isBoardAddress(a.address)) return fail(`${a.address} is a board square. Put code in row 12 or lower, e.g. A12.`);
+      const geo = sheet.geometryOf(a.address);
+      if (!geo) return fail(`${a.address} is not on the sheet`);
+      const target = sheet.dataAt(a.address)!;
+      sheet.reveal(target.row, target.col, false);
+      editor.open(a.address);
+      hud.say(`The assistant is writing code in ${a.address} ✍`, 'info');
+      const finished = await editor.typeCode(code);
+      if (!finished) return fail(`The editor on ${a.address} was closed before the code was typed.`, { address: a.address });
+      hud.say(`Code for ${a.address} is ready. Read it, then press Esc (or Save) to keep it and run it.`, 'good');
+      return ok({ address: a.address, uid: sheet.dataAt(a.address)!.uid || null, typed: code.length, editorOpen: true, next: 'Waiting for the player to close the editor. Poll get_state until editorOpenOn is null, then get_cell to read the output.' });
+    },
+
+    requests(includeAnswered = false): Result {
+      return ok({ requests: collectRequests(includeAnswered), howToAnswer: 'Call reply_to_request with the address, the line number and your reply. The reply is written as a comment right below the request.' });
+    },
+
+    async waitForRequest(seconds: unknown): Promise<Result> {
+      const limit = Math.min(20, Math.max(1, typeof seconds === 'number' && isFinite(seconds) ? seconds : 15));
+      const started = performance.now();
+      listeningUntil = started + limit * 1000 + 6000;
+      for (;;) {
+        const open = collectRequests(false);
+        const waited = Math.round((performance.now() - started) / 100) / 10;
+        if (open.length > 0) return ok({ requests: open, waited });
+        if (waited >= limit) return ok({ requests: [], waited, note: 'Nobody asked anything yet. Call wait_for_request again to keep listening.' });
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    },
+
+    replyToRequest(address: unknown, line: unknown, reply: unknown): Result {
+      const a = validCodeAddress(address);
+      if ('error' in a) return fail(a.error);
+      if (typeof line !== 'number' || !Number.isInteger(line) || line < 1) return fail('line must be a positive whole number (use the line from get_requests)');
+      if (typeof reply !== 'string' || !reply.trim()) return fail('reply must be a non-empty string');
+      if (reply.length > 600) return fail('reply is too long (max 600 characters). Keep it short and friendly.');
+      const live = editor.isOpen && editor.address === a.address;
+      const code = live ? editor.valueText! : sheet.dataAt(a.address)!.code;
+      const lines = code.split('\n');
+      if (!requestAt(lines, line - 1)) return fail(`Line ${line} of ${a.address} is not an AI request any more (the text may have moved). Call get_requests again.`, { address: a.address });
+      if (isAnswered(lines, line - 1)) return fail(`The request on line ${line} of ${a.address} already has an answer.`, { address: a.address });
+      const block = replyBlock(reply.trim());
+      if (live) {
+        if (!editor.insertAfterLine(line, block)) return fail('The editor closed while answering. Call get_requests again.');
+      } else {
+        lines.splice(line, 0, ...block.split('\n'));
+        sheet.setCode(a.address, lines.join('\n'));
+        flush();
+      }
+      hud.say(`The assistant answered in ${a.address} ✍`, 'info');
+      return ok({ address: a.address, line, answeredInEditor: live });
     },
 
     clearCell(address: unknown): Result {
@@ -576,15 +690,54 @@ export function installAiSurface({ sheet, view, hud, editor }: AiSurfaceDeps): v
       run: (a) => api.getCell(a.address),
     },
     {
+      name: 'resolve_cell',
+      description: `Find where a cell is now. Pass an address or a uid (c-xxxxxxxx); returns { address, uid, hasCode }. A uid stays with its code when cells move, swap or rows are inserted, so store uids, not addresses. ${ADDR}`,
+      inputSchema: obj({ address_or_uid: str(ADDR) }, ['address_or_uid']),
+      readOnly: true,
+      run: (a) => api.resolve(a.address_or_uid),
+    },
+    {
       name: 'set_cell_code',
       description:
-        "Write TypeScript into a cell (replacing what was there) and run it. Use row 12 or lower, e.g. A12; board squares A1:J10 cannot hold code. Cell code can use print('text'), color('#ecdcd8'), game.pieces('red'), at('B7'), range('A1:J10'), game.move('B7','B6'); call mms.help() or read llms.txt for the full list. Returns the printed output or the error message so you can explain it in plain words.",
+        "Write TypeScript into a cell (replacing what was there) and run it. Use row 12 or lower, e.g. A12; board squares A1:J10 cannot hold code. Cell code can use print('text'), color('#ecdcd8'), game.pieces('red'), at('B7'), range('A1:J10'), game.move('B7','B6'); call mms.help() or read llms.txt for the full list. Returns the printed output or the error message so you can explain it in plain words. Empty code clears the cell.",
       inputSchema: obj(
         { address: str(ADDR), code: str('TypeScript source for the cell'), run: { type: 'boolean', description: 'Wait for the result (default true).' } },
         ['address', 'code'],
       ),
       readOnly: false,
       run: (a) => api.setCode(a.address, a.code, { run: a.run !== false }),
+    },
+    {
+      name: 'write_code_live',
+      description:
+        "Show the player how code is written: opens the floating code editor on a cell and types your TypeScript into it so the player watches it appear. Nothing is saved or run yet; the player reads it and closes the editor (Esc or Save), which keeps and runs the code. Prefer this over set_cell_code when the player is watching or learning. Afterwards poll get_state until editorOpenOn is null, then get_cell for the output.",
+      inputSchema: obj({ address: str(ADDR), code: str('TypeScript source to type into the editor') }, ['address', 'code']),
+      readOnly: false,
+      run: (a) => api.writeCodeLive(a.address, a.code),
+    },
+    {
+      name: 'get_requests',
+      description:
+        "List the questions the player wrote to you inside cells. A request is a comment line that starts with `// AI:` (or `// @ai`), for example `// AI: make this cell blue`. This also reads text the player is still typing in the open editor (unsaved: true). By default only unanswered requests are returned; each has address, uid, line and text. Answer with reply_to_request.",
+      inputSchema: obj({ include_answered: { type: 'boolean', description: 'Also return requests that already have an answer (default false).' } }),
+      readOnly: true,
+      run: (a) => api.requests(a.include_answered === true),
+    },
+    {
+      name: 'wait_for_request',
+      description:
+        "Listen for the player. Returns as soon as an unanswered `// AI:` comment exists in any cell (including unsaved text in the open editor), or after `seconds` (max 20) with an empty list. The page cannot call you, so call this again and again to keep listening, answer each request with reply_to_request, and read the cell with get_cell before you change its code.",
+      inputSchema: obj({ seconds: { type: 'number', description: 'How long to wait, 1 to 20 (default 15).' } }),
+      readOnly: true,
+      run: (a) => api.waitForRequest(a.seconds),
+    },
+    {
+      name: 'reply_to_request',
+      description:
+        "Answer a request from get_requests: writes your reply as a short comment (`// ↳ AI: ...`) right below the player's `// AI:` line. If the editor is open on that cell the reply appears there while the player watches. Use the line number from get_requests. Keep it short and friendly; to change code, use write_code_live.",
+      inputSchema: obj({ address: str(ADDR), line: { type: 'number', description: 'Line number of the request, from get_requests.' }, reply: str('Your answer, a few friendly sentences at most.') }, ['address', 'line', 'reply']),
+      readOnly: false,
+      run: (a) => api.replyToRequest(a.address, a.line, a.reply),
     },
     {
       name: 'run_cell',
@@ -676,8 +829,9 @@ export function installAiSurface({ sheet, view, hud, editor }: AiSurfaceDeps): v
   registerWebMcp();
 
   Object.assign(window as unknown as Record<string, unknown>, {
-    mms: { ...api, webmcp, tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })), version: 1 },
+    mms: { ...api, webmcp, tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })), version: 2 },
   });
+  installMcpBridge(tools);
 }
 
 interface ModelContextLike {

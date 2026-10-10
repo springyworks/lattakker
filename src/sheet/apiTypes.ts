@@ -33,7 +33,7 @@ interface CellRef {
   textColor(color: string): CellRef;
   /** Merge this cell over cols x rows neighbours (not over the board). Leave one out to keep it. No arguments: just read the size. */
   span(cols?: number, rows?: number): { cols: number; rows: number };
-  /** How many columns / rows this cell covers now. */
+  /** How many columns / rows this cell covers now. Reading them makes your cell re-run when this cell is resized. */
   readonly cols: number;
   readonly rows: number;
   /** Addresses of the cells whose code read this cell (they re-run when it changes). */
@@ -85,6 +85,7 @@ interface GameApi {
 }
 
 interface SheetApi {
+  /** 'run' or 'view'. Reading it makes the cell re-run when the mode changes. */
   readonly mode: 'run' | 'view';
   cell(address: string): CellRef;
   range(text: string): CellRange;
@@ -114,9 +115,25 @@ declare function every(fn: (count: number) => unknown): () => void;
 /** Do something once, later: after('5s', () => ...). Returns a cancel function. */
 declare function after(interval: Interval, fn: () => unknown): () => void;
 declare function after(fn: () => unknown): () => void;
-/** Watch a cell, a range or 'game': fn runs after it changes. on('B7', (b7) => ...). Returns a stop function. */
+/** What happened: the cell (or range member) that woke the handler. */
+type CellEventName = 'change' | 'size' | 'code' | 'click';
+/**
+ * Watch something: fn runs after it happens. Returns a stop function. Stops by itself when the cell runs again.
+ * on('B7', (b7) => ...)            B7's text or piece changed
+ * on('B7', 'size', (b7) => ...)    B7 was merged or resized (b7.cols, b7.rows)
+ * on('B7', 'code', (b7) => ...)    someone edited B7's code, or moved code in or out of it
+ * on('B7', 'click', (b7) => ...)   B7 was clicked (a range works too: on('A20:C20', 'click', ...))
+ * on('game', (g) => ...)           anything in the game changed
+ * on('sheet', 'rows', (s) => ...)  a row was inserted      on('sheet', 'mode', (s) => ...)  Show code / Show output was pressed
+ */
 declare function on(target: string | CellRef, fn: (changed: CellRef) => unknown): () => void;
+declare function on(target: string | CellRef, event: CellEventName, fn: (changed: CellRef) => unknown): () => void;
 declare function on(target: 'game', fn: (game: GameApi) => unknown): () => void;
+declare function on(target: 'sheet', event: 'rows' | 'mode', fn: (sheet: SheetApi) => unknown): () => void;
+/** This cell's notebook: survives re-runs and moves with the cell's code. Use it for counters and "what did I see last time". */
+declare const memory: Record<string, any>;
+/** Why this run started. reason: 'edit' (code was written or Run pressed), 'moved' (block or row moved) or 'update' (something this cell reads changed). count: runs since the code was written. */
+declare const run: { readonly reason: 'edit' | 'moved' | 'update'; readonly count: number };
 /** Stop all timers and watchers this cell started. */
 declare function stop(): void;
 /** Another cell by address, e.g. at('A1') */

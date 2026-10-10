@@ -2,6 +2,7 @@ import { Cell, EventObject, Geometry, InternalEvent } from '@maxgraph/core';
 import type { Sheet } from '../sheet/Sheet';
 import { escapeHtml } from '../sheet/Sheet';
 import { THEME } from '../theme';
+import { isAnswered, requestAt } from '../ai/requests';
 import { createEditor, modelFor, monaco } from './monaco';
 
 const FRAME_W = 580;
@@ -33,6 +34,10 @@ export class CellEditor {
   private frame: Cell | null = null;
   private editor: monaco.editor.IStandaloneCodeEditor | null = null;
   private restoreGeo: Geometry | null = null;
+  private hints: monaco.editor.IEditorDecorationsCollection | null = null;
+  private hintTimer = 0;
+  /** Set by the AI bridge: is an assistant listening for questions right now? */
+  aiListening: () => boolean = () => false;
 
   constructor(
     private sheet: Sheet,
@@ -54,8 +59,63 @@ export class CellEditor {
     });
   }
 
+  /** Pulls the cell's current code into the open editor, so saving it later cannot bring old addresses back. */
+  refreshFromSheet(): void {
+    const d = this.address ? this.sheet.dataAt(this.address) : undefined;
+    if (d && this.editor) modelFor(d.address, d.code);
+  }
+
   get isOpen(): boolean {
     return this.frame !== null;
+  }
+
+  get valueLength(): number {
+    return this.editor?.getValue().length ?? 0;
+  }
+
+  /** What is in the open editor right now, saved or not (null when no editor is open). */
+  get valueText(): string | null {
+    return this.editor?.getValue() ?? null;
+  }
+
+  /** Adds text as new lines right below a line of the open editor. If the player's cursor sits on that line, it moves to the end of the new text so they can keep typing. */
+  insertAfterLine(line: number, text: string): boolean {
+    const model = this.editor?.getModel();
+    if (!this.editor || !model || line < 1 || line > model.getLineCount()) return false;
+    const cursorOnLine = this.editor.getPosition()?.lineNumber === line;
+    const col = model.getLineMaxColumn(line);
+    this.editor.executeEdits('assistant', [{ range: new monaco.Range(line, col, line, col), text: '\n' + text }]);
+    if (cursorOnLine) {
+      const last = line + text.split('\n').length;
+      this.editor.setPosition({ lineNumber: last, column: model.getLineMaxColumn(last) });
+      this.editor.revealLine(last);
+    }
+    this.updateHints();
+    return true;
+  }
+
+  /** Ghost text in the editor: a nudge on an empty `//` line, and a status behind each question that has no answer yet. */
+  private updateHints(): void {
+    const editor = this.editor;
+    const model = editor?.getModel();
+    if (!editor || !model || !this.hints) return;
+    const lines = model.getLinesContent();
+    const cursorLine = editor.getPosition()?.lineNumber ?? 0;
+    const listening = this.aiListening();
+    const decorations: monaco.editor.IModelDeltaDecoration[] = [];
+    lines.forEach((text, i) => {
+      const n = i + 1;
+      let hint = '';
+      if (n === cursorLine && /^\s*\/\/\s*$/.test(text) && !(lines[i - 1] ?? '').trimStart().startsWith('// ↳')) hint = 'type "AI: " and ask your question';
+      else if (n === cursorLine && /^\s*\/\/\s*$/.test(text)) hint = 'ask the AI something';
+      else if (requestAt(lines, i) && !isAnswered(lines, i)) hint = listening ? '⏳ the AI is reading along…' : '💤 the AI is not listening right now';
+      if (!hint) return;
+      decorations.push({
+        range: new monaco.Range(n, model.getLineMaxColumn(n), n, model.getLineMaxColumn(n)),
+        options: { after: { content: '  ' + hint, inlineClassName: 'ai-hint' } },
+      });
+    });
+    this.hints.set(decorations);
   }
 
   private layoutButtons(width: number): void {
@@ -224,6 +284,32 @@ export class CellEditor {
     this.editor.addCommand(monaco.KeyCode.Escape, () => this.close(true));
     this.editor.layout();
     this.editor.focus();
+    this.hints = this.editor.createDecorationsCollection();
+    this.editor.onDidChangeCursorPosition(() => this.updateHints());
+    this.editor.onDidChangeModelContent(() => this.updateHints());
+    this.hintTimer = window.setInterval(() => this.updateHints(), 3000);
+    this.updateHints();
+  }
+
+  /** Types code into the open editor over a few seconds so the player watches it grow. Progress follows the clock, so a throttled background tab still finishes on time. */
+  async typeCode(code: string, totalMs = 4000): Promise<boolean> {
+    const editor = this.editor;
+    const model = editor?.getModel();
+    if (!editor || !model) return false;
+    model.setValue('');
+    const started = performance.now();
+    let done = 0;
+    while (done < code.length) {
+      await new Promise((r) => setTimeout(r, 30));
+      if (this.editor !== editor) return false;
+      const next = Math.min(code.length, Math.ceil(((performance.now() - started) / totalMs) * code.length));
+      if (next <= done) continue;
+      const end = model.getFullModelRange().getEndPosition();
+      editor.executeEdits('assistant', [{ range: new monaco.Range(end.lineNumber, end.column, end.lineNumber, end.column), text: code.slice(done, next) }]);
+      editor.revealLine(model.getLineCount());
+      done = next;
+    }
+    return this.editor === editor;
   }
 
   handleButton(id: string): void {
@@ -241,6 +327,8 @@ export class CellEditor {
     if (!this.frame) return;
     const address = this.address!;
     const code = this.editor?.getValue() ?? '';
+    window.clearInterval(this.hintTimer);
+    this.hints = null;
     this.editor?.dispose();
     this.editor = null;
     this.sheet.setNodeLabel('ed:frame', null);

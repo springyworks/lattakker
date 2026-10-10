@@ -3,11 +3,13 @@ import { COLS } from './Sheet';
 import type { GameView } from '../game/GameView';
 import type { Hud } from '../ui/Hud';
 import { isLake } from '../game/model';
-import { GAME_NODE } from './reactivity';
+import { GAME_NODE, MODE_NODE, describeNode, ROWS_NODE, clickNode, codeNode, sizeNode } from './reactivity';
 import { CancelError, parseInterval, type RunContext } from './tasks';
 
 const MIN_INTERVAL_MS = 10;
 const MAX_OUTPUT_LINES = 300;
+/** An on() handler that wakes up more often than this is stuck in a loop and gets stopped. */
+const MAX_FIRES_PER_SECOND = 50;
 
 function fmt(value: unknown): string {
   if (typeof value === 'string') return value;
@@ -35,9 +37,21 @@ export function buildApi(
   const track = (dep: string): void => {
     if (ctx.tracking && !ctx.cancelled) sheet.trackRead(data.address, dep);
   };
+  /** What a cell looks like, to tell afterwards whether a write really changed it. */
+  const signature = (address: string): string => {
+    const d = sheet.dataAt(address);
+    return d ? JSON.stringify([d.output, d.viewText, d.codeVisual, d.error, d.span]) : '';
+  };
   const markWrite = (target: string): void => {
     ctx.guard();
     sheet.trackWrite(data.address, target);
+    if (!ctx.touched.has(target)) ctx.touched.set(target, signature(target));
+  };
+  // Tells the readers of every cell this context really changed (a timer writing into B4 wakes B4's readers).
+  ctx.flush = () => {
+    const entries = [...ctx.touched];
+    ctx.touched.clear();
+    for (const [address, before] of entries) if (signature(address) !== before) sheet.notifyChanged(address);
   };
 
   const makeRef = (address: string) => {
@@ -53,22 +67,25 @@ export function buildApi(
         return sheet.displayText(d);
       },
       get code() {
+        track(codeNode(address));
         return d.code;
       },
       get piece() {
         return view.pieceInfoAt(address);
       },
       get cols() {
+        track(sizeNode(address));
         return d.span.cols;
       },
       get rows() {
+        track(sizeNode(address));
         return d.span.rows;
       },
       get usedBy() {
         return sheet.dependentsOf(address);
       },
       get reads() {
-        return sheet.readsOf(address).map((a) => (a === GAME_NODE ? 'game' : a));
+        return sheet.readsOf(address).map(describeNode);
       },
       get isBoard() {
         return sheet.isBoardAddress(address);
@@ -122,6 +139,8 @@ export function buildApi(
             rows === undefined ? d.span.rows : Number(rows) || 1,
           );
         }
+        // Only reading the size makes a dependency; span(4, 2) is a decision, not a read.
+        if (cols === undefined && rows === undefined) track(sizeNode(address));
         return { cols: d.span.cols, rows: d.span.rows };
       },
       flash(color?: string) {
@@ -244,12 +263,13 @@ export function buildApi(
         if (!(err instanceof CancelError)) {
           data.error = err instanceof Error ? err.message : String(err);
           stop();
+          ctx.touched.set(data.address, '');
         }
       } finally {
         busy = false;
       }
       if (ctx.cancelled) return;
-      sheet.notifyChanged(data.address);
+      ctx.flush();
       if (again) {
         const next = again;
         again = null;
@@ -297,20 +317,56 @@ export function buildApi(
     return stop;
   };
 
-  const on = (target: unknown, fn: unknown): (() => void) => {
+  const sheetApi = {
+    get mode() {
+      track(MODE_NODE);
+      return sheet.mode;
+    },
+    cell: at,
+    range,
+    cols: COLS,
+    get rows() {
+      track(ROWS_NODE);
+      return sheet.rowCount;
+    },
+  };
+
+  const EVENT_NODES: Record<string, (address: string) => string> = {
+    change: (address) => address,
+    size: sizeNode,
+    code: codeNode,
+    click: clickNode,
+  };
+
+  /** on(target, fn) or on(target, event, fn); event is 'change' (default), 'size', 'code' or 'click'. */
+  const on = (target: unknown, second: unknown, third?: unknown): (() => void) => {
     ctx.guard();
-    if (typeof fn !== 'function') throw new Error("on needs a function: on('B7', (cell) => { ... })");
+    const fn = typeof second === 'function' ? second : third;
+    const event = typeof second === 'function' ? 'change' : String(second);
+    if (typeof fn !== 'function') throw new Error("on needs a function: on('B7', (cell) => { ... }) or on('B7', 'size', (cell) => { ... })");
     let nodes: string[];
-    if (target === 'game') {
+    let label: string;
+    if (target === 'sheet') {
+      label = 'sheet';
+      if (event === 'rows') nodes = [ROWS_NODE];
+      else if (event === 'mode') nodes = [MODE_NODE];
+      else throw new Error(`on('sheet', ...) understands 'rows' and 'mode', not '${event}'`);
+    } else if (target === 'game') {
+      label = 'game';
+      if (event !== 'change') throw new Error("on('game', ...) only has the 'change' event");
       nodes = [GAME_NODE];
     } else {
       const text = typeof target === 'object' && target !== null ? String((target as { address?: string }).address) : String(target);
-      nodes = sheet.resolveRange(text);
-      if (nodes.length === 0) {
+      label = text;
+      const nodeFor = EVENT_NODES[event];
+      if (!nodeFor) throw new Error(`Unknown event '${event}'. Try 'change', 'size', 'code' or 'click'`);
+      let addresses = sheet.resolveRange(text);
+      if (addresses.length === 0) {
         const one = sheet.resolve(text);
-        if (one) nodes = [one];
+        if (one) addresses = [one];
       }
-      if (nodes.length === 0) throw new Error(`"${text}" is not a cell, a range or 'game' (try on('B7', ...))`);
+      if (addresses.length === 0) throw new Error(`"${text}" is not a cell, a range, 'game' or 'sheet' (try on('B7', ...))`);
+      nodes = addresses.map(nodeFor);
     }
     let unsubscribe = () => {};
     let forget = () => {};
@@ -319,10 +375,28 @@ export function buildApi(
       forget();
     };
     const run = callback(fn as (...args: unknown[]) => unknown, stop);
-    unsubscribe = sheet.subscribe(nodes, (node) => void run(node === GAME_NODE ? trackedGame : makeRef(node)));
+    const stamps: number[] = [];
+    unsubscribe = sheet.subscribe(nodes, (node) => {
+      // A cell never wakes itself up by writing to itself.
+      if (event === 'change' && node === data.address) return;
+      const now = Date.now();
+      while (stamps.length && now - stamps[0] > 1000) stamps.shift();
+      stamps.push(now);
+      if (stamps.length > MAX_FIRES_PER_SECOND) {
+        data.error = `on('${label}', '${event}') woke up over ${MAX_FIRES_PER_SECOND} times in a second, so it was stopped. Does its function change what it watches?`;
+        stop();
+        sheet.notifyChanged(data.address);
+        return;
+      }
+      if (node === GAME_NODE) void run(trackedGame);
+      else if (node === ROWS_NODE || node === MODE_NODE) void run(sheetApi);
+      else void run(makeRef(node.includes(':') ? node.slice(node.indexOf(':') + 1) : node));
+    });
     forget = ctx.addTask(stop);
     return stop;
   };
+
+  const runInfo = Object.freeze({ reason: data.runReason, count: data.runCount });
 
   return {
     cell: self,
@@ -336,19 +410,11 @@ export function buildApi(
     after,
     on,
     stop: () => ctx.stopTasks(),
+    memory: data.memory,
+    run: runInfo,
     at,
     range,
-    sheet: {
-      get mode() {
-        return sheet.mode;
-      },
-      cell: at,
-      range,
-      cols: COLS,
-      get rows() {
-        return sheet.rowCount;
-      },
-    },
+    sheet: sheetApi,
     game: trackedGame,
     mode: sheet.mode,
     sleep: (time?: number | string) =>

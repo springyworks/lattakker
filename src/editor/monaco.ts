@@ -161,7 +161,19 @@ async function typescriptWorker(): Promise<Awaited<ReturnType<typeof ts.getTypeS
 }
 
 /** TypeScript -> JavaScript using Monaco's own TypeScript worker. */
+const transpiled = new Map<string, TranspileResult>();
+
 export async function transpile(address: string, source: string): Promise<TranspileResult> {
+  // Cells re-run often with the same code: skipping the worker keeps their output from blinking.
+  const hit = transpiled.get(source);
+  if (hit) return hit;
+  const result = await transpileUncached(address, source);
+  if (transpiled.size >= 300) transpiled.clear();
+  transpiled.set(source, result);
+  return result;
+}
+
+async function transpileUncached(address: string, source: string): Promise<TranspileResult> {
   const model = modelFor(address, source);
   const getWorker = await typescriptWorker();
   const client = await getWorker(model.uri);

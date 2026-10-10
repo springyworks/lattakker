@@ -15,6 +15,10 @@ export class RunContext {
   cancelled = false;
   /** True while the cell's top level is running: only then do reads become dependencies. */
   tracking = true;
+  /** Cells written to since the last flush, with what they looked like before (see api.ts). */
+  readonly touched = new Map<string, string>();
+  /** Tells the readers of every cell this context changed; set by the API once it exists. */
+  flush: () => void = () => {};
   private tasks = new Set<() => void>();
   private transient = new Set<() => void>();
 

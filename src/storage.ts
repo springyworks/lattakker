@@ -6,7 +6,7 @@ const KEY = 'lattakker:v1';
 interface SavedApp {
   game: SavedGame;
   rows: number;
-  cells: Array<[string, string]>;
+  cells: Array<[string, string, string?]>;
   mode: Mode;
 }
 
@@ -32,7 +32,7 @@ export function startAutoSave(game: Game, sheet: Sheet): () => void {
       const app: SavedApp = {
         game: game.serialize(),
         rows: sheet.rowCount,
-        cells: sheet.codeCells().map((d) => [d.address, d.code]),
+        cells: sheet.codeCells().map((d) => [d.address, d.code, d.uid]),
         mode: sheet.mode,
       };
       localStorage.setItem(KEY, JSON.stringify(app));

@@ -7,6 +7,26 @@
 /** Synthetic node for aggregate `game.*` reads that aren't tied to one address. */
 export const GAME_NODE = '__game__';
 
+/**
+ * Event nodes: things that are not a cell's text but can still change (its size, its code, a click,
+ * the sheet's row count or mode). They live in the same graph, so reading one makes a cell re-run
+ * when it changes and on(...) can subscribe to it.
+ */
+export const sizeNode = (address: string): string => `size:${address}`;
+export const codeNode = (address: string): string => `code:${address}`;
+export const clickNode = (address: string): string => `click:${address}`;
+export const ROWS_NODE = 'sheet:rows';
+export const MODE_NODE = 'sheet:mode';
+
+/** A node name in words, for popups and cell.reads: 'size:B2' becomes 'B2 size'. */
+export function describeNode(node: string): string {
+  if (node === GAME_NODE) return 'game';
+  if (node === ROWS_NODE) return 'sheet rows';
+  if (node === MODE_NODE) return 'sheet mode';
+  const i = node.indexOf(':');
+  return i > 0 ? `${node.slice(i + 1)} ${node.slice(0, i)}` : node;
+}
+
 export class DependencyGraph {
   /** address -> set of addresses it reads */
   private dependsOn = new Map<string, Set<string>>();

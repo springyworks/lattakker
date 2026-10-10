@@ -16,9 +16,21 @@ import {
   type CellStyle,
   type MouseListenerSet,
 } from '@maxgraph/core';
-import { colToLetters, expandRange, formatAddress, parseAddress, parseRange, shiftAddressesInCode } from './address';
+import {
+  type BlockMove,
+  type RefRewrite,
+  blockMoveRewrite,
+  colToLetters,
+  expandRange,
+  formatAddress,
+  mapAddressLiterals,
+  movedTo,
+  parseAddress,
+  parseRange,
+  rowInsertRewrite,
+} from './address';
 import { THEME } from '../theme';
-import { DependencyGraph } from './reactivity';
+import { DependencyGraph, MODE_NODE, ROWS_NODE, codeNode, sizeNode } from './reactivity';
 import { CancelError, RunContext } from './tasks';
 import { Spring } from './spring';
 
@@ -48,17 +60,41 @@ export interface CellVisual {
   verticalAlign?: 'top' | 'middle' | 'bottom';
 }
 
+/** What a move, swap or row insert did to the addresses written inside code. */
+export interface ReferenceReport {
+  /** How many address literals were rewritten. */
+  count: number;
+  /** The cells (at their new addresses) whose code changed. */
+  cells: string[];
+  /** Plain-language notes about references that could not safely be followed. */
+  warnings: string[];
+}
+
 export interface SheetCellData {
   address: string;
   col: number;
   row: number;
+  /** Stable id of the code: kept through edits, moves and row inserts, '' when the cell is empty. */
+  uid: string;
   code: string;
   output: string[];
   viewText: string | null;
   codeVisual: CellVisual;
   span: { cols: number; rows: number };
   error: string | null;
+  /** Survives re-runs and moves with the code; the cell's own notebook (see `memory` in the API). */
+  memory: Record<string, unknown>;
+  /** How many times this code has run since it was written or last moved. */
+  runCount: number;
+  /** Why the last run started: 'edit' (code written), 'moved' (block or row moved) or 'update'. */
+  runReason: RunReason;
 }
+
+export type RunReason = 'edit' | 'moved' | 'update';
+
+/** More than this many passes in RUNAWAY_WINDOW_MS means cells are triggering each other in a loop. */
+const RUNAWAY_PASSES = 400;
+const RUNAWAY_WINDOW_MS = 2000;
 
 export interface SheetListeners {
   onCellClick(address: string, evt: MouseEvent): void;
@@ -86,6 +122,11 @@ const BOARD_RE = /^[A-J](10|[1-9])$/;
 
 export function svgUri(svg: string): string {
   return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+}
+
+export function newUid(): string {
+  const words = crypto.getRandomValues(new Uint32Array(1));
+  return 'c-' + words[0].toString(16).padStart(8, '0');
 }
 
 export function escapeHtml(text: string): string {
@@ -121,6 +162,8 @@ export class Sheet {
   private contexts = new Map<string, RunContext>();
   private subscriptions = new Set<{ nodes: Set<string>; fire: (node: string) => void }>();
   private tickTouched = new Set<string>();
+  private nextReason = new Map<string, RunReason>();
+  private passTimes: number[] = [];
   private running = false;
   private runPending = false;
   private runTimer: number | null = null;
@@ -128,6 +171,7 @@ export class Sheet {
   private rowsInsertedHandlers: Array<(afterRowIndex: number) => void> = [];
   private contentMovedHandlers: Array<(from: string, to: string) => void> = [];
   private codeChangedHandlers: Array<(address: string) => void> = [];
+  private referencesHandlers: Array<(report: ReferenceReport) => void> = [];
   private afterRunHandlers: Array<() => void> = [];
   private contentDrag: ContentDragState | null = null;
   private contentDragBusy = false;
@@ -370,12 +414,16 @@ export class Sheet {
           address,
           col: c,
           row: r,
+          uid: '',
           code: '',
           output: [],
           viewText: null,
           codeVisual: {},
           span: { cols: 1, rows: 1 },
           error: null,
+          memory: {},
+          runCount: 0,
+          runReason: 'edit',
         });
       }
     }
@@ -490,6 +538,11 @@ export class Sheet {
     return this.data.get(address);
   }
 
+  addressOfUid(uid: string): string | null {
+    for (const d of this.data.values()) if (d.uid === uid) return d.address;
+    return null;
+  }
+
   resolve(text: string): string | null {
     const p = parseAddress(text);
     if (!p || p.col < 0 || p.col >= COLS || p.row < 0 || p.row >= this.rowCount) return null;
@@ -541,6 +594,52 @@ export class Sheet {
         this.applyStyle(address);
       }
     }, ms);
+  }
+
+  /** Fades a coloured band across a whole row (0-based), header included, so a new row is hard to miss. */
+  highlightRow(rowIndex: number, ms = 500, rgb: [number, number, number] = [143, 209, 163]): void {
+    if (rowIndex < 0 || rowIndex >= this.rowCount) return;
+    const steps = 10;
+    const model = this.graph.getDataModel();
+    const header = model.getCell(`hdr:r${rowIndex}`);
+    let step = 0;
+    const paint = (): void => {
+      const t = step / steps;
+      const color = '#' + rgb.map((v) => Math.round(v + (255 - v) * t).toString(16).padStart(2, '0')).join('');
+      this.graph.batchUpdate(() => {
+        for (let c = 0; c < COLS; c++) {
+          const address = formatAddress(c, rowIndex);
+          if (step >= steps) this.flashVisual.delete(address);
+          else this.flashVisual.set(address, { fill: color });
+          this.applyStyle(address);
+        }
+        if (header) model.setStyle(header, step >= steps ? { baseStyleNames: ['header'] } : { baseStyleNames: ['header'], fillColor: color });
+      });
+      if (step++ < steps) window.setTimeout(paint, ms / steps);
+    };
+    paint();
+  }
+
+  /** Scrolls so that the row (and column, if given) is on screen; does nothing when it already is. */
+  reveal(rowIndex: number, colIndex?: number, smooth = true): void {
+    const view = this.graph.getView();
+    const s = view.getScale();
+    const t = view.getTranslate();
+    const c = this.container;
+    const top = (ORIGIN_Y + rowIndex * CH + t.y) * s;
+    const h = CH * s;
+    const options: ScrollToOptions = { behavior: smooth ? 'smooth' : 'auto' };
+    if (top - HDR_H * s < c.scrollTop || top + h > c.scrollTop + c.clientHeight) {
+      options.top = Math.max(0, top - c.clientHeight / 2 + h / 2);
+    }
+    if (colIndex !== undefined) {
+      const left = (ORIGIN_X + colIndex * CW + t.x) * s;
+      const w = CW * s;
+      if (left - HDR_W * s < c.scrollLeft || left + w > c.scrollLeft + c.clientWidth) {
+        options.left = Math.max(0, left - c.clientWidth / 2 + w / 2);
+      }
+    }
+    if (options.top !== undefined || options.left !== undefined) c.scrollTo(options);
   }
 
   setOverlay(address: string, overlay: CellOverlay | null): void {
@@ -682,9 +781,52 @@ export class Sheet {
       model.setGeometry(cell, new Geometry(geo.x, geo.y, cols * CW, rows * CH));
       this.graph.orderCells(false, [cell]);
     });
+    this.depGraph.markDirty(sizeNode(address));
+    this.requestRun();
   }
 
   // ------------------------------------------------------------ content drag
+
+  /** Called after a move, swap or row insert rewrote the cell addresses written in code. */
+  onReferencesUpdated(handler: (report: ReferenceReport) => void): void {
+    this.referencesHandlers.push(handler);
+  }
+
+  /** Rewrites address literals in every cell's code at once; `relocate` says where each cell's code will live afterwards. */
+  private rewriteReferences(rewrite: RefRewrite, relocate: (address: string) => string): ReferenceReport {
+    const cells: string[] = [];
+    const warnings: string[] = [];
+    let count = 0;
+    for (const d of this.data.values()) {
+      if (!d.code) continue;
+      const result = mapAddressLiterals(d.code, rewrite);
+      if (result.count > 0) {
+        d.code = result.code;
+        count += result.count;
+        cells.push(relocate(d.address));
+      }
+      for (const literal of result.kept) {
+        warnings.push(`${relocate(d.address)} still says "${literal}", but cells there moved. Check that it points where you mean.`);
+      }
+    }
+    return { count, cells, warnings };
+  }
+
+  /** Wakes the cells whose code was rewritten (so timers and watchers pick up the new addresses) and tells the UI. */
+  private announceReferences(report: ReferenceReport): void {
+    for (const address of report.cells) {
+      this.depGraph.markDirty(address);
+      this.depGraph.markDirty(codeNode(address));
+    }
+    if (report.count === 0 && report.warnings.length === 0) return;
+    this.requestRun();
+    for (const address of report.cells) this.codeChangedHandlers.forEach((h) => h(address));
+    this.referencesHandlers.forEach((h) => h(report));
+  }
+
+  private blockRect(d: SheetCellData, cols: number, rows: number): BlockMove['from'] {
+    return { c1: d.col, r1: d.row, c2: d.col + cols - 1, r2: d.row + rows - 1 };
+  }
 
   onContentMoved(handler: (from: string, to: string) => void): void {
     this.contentMovedHandlers.push(handler);
@@ -750,20 +892,37 @@ export class Sheet {
     const to = this.data.get(toAddress)!;
     const { cols, rows } = from.span;
     if (!this.blockFits(fromAddress, toAddress, cols, rows)) return false;
+    const src = this.blockRect(from, cols, rows);
+    const dst = this.blockRect(to, cols, rows);
+    const overlapping = src.c1 <= dst.c2 && dst.c1 <= src.c2 && src.r1 <= dst.r2 && dst.r1 <= src.r2;
+    // Where the blocks do not overlap this is a swap with empty squares, so references to the empty spot follow it back.
+    const moves: BlockMove[] = overlapping ? [{ from: src, to: dst }] : [{ from: src, to: dst }, { from: dst, to: src }];
+    const references = this.rewriteReferences(blockMoveRewrite(moves), (a) => {
+      const p = this.data.get(a)!;
+      const next = movedTo(moves, { col: p.col, row: p.row });
+      return next ? formatAddress(next.col, next.row) : a;
+    });
     const code = from.code;
+    const uid = from.uid;
     const visual = from.codeVisual;
+    const memory = from.memory;
     const touched: string[] = [];
     for (const d of [from, to]) {
       for (let r = d.row; r < d.row + rows; r++) for (let c = d.col; c < d.col + cols; c++) touched.push(formatAddress(c, r));
     }
     this.graph.batchUpdate(() => {
       from.code = '';
+      from.uid = '';
       from.codeVisual = {};
+      from.memory = {};
+      from.runCount = 0;
       from.output = [];
       from.viewText = null;
       from.error = null;
       this.setSpan(fromAddress, 1, 1);
       to.code = code;
+      to.uid = uid;
+      to.memory = memory;
       to.codeVisual = visual;
       to.output = [];
       to.viewText = null;
@@ -773,12 +932,15 @@ export class Sheet {
       this.refreshCell(toAddress);
     });
     for (const a of new Set(touched)) this.depGraph.markDirty(a);
+    this.nextReason.set(toAddress, 'moved');
+    this.depGraph.markAllDirty([codeNode(fromAddress), codeNode(toAddress)]);
     this.requestRun();
     this.contentMovedHandlers.forEach((h) => h(fromAddress, toAddress));
     this.codeChangedHandlers.forEach((h) => {
       h(fromAddress);
       h(toAddress);
     });
+    this.announceReferences(references);
     return true;
   }
 
@@ -794,19 +956,38 @@ export class Sheet {
     if (to.span.cols > 1 || to.span.rows > 1) return false;
     if (this.coveredBy.has(toAddress)) return false;
 
+    // A swap: references to either cell follow its content to the other square.
+    const here = this.blockRect(from, 1, 1);
+    const there = this.blockRect(to, 1, 1);
+    const references = this.rewriteReferences(blockMoveRewrite([{ from: here, to: there }, { from: there, to: here }]), (a) =>
+      a === fromAddress ? toAddress : a === toAddress ? fromAddress : a,
+    );
+
     const fromCode = from.code;
+    const fromUid = from.uid;
     const fromVisual = from.codeVisual;
     const toCode = to.code;
+    const toUid = to.uid;
     const toVisual = to.codeVisual;
+    const fromMemory = from.memory;
+    const toMemory = to.memory;
+    const fromRuns = from.runCount;
+    const toRuns = to.runCount;
 
     this.graph.batchUpdate(() => {
       to.code = fromCode;
+      to.uid = fromUid;
       to.codeVisual = fromVisual;
+      to.memory = fromMemory;
+      to.runCount = fromRuns;
       to.output = [];
       to.viewText = null;
       to.error = null;
       from.code = toCode;
+      from.uid = toUid;
       from.codeVisual = toVisual;
+      from.memory = toMemory;
+      from.runCount = toRuns;
       from.output = [];
       from.viewText = null;
       from.error = null;
@@ -815,12 +996,16 @@ export class Sheet {
     });
     this.depGraph.markDirty(fromAddress);
     this.depGraph.markDirty(toAddress);
+    this.depGraph.markAllDirty([codeNode(fromAddress), codeNode(toAddress)]);
+    this.nextReason.set(toAddress, 'moved');
+    if (toCode.trim()) this.nextReason.set(fromAddress, 'moved');
     this.requestRun();
     this.contentMovedHandlers.forEach((h) => h(fromAddress, toAddress));
     this.codeChangedHandlers.forEach((h) => {
       h(fromAddress);
       h(toAddress);
     });
+    this.announceReferences(references);
     return true;
   }
 
@@ -912,7 +1097,7 @@ export class Sheet {
   /**
    * Inserts a blank row right after `afterRowIndex` (0-based), like a spreadsheet: everything from
    * that point down shifts down by one row, the sheet grows by one row at the bottom, and every code
-   * cell's address-literal references are rewritten to match (see shiftAddressesInCode). Only allowed
+   * cell's address-literal references are rewritten to match (see rowInsertRewrite). Only allowed
    * below row 11 (0-based index >= 11), since rows 0-9 are the Lattakker board.
    */
   insertRow(afterRowIndex: number): void {
@@ -923,9 +1108,10 @@ export class Sheet {
 
     // Rewrite address references in every code cell's source first (independent of where the code
     // currently lives — a cell anywhere may reference a row that's about to shift).
-    for (const d of this.data.values()) {
-      if (d.code) d.code = shiftAddressesInCode(d.code, fromRow1Based, 1);
-    }
+    const references = this.rewriteReferences(rowInsertRewrite(fromRow1Based, 1), (a) => {
+      const p = this.data.get(a)!;
+      return p.row > afterRowIndex ? formatAddress(p.col, p.row + 1) : a;
+    });
 
     this.graph.batchUpdate(() => {
       // Append one fresh blank row at the bottom so there's a destination slot to shift into.
@@ -944,12 +1130,16 @@ export class Sheet {
           address,
           col: c,
           row: newRowIndex,
+          uid: '',
           code: '',
           output: [],
           viewText: null,
           codeVisual: {},
           span: { cols: 1, rows: 1 },
           error: null,
+          memory: {},
+          runCount: 0,
+          runReason: 'edit',
         });
       }
       this.rowCount = oldRowCount + 1;
@@ -972,10 +1162,17 @@ export class Sheet {
           const dst = this.data.get(formatAddress(c, r))!;
           const src = this.data.get(formatAddress(c, r - 1))!;
           dst.code = src.code;
+          dst.uid = src.uid;
+          dst.memory = src.memory;
+          dst.runCount = src.runCount;
         }
       }
       for (let c = 0; c < COLS; c++) {
-        this.data.get(formatAddress(c, afterRowIndex + 1))!.code = '';
+        const fresh = this.data.get(formatAddress(c, afterRowIndex + 1))!;
+        fresh.code = '';
+        fresh.uid = '';
+        fresh.memory = {};
+        fresh.runCount = 0;
       }
 
       // Clear transient per-cell state across the whole shifted band; it'll be rebuilt by requestRun().
@@ -1009,22 +1206,34 @@ export class Sheet {
       for (let c = 0; c < COLS; c++) {
         const addr = formatAddress(c, r);
         this.depGraph.markDirty(addr);
+        if (this.data.get(addr)?.code) this.nextReason.set(addr, 'moved');
         this.codeChangedHandlers.forEach((h) => h(addr));
       }
     }
+    this.depGraph.markDirty(ROWS_NODE);
     this.rowsInsertedHandlers.forEach((h) => h(afterRowIndex));
+    this.announceReferences(references);
     this.requestRun();
   }
 
   // ------------------------------------------------------------------- code
 
-  setCode(address: string, code: string): void {
+  /** `uid` restores a saved identity; code written into a cell without one gets a fresh uid. */
+  setCode(address: string, code: string, uid?: string): void {
     const d = this.data.get(address);
     if (!d) return;
+    const changed = d.code !== code;
     d.code = code;
+    if (!code.trim()) d.uid = '';
+    else if (uid) d.uid = uid;
+    else if (!d.uid) d.uid = newUid();
     d.error = null;
+    d.runCount = 0;
+    this.nextReason.set(address, 'edit');
     this.stopTasks(address);
+    if (changed) this.depGraph.markDirty(codeNode(address));
     if (!code.trim()) {
+      d.memory = {};
       d.output = [];
       d.viewText = null;
       d.codeVisual = {};
@@ -1048,7 +1257,8 @@ export class Sheet {
 
   /** Cells whose code read `address` last time they ran. */
   dependentsOf(address: string): string[] {
-    return this.depGraph.dependentsOf(address);
+    const all = [address, sizeNode(address), codeNode(address)].flatMap((n) => this.depGraph.dependentsOf(n));
+    return [...new Set(all)];
   }
 
   /** What the code in `address` read last time it ran. */
@@ -1110,7 +1320,15 @@ export class Sheet {
     this.graph.batchUpdate(() => {
       for (const d of this.data.values()) if (d.code) this.refreshCell(d.address);
     });
+    this.depGraph.markDirty(MODE_NODE);
+    this.requestRun();
     this.modeChangeHandlers.forEach((h) => h(mode));
+  }
+
+  /** Announces that something happened (a click on a cell, say); watchers of `node` wake up. */
+  pulse(node: string): void {
+    this.depGraph.markDirty(node);
+    this.requestRun();
   }
 
   /** Re-runs every code cell soon (coalesces bursts of events). */
@@ -1133,9 +1351,24 @@ export class Sheet {
       const universe = this.codeCells().map((d) => d.address);
       const live = new Set(universe);
       for (const address of [...this.contexts.keys()]) if (!live.has(address)) this.stopTasks(address);
-      const order = this.depGraph.closure(universe);
+      let order = this.depGraph.closure(universe);
       const touched = new Set([...this.depGraph.lastTouched, ...this.tickTouched]);
       this.tickTouched.clear();
+      if (order.length) {
+        const now = Date.now();
+        this.passTimes = this.passTimes.filter((t) => now - t < RUNAWAY_WINDOW_MS);
+        this.passTimes.push(now);
+        if (this.passTimes.length > RUNAWAY_PASSES) {
+          // Cells keep waking each other up (a loop). Stop the chain and say so on the cells involved.
+          for (const address of order) {
+            const d = this.data.get(address);
+            if (d) d.error = 'Stopped: cells keep re-running each other in a loop. Does a cell change something it also reads or watches?';
+            this.refreshCell(address);
+          }
+          this.passTimes = [];
+          order = [];
+        }
+      }
       if (order.length) {
         const resetSet = new Set(order);
         for (const w of this.depGraph.writeTargets(order)) resetSet.add(w);
@@ -1154,6 +1387,9 @@ export class Sheet {
           const d = this.data.get(address);
           if (!d) continue;
           const ctx = this.startRun(address);
+          d.runReason = this.nextReason.get(address) ?? 'update';
+          this.nextReason.delete(address);
+          d.runCount += 1;
           const finished = Promise.resolve()
             .then(() => this.runner!(d, ctx))
             .catch((err) => {
@@ -1171,12 +1407,15 @@ export class Sheet {
           ]);
           window.clearTimeout(slice);
           if (inTime) {
+            ctx.touched.clear();
             this.refreshCell(address);
           } else {
             // A slow cell (a long await loop) must not hold up the others: let it carry on in the
             // background and tell whoever reads it once it is done.
             void finished.then(() => {
-              if (this.contexts.get(address) === ctx) this.notifyChanged(address);
+              if (this.contexts.get(address) !== ctx) return;
+              ctx.flush();
+              this.notifyChanged(address);
             });
           }
         }

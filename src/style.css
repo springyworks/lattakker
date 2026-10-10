@@ -231,3 +231,73 @@ body.grab-armed #app {
   touch-action: manipulation;
   padding-bottom: env(safe-area-inset-bottom);
 }
+
+/* Long-sheet navigator: a "Go to" box and a miniature of the whole sheet along the right edge. */
+#nav {
+  position: fixed;
+  right: 20px;
+  top: 34px;
+  bottom: calc(var(--dock-h, 0px) + 12px);
+  width: 58px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  pointer-events: none;
+}
+#nav input {
+  pointer-events: auto;
+  width: 54px;
+  box-sizing: border-box;
+  padding: 3px 5px;
+  font: 12px system-ui, sans-serif;
+  color: #1f2933;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #b8bfc7;
+  border-radius: 6px;
+  outline: none;
+  -webkit-user-select: text;
+  user-select: text;
+}
+#nav input:focus {
+  border-color: #2f4b66;
+  width: 80px;
+}
+#nav input.bad {
+  border-color: #a8433e;
+  background: #f6e3e1;
+}
+#nav-track {
+  pointer-events: auto;
+  position: relative;
+  flex: 1;
+  width: 14px;
+  min-height: 40px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid #c4cbd3;
+  border-radius: 7px;
+  overflow: hidden;
+  cursor: pointer;
+  touch-action: none;
+}
+#nav-track canvas {
+  position: absolute;
+  inset: 0;
+}
+#nav-window {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: rgba(47, 75, 102, 0.22);
+  border-top: 2px solid #2f4b66;
+  border-bottom: 2px solid #2f4b66;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+.ai-hint {
+  color: #8a8f98;
+  font-style: italic;
+  font-size: 0.9em;
+}

@@ -13,8 +13,9 @@ import { EXAMPLES } from './examples';
 import { colToLetters, formatAddress, parseAddress } from './sheet/address';
 import { COLS, CW, ORIGIN_X } from './sheet/Sheet';
 import { Dock } from './ui/Dock';
+import { Navigator } from './ui/Navigator';
 import { fitBoardToWidth, installGrabGesture, installPinchZoom } from './ui/touch';
-import { GAME_NODE } from './sheet/reactivity';
+import { GAME_NODE, clickNode, describeNode } from './sheet/reactivity';
 import { installAiSurface } from './ai/surface';
 import { THEME } from './theme';
 import { loadSaved, startAutoSave } from './storage';
@@ -28,6 +29,8 @@ const HELP = `How to play Lattakker
 Sheet tricks
 • Double-click any cell to write TypeScript. Ctrl+Enter runs it, Esc saves and closes.
 • Cells can print, change colour, read other cells (at('A12')), paint ranges (range('A1:J10')) and even move pieces.
+• Move a cell or insert a row and the addresses in your code follow along.
+• Type a cell like Q120 in the Go to box (right edge) to jump around a long sheet.
 • Make things tick: every('1s', () => ...) or watch a square: on('E5', () => ...). Right-click a cell to see who uses it.`;
 
 const HELP_SHORT = 'Pick a red piece, tap a dot to move it. Tap a red cross to attack. Higher rank wins. Capture the Blue flag to win.';
@@ -124,6 +127,7 @@ function pressButton(id: string): void {
 
 sheet.setListeners({
   onCellClick(address) {
+    sheet.pulse(clickNode(address));
     if (sheet.isBoardAddress(address)) {
       lastSheetCell = address;
       view.onSquareClick(address);
@@ -240,8 +244,22 @@ sheet.onContentMoved((from, to) => {
     sheet.setSelectionVisual(selectedCodeCell, { stroke: THEME.select, strokeWidth: 3 });
   }
   if (lastSheetCell === from) lastSheetCell = to;
-  if (editor.isOpen && editor.address === from) editor.close(false);
+  if (editor.isOpen && (editor.address === from || editor.address === to)) editor.close(false);
   hud.say(`Moved ${from}'s content to ${to} 📦`, 'good');
+});
+
+sheet.onReferencesUpdated(({ count, cells, warnings }) => {
+  if (editor.isOpen) editor.refreshFromSheet();
+  if (cells.length > 0 && cells.length <= 12) for (const address of cells) sheet.flash(address, THEME.flash, 700);
+  const parts: string[] = [];
+  if (count > 0) {
+    parts.push(
+      `Updated ${count} ${count === 1 ? 'reference' : 'references'} in ${cells.length <= 4 ? cells.join(', ') : `${cells.length} cells`} so the code still points at the same cells.`,
+    );
+  }
+  parts.push(...warnings.slice(0, 3));
+  if (warnings.length > 3) parts.push(`(and ${warnings.length - 3} more like that)`);
+  hud.say(parts.join(' '), warnings.length > 0 ? 'bad' : 'good');
 });
 
 InternalEvent.disableContextMenu(container);
@@ -254,7 +272,9 @@ popupMenu.factoryMethod = (menu, cell) => {
     if (rowIndex < 11) return;
     menu.addItem(`Insert row below ${rowIndex + 1}`, null, () => {
       sheet.insertRow(rowIndex);
-      hud.say(`Inserted a row below ${rowIndex + 1}. References in code are updated.`, 'good');
+      sheet.reveal(rowIndex + 1);
+      sheet.highlightRow(rowIndex + 1);
+      hud.say(`Inserted a new row ${rowIndex + 2}. Everything below moved down one; references in code are updated.`, 'good');
     });
   } else if (id.startsWith('sheet:')) {
     const address = id.slice(6);
@@ -270,6 +290,21 @@ popupMenu.factoryMethod = (menu, cell) => {
           hud.say(`Stopped the timers and watchers in ${address}.`, 'good');
         });
       }
+      const d = sheet.dataAt(address);
+      if (d?.code) {
+        const { cols, rows } = d.span;
+        const sub = menu.addItem(`Size ${cols}×${rows}`, null, () => {});
+        const resize = (c: number, r: number): void => {
+          sheet.setSpan(address, c, r);
+          const now = sheet.dataAt(address)!.span;
+          hud.say(`${address} is now ${now.cols}×${now.rows}. Code that reads cell.cols or watches 'size' wakes up.`, 'good');
+        };
+        menu.addItem('Wider', null, () => resize(cols + 1, rows), sub);
+        menu.addItem('Narrower', null, () => resize(cols - 1, rows), sub, undefined, cols > 1);
+        menu.addItem('Taller', null, () => resize(cols, rows + 1), sub);
+        menu.addItem('Shorter', null, () => resize(cols, rows - 1), sub, undefined, rows > 1);
+        menu.addItem('Back to 1×1', null, () => resize(1, 1), sub, undefined, cols > 1 || rows > 1);
+      }
       menu.addSeparator();
     }
     addCellList(menu, 'Used by', sheet.dependentsOf(address), 'No cell reads this one');
@@ -281,7 +316,7 @@ popupMenu.factoryMethod = (menu, cell) => {
 function addCellList(menu: MaxPopupMenu, title: string, items: string[], emptyText: string): void {
   const board = items.filter((a) => sheet.isBoardAddress(a));
   const others = items.filter((a) => !sheet.isBoardAddress(a) && a !== GAME_NODE);
-  const parts = [...others];
+  const parts = others.map(describeNode);
   if (items.includes(GAME_NODE)) parts.push('game');
   if (board.length > 0) parts.push(board.length === 1 ? board[0] : `${board.length} board squares`);
   if (parts.length === 0) {
@@ -290,7 +325,8 @@ function addCellList(menu: MaxPopupMenu, title: string, items: string[], emptyTe
   }
   const sub = menu.addItem(`${title} (${parts.length})`, null, () => {});
   for (const part of parts.slice(0, 14)) {
-    const target = parseAddress(part) ? part : null;
+    const first = part.split(' ')[0];
+    const target = parseAddress(first) ? first : null;
     menu.addItem(part, null, () => {
       if (!target) return;
       sheet.flash(target, THEME.flash, 600);
@@ -299,15 +335,43 @@ function addCellList(menu: MaxPopupMenu, title: string, items: string[], emptyTe
   }
 }
 
+new Navigator(sheet, {
+  onJump({ address, row }) {
+    sheet.reveal(row, address ? parseAddress(address)?.col : undefined);
+    if (!address) {
+      sheet.highlightRow(row, 800, [247, 214, 130]);
+      hud.say(`Row ${row + 1}.`, 'info');
+    } else if (sheet.isBoardAddress(address)) {
+      sheet.flash(address, THEME.flash, 800);
+    } else {
+      selectCodeCell(address);
+    }
+  },
+  onBadInput(text) {
+    hud.say(`"${text}" is not a cell or a row. Try Q120 or 120.`, 'bad');
+  },
+});
+
+/** Puts the example cells into every cell that is still empty (cells you wrote yourself are never touched). */
+function loadExamples(): number {
+  let added = 0;
+  for (const [address, code] of EXAMPLES) {
+    if (sheet.dataAt(address)?.code.trim()) continue;
+    sheet.setCode(address, code);
+    added++;
+  }
+  return added;
+}
+
 if (restored && saved) {
   while (sheet.rowCount < saved.rows && sheet.rowCount < 500) sheet.insertRow(sheet.rowCount - 1);
-  for (const [address, code] of saved.cells) sheet.setCode(address, code);
+  for (const [address, code, uid] of saved.cells) sheet.setCode(address, code, uid);
   if (saved.mode === 'view') toggleMode();
 } else {
-  for (const [address, code] of EXAMPLES) sheet.setCode(address, code);
+  loadExamples();
 }
 scheduleSave = startAutoSave(view.game, sheet);
 
 // Expose a few handles for tinkering from the browser console / AI chats.
-Object.assign(window as unknown as Record<string, unknown>, { sheet, game: view.game, view, hud });
+Object.assign(window as unknown as Record<string, unknown>, { sheet, game: view.game, view, hud, loadExamples });
 installAiSurface({ sheet, view, hud, editor });
