@@ -36,6 +36,11 @@ export class CellEditor {
   private restoreGeo: Geometry | null = null;
   private hints: monaco.editor.IEditorDecorationsCollection | null = null;
   private hintTimer = 0;
+  private outTimer = 0;
+  private outBox: HTMLElement | null = null;
+  private outCell: HTMLElement | null = null;
+  private outHtml = '';
+  private outOpen = false;
   /** Set by the AI bridge: is an assistant listening for questions right now? */
   aiListening: () => boolean = () => false;
 
@@ -143,6 +148,50 @@ export class CellEditor {
     }
     this.layoutButtons(w);
     this.editor?.layout();
+    this.layoutOutput();
+  }
+
+  /** The output pane: the cell's latest output, shrunk to a strip, or (after a click) at real cell size, a bit scaled up. */
+  private layoutOutput(): void {
+    const box = this.outBox;
+    const cell = this.outCell;
+    const geo = this.address ? this.sheet.geometryOf(this.address) : null;
+    if (!box || !cell || !geo || !this.frame) return;
+    const cw = Math.max(20, geo.width);
+    const ch = Math.max(20, geo.height);
+    const availW = Math.max(40, this.frame.getGeometry()!.width - 4);
+    let k: number;
+    if (this.outOpen) {
+      const maxH = Math.max(80, this.frame.getGeometry()!.height * 0.65);
+      k = Math.min(1.3, availW / cw, maxH / ch);
+      box.style.height = `${Math.ceil(ch * k) + 6}px`;
+    } else {
+      box.style.height = '64px';
+      k = Math.min(1, 58 / ch, availW / cw);
+    }
+    cell.style.width = `${cw}px`;
+    cell.style.height = `${ch}px`;
+    cell.style.transform = `scale(${k})`;
+    cell.style.margin = '3px';
+    this.renderOutput(true);
+  }
+
+  private renderOutput(force = false): void {
+    const cell = this.outCell;
+    const geo = this.address ? this.sheet.geometryOf(this.address) : null;
+    if (!cell || !geo || !this.address) return;
+    if (!force && cell.dataset.size !== `${geo.width}x${geo.height}`) {
+      this.layoutOutput();
+      return;
+    }
+    const html = this.sheet.outputHtml(this.address, { width: geo.width, height: geo.height }, true);
+    const fill = this.sheet.fillOf(this.address);
+    const key = fill + html;
+    if (!force && key === this.outHtml) return;
+    this.outHtml = key;
+    cell.style.background = fill;
+    cell.innerHTML = html || '<div class="cell-text out" style="color:#9aa5b1">(no output yet: press Run)</div>';
+    cell.dataset.size = `${geo.width}x${geo.height}`;
   }
 
   private setFrameGeometry(x: number, y: number, w: number, h: number): void {
@@ -273,6 +322,27 @@ export class CellEditor {
     body.className = 'cell-editor-body';
     host.appendChild(titleBar);
     host.appendChild(body);
+    const out = document.createElement('div');
+    out.className = 'cell-editor-out';
+    out.title = 'The latest output of this cell. Click to enlarge or shrink.';
+    const tag = document.createElement('div');
+    tag.className = 'cell-editor-out-tag';
+    tag.textContent = 'output · click to enlarge';
+    const outCell = document.createElement('div');
+    outCell.className = 'cell-editor-out-cell';
+    out.appendChild(tag);
+    out.appendChild(outCell);
+    out.addEventListener('click', () => {
+      this.outOpen = !this.outOpen;
+      out.classList.toggle('open', this.outOpen);
+      tag.textContent = this.outOpen ? 'output · click to shrink' : 'output · click to enlarge';
+      this.layoutOutput();
+    });
+    host.appendChild(out);
+    this.outBox = out;
+    this.outCell = outCell;
+    this.outOpen = false;
+    this.outHtml = '';
     for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click', 'dblclick', 'contextmenu', 'wheel', 'touchstart', 'keydown']) {
       host.addEventListener(type, (e) => e.stopPropagation(), { passive: type === 'wheel' || type === 'touchstart' });
     }
@@ -289,6 +359,8 @@ export class CellEditor {
     this.editor.onDidChangeModelContent(() => this.updateHints());
     this.hintTimer = window.setInterval(() => this.updateHints(), 3000);
     this.updateHints();
+    this.layoutOutput();
+    this.outTimer = window.setInterval(() => this.renderOutput(), 400);
   }
 
   /** Types code into the open editor over a few seconds so the player watches it grow. Progress follows the clock, so a throttled background tab still finishes on time. */
@@ -328,6 +400,9 @@ export class CellEditor {
     const address = this.address!;
     const code = this.editor?.getValue() ?? '';
     window.clearInterval(this.hintTimer);
+    window.clearInterval(this.outTimer);
+    this.outBox = null;
+    this.outCell = null;
     this.hints = null;
     this.editor?.dispose();
     this.editor = null;

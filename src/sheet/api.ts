@@ -5,6 +5,7 @@ import type { Hud } from '../ui/Hud';
 import { isLake } from '../game/model';
 import { GAME_NODE, MODE_NODE, describeNode, ROWS_NODE, clickNode, codeNode, sizeNode } from './reactivity';
 import { CancelError, parseInterval, type RunContext } from './tasks';
+import { makePlot, type PlotOptions } from './plot';
 
 const MIN_INTERVAL_MS = 10;
 const MAX_OUTPUT_LINES = 300;
@@ -40,7 +41,7 @@ export function buildApi(
   /** What a cell looks like, to tell afterwards whether a write really changed it. */
   const signature = (address: string): string => {
     const d = sheet.dataAt(address);
-    return d ? JSON.stringify([d.output, d.viewText, d.codeVisual, d.error, d.span]) : '';
+    return d ? JSON.stringify([d.output, d.plot, d.viewText, d.codeVisual, d.error, d.span]) : '';
   };
   const markWrite = (target: string): void => {
     ctx.guard();
@@ -103,12 +104,19 @@ export function buildApi(
       clear() {
         markWrite(address);
         d.output = [];
+        d.plot = null;
         sheet.refreshCell(address);
         return ref;
       },
       show(...values: unknown[]) {
         markWrite(address);
         d.output = [values.map(fmt).join(' ')];
+        sheet.refreshCell(address);
+        return ref;
+      },
+      plot(data: unknown, options?: PlotOptions) {
+        markWrite(address);
+        d.plot = makePlot(data, options);
         sheet.refreshCell(address);
         return ref;
       },
@@ -231,6 +239,7 @@ export function buildApi(
   const self = makeRef(data.address) as {
     print(...v: unknown[]): unknown;
     view(t: string): unknown;
+    plot(d: unknown, o?: PlotOptions): unknown;
     color(f: string): unknown;
     span(c?: number, r?: number): { cols: number; rows: number };
     clear(): unknown;
@@ -402,6 +411,7 @@ export function buildApi(
     cell: self,
     print: (...values: unknown[]) => void self.print(...values),
     view: (text: string) => void self.view(text),
+    plot: (data: unknown, options?: PlotOptions) => void self.plot(data, options),
     color: (fill: string) => void self.color(fill),
     clear: () => void self.clear(),
     show: (...values: unknown[]) => void self.show(...values),

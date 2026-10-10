@@ -214,6 +214,23 @@ TypeScript is JavaScript with labels that catch mistakes while you type
 (`let age: number = 10`; try `age = 'ten'` and the editor underlines it). If
 you know Java or C#, it will feel familiar: classes, interfaces, generics,
 `async`/`await`. It is "Java, only lighter and it runs in every browser".
+
+**The coach.** When a line has a mistake, the editor puts a short friendly hint
+on a line above it (Monaco CodeLens), a moment after you stop typing. For
+`const red = game.piecies('red')` it says `💡 piecies is waarschijnlijk
+verkeerd gespeld | 💡 probeer const red = game.pieces('red')`. The guess comes
+from TypeScript's own "Did you mean ...?"; other errors (unknown name, missing
+bracket, wrong kind of value) get a plain-words hint too. The hints are only
+advice: the coach never changes your code. The text lives in
+`src/editor/coachHints.ts`.
+
+**Recipes.** Start typing a word like `stopwatch`, `button` or `countdown` in
+any code editor (the big one or a cell's own) and the suggestion list offers
+a small ready-made program; Tab jumps between the spots to change. Each one has
+a `// Try: ...` line. The list also holds every example from the sheet, marked
+`example`, so a player can pull one into a new cell. Recipes and examples are
+kept in the code (`src/recipes.ts`, `src/examples.ts`), so they stay as
+written even when someone edits the example cells in the sheet.
 Everything you can use inside a cell is listed in [8 Programmer's manual: the cell API](#8-programmers-manual-the-cell-api).
 
 ## 8 Programmer's manual: the cell API
@@ -231,11 +248,24 @@ Top-level `await` works. The editor shows these names with help text as you type
 |---|---|
 | `print(...values)` | Add a line to this cell's output (shown in run mode). Only the last 300 lines are kept. |
 | `show(...values)` | Replace the output with one line. Use this for displays that update in place. |
-| `clear()` | Empty the output. |
+| `clear()` | Empty the output and remove the plot. |
+| `plot(data, options?)` | Draw an XY plot as this cell's output. `data` is a list of numbers, a list of `[x, y]` pairs, a list of `{ x, y }` points, a function of x such as `Math.sin` or `(x) => x * x`, or an object of several of these (`{ sin: Math.sin, cos: Math.cos }`, drawn with a legend). Options: `title`, `xLabel`, `yLabel`, `from`/`to`/`steps` (for functions: default -10 to 10 in 200 steps), `dots`, `color`. Call it again to redraw (do this inside `every()` for a live plot). Whatever you `print` or `show` becomes a caption under the plot. Make the cell bigger with `span(4, 3)`; a small cell draws a bare line without axes. |
 | `view(text)` | Replace what is shown in view mode (default: the code itself). |
 | `color(fill)` | Background colour, e.g. `'#ffd6e7'` or `'lightgreen'`. |
 | `log(...values)` | Like `print`, and also writes to the browser console. |
 | `span(cols?, rows?)` | Merge the cell over `cols` x `rows` cells (never over the board). Leave one out to keep it: `span(4)` keeps the rows. With no arguments it changes nothing and returns `{ cols, rows }`. |
+
+```ts
+span(4, 3)
+plot(Math.sin, { from: 0, to: 6.28, title: 'A wave' })
+show('sin(x) from 0 to 2π')
+```
+
+The output pane of the editor: the floating editor has a strip below the code
+that shows the latest output of the cell you are editing, plot included. Click
+it to see the cell at its real size (a bit scaled up) while you keep typing;
+click again to shrink it. It follows the cell live, so a timer or a plot that
+redraws keeps moving there too.
 
 The cell's size can be set (and read) from code. Dragging a cell border to
 resize it is deliberately not offered: rewriting your `span(...)` line behind

@@ -3,6 +3,9 @@ import { typescript as ts } from 'monaco-editor';
 import editorWorker from 'monaco-editor/editor/editor.worker?worker';
 import tsWorker from 'monaco-editor/language/typescript/ts.worker?worker';
 import { CELL_API_DTS } from '../sheet/apiTypes';
+import { EXAMPLES } from '../examples';
+import { RECIPES, exampleRecipes } from '../recipes';
+import { coachFor } from './coachHints';
 import { THEME } from '../theme';
 
 declare global {
@@ -98,37 +101,78 @@ const KID_FRIENDLY: monaco.editor.IStandaloneEditorConstructionOptions = {
   links: false,
   colorDecorators: false,
   unicodeHighlight: { ambiguousCharacters: false, invisibleCharacters: false, nonBasicASCII: false },
-  lightbulb: { enabled: monaco.editor.ShowLightbulbIconMode.Off },
+  lightbulb: { enabled: monaco.editor.ShowLightbulbIconMode.OnCode },
+  codeLens: true,
   stickyScroll: { enabled: false },
 };
 
-/** Small ready-made pieces of code shown in the completion list. */
-const SNIPPETS: Array<{ label: string; doc: string; body: string }> = [
-  { label: 'print text', doc: 'Show text in this cell', body: "print('${1:Hello}')" },
-  { label: 'if', doc: 'Do something only when a test is true', body: 'if (${1:condition}) {\n  ${2}\n}' },
-  { label: 'for each square', doc: 'Visit every square of the board', body: "for (const square of range('A1:J10')) {\n  ${1:square.color('#d9e8dd')}\n}" },
-  { label: 'for each red piece', doc: 'Visit every piece of the Red army', body: "for (const piece of game.pieces('red')) {\n  ${1:print(piece.name, piece.address)}\n}" },
-  { label: 'colour my cell', doc: 'Change the background colour of this cell', body: "color('${1:#d9e8dd}')" },
-  { label: 'count pieces', doc: 'Count the pieces of one colour', body: "const ${1:count} = game.pieces('${2:red}').length\nprint(${1:count})" },
-  { label: 'read another cell', doc: 'Look at another cell by address', body: "const ${1:other} = at('${2:A12}')\nprint(${1:other}.text)" },
-];
+const EXAMPLE_RECIPES = exampleRecipes(EXAMPLES);
 
+// Recipes and the sheet's examples join the completion list of every cell editor (floating pane and inline).
 monaco.languages.registerCompletionItemProvider('typescript', {
   provideCompletionItems(model, position) {
+    if (!model.uri.path.startsWith('/cells/')) return { suggestions: [] };
     const word = model.getWordUntilPosition(position);
     const range = new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn);
-    return {
-      suggestions: SNIPPETS.map((snip) => ({
-        label: snip.label,
-        kind: monaco.languages.CompletionItemKind.Snippet,
-        documentation: snip.doc,
-        insertText: snip.body,
-        insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-        range,
-      })),
-    };
+    const recipes = RECIPES.map((r) => ({
+      label: r.label,
+      kind: monaco.languages.CompletionItemKind.Snippet,
+      detail: 'recipe',
+      documentation: r.doc,
+      insertText: r.body,
+      insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+      sortText: '1' + r.label,
+      range,
+    }));
+    const examples = EXAMPLE_RECIPES.map((r) => ({
+      label: r.label,
+      kind: monaco.languages.CompletionItemKind.File,
+      detail: 'example',
+      documentation: r.doc,
+      insertText: r.code,
+      sortText: '9' + r.label,
+      range,
+    }));
+    return { suggestions: [...recipes, ...examples] };
   },
 });
+
+// The coach: a friendly hint above each line that has an error (CodeLens). It follows the TypeScript markers,
+// a little after the child stops typing so half-written words do not flash.
+const coachChanged = new monaco.Emitter<monaco.languages.CodeLensProvider>();
+let coachTimer = 0;
+monaco.editor.onDidChangeMarkers((uris) => {
+  if (!uris.some((u) => u.path.startsWith('/cells/'))) return;
+  window.clearTimeout(coachTimer);
+  coachTimer = window.setTimeout(() => coachChanged.fire(coachProvider), 700);
+});
+
+/** The coach's hint lines per error line of a cell model (line number -> hints). */
+export function coachLines(model: monaco.editor.ITextModel): Map<number, string[]> {
+  const out = new Map<number, string[]>();
+  if (model.isDisposed()) return out;
+  for (const marker of monaco.editor.getModelMarkers({ resource: model.uri })) {
+    if (marker.severity !== monaco.MarkerSeverity.Error || out.has(marker.startLineNumber) || marker.endLineNumber > model.getLineCount()) continue;
+    const code = Number(typeof marker.code === 'object' ? marker.code?.value : marker.code);
+    const bad = model.getValueInRange(new monaco.Range(marker.startLineNumber, marker.startColumn, marker.endLineNumber, marker.endColumn));
+    const hints = coachFor({ code, message: marker.message, bad: bad.length <= 40 ? bad : '', line: model.getLineContent(marker.startLineNumber) });
+    if (hints.length) out.set(marker.startLineNumber, hints);
+  }
+  return out;
+}
+
+const coachProvider: monaco.languages.CodeLensProvider = {
+  onDidChange: coachChanged.event,
+  provideCodeLenses(model) {
+    if (!model.uri.path.startsWith('/cells/')) return { lenses: [], dispose() {} };
+    const lenses: monaco.languages.CodeLens[] = [];
+    for (const [line, hints] of coachLines(model)) {
+      for (const title of hints) lenses.push({ range: new monaco.Range(line, 1, line, 1), command: { id: '', title } });
+    }
+    return { lenses, dispose() {} };
+  },
+};
+monaco.languages.registerCodeLensProvider('typescript', coachProvider);
 
 const models = new Map<string, monaco.editor.ITextModel>();
 
@@ -207,6 +251,7 @@ export function createCellViewEditor(host: HTMLElement, model: monaco.editor.ITe
     ...KID_FRIENDLY,
     model,
     fontSize: 12,
+    codeLens: false,
     lineNumbers: 'off',
     glyphMargin: false,
     folding: false,

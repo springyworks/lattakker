@@ -86,6 +86,7 @@ CELL CODE (TypeScript, async allowed, re-runs when things it reads change)
   game.move('B7','B6') game.say('hi')
   sheet.mode sheet.cols sheet.rows   mode   sleep(ms|'2s')   log(...)
   show(...) replace output   clear()   span() read size, span(4) keep rows
+  plot(Math.sin, {from:0,to:6.28,title:'wave'})  XY plot as output; also plot([1,4,9]), plot([[0,1],[1,3]]), plot({a: f, b: g})
   every('1s', n => ...)  after('5s', fn)  on('B7' | 'A1:J10' | 'game', fn)  stop()   (timers die when the cell re-runs)
   on('I18', 'size' | 'code' | 'click', fn)  on('sheet', 'rows' | 'mode', fn)   events; also cell.cols/rows, at(x).code, sheet.rows/mode are reactive when read at top level
   memory (notebook that survives re-runs)  run.reason ('edit'|'moved'|'update')  run.count

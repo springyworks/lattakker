@@ -10,6 +10,24 @@ interface PieceInfo {
   moved: boolean;
 }
 
+/** What plot() can draw: numbers (plotted against 0, 1, 2, ...), [x, y] pairs, {x, y} points, or a function of x. */
+type PlotSeries = number[] | Array<[number, number]> | Array<{ x: number; y: number }> | ((x: number) => number);
+type PlotData = PlotSeries | Record<string, PlotSeries>;
+interface PlotOptions {
+  title?: string;
+  xLabel?: string;
+  yLabel?: string;
+  /** For a function: the first and last x (default -10 and 10). */
+  from?: number;
+  to?: number;
+  /** For a function: how many points to calculate (default 200). */
+  steps?: number;
+  /** Draw a dot on every point. */
+  dots?: boolean;
+  /** Line colour (one series only). */
+  color?: string;
+}
+
 /** One spreadsheet cell, addressed like A1, C7 or M14. */
 interface CellRef {
   readonly address: string;
@@ -42,8 +60,10 @@ interface CellRef {
   readonly reads: string[];
   /** Throw away this cell's output, then print the values (a display that updates in place). */
   show(...values: unknown[]): CellRef;
-  /** Throw away this cell's output. */
+  /** Throw away this cell's output and plot. */
   clear(): CellRef;
+  /** Draw an XY plot in this cell. See plot() below. */
+  plot(data: PlotData, options?: PlotOptions): CellRef;
   /** Flash the cell briefly. */
   flash(color?: string): CellRef;
 }
@@ -105,6 +125,14 @@ declare function color(fill: string): void;
 declare function span(cols?: number, rows?: number): { cols: number; rows: number };
 /** Short for cell.show(...): replaces the output instead of adding a line. */
 declare function show(...values: unknown[]): void;
+/**
+ * Draw an XY plot in this cell (call it again to redraw; clear() removes it; print/show text becomes the caption).
+ * plot([3, 1, 4, 1, 5])                            numbers against 0, 1, 2, ...
+ * plot([[0, 0], [1, 2], [2, 4]])                   [x, y] pairs
+ * plot(Math.sin, { from: 0, to: 6.28 })            a function of x
+ * plot({ sin: Math.sin, cos: Math.cos })           several lines with a legend
+ */
+declare function plot(data: PlotData, options?: PlotOptions): void;
 /** Short for cell.clear() */
 declare function clear(): void;
 /** A time: milliseconds, or text like '500ms', '2s', '1m', '1h'. */

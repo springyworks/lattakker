@@ -109,6 +109,23 @@ body.grab-armed #app {
   color: #52606d;
 }
 
+/* A cell whose output is an XY plot: the SVG fills the cell, a printed caption sits below it */
+.cell-plot {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.cell-plot svg {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: block;
+}
+.cell-plot .plot-caption {
+  flex: 0 0 auto;
+  text-align: center;
+}
+
 /* Monaco editor, hosted as a real maxGraph label (foreignObject) on the "ed:frame" vertex */
 .cell-editor-host {
   width: 100%;
@@ -133,6 +150,39 @@ body.grab-armed #app {
   flex: 1 1 auto;
   min-height: 0;
   pointer-events: auto;
+}
+/* The latest output of the edited cell: tiny by default, click to see it at real cell size (a bit scaled up) */
+.cell-editor-out {
+  flex: 0 0 auto;
+  position: relative;
+  height: 64px;
+  overflow: hidden;
+  border-top: 1px solid #cbd2d9;
+  cursor: zoom-in;
+  pointer-events: auto;
+}
+.cell-editor-out.open {
+  cursor: zoom-out;
+  background: #eef1f4;
+}
+.cell-editor-out-tag {
+  position: absolute;
+  top: 2px;
+  right: 6px;
+  z-index: 2;
+  font: 10px/1 system-ui, sans-serif;
+  color: #7b8794;
+  pointer-events: none;
+}
+.cell-editor-out-cell {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 2px 4px;
+  border: 1px solid #9aa5b1;
 }
 
 /* Inline, directly-editable Monaco view for a code cell on the canvas itself (Sheet.ts's

@@ -33,6 +33,7 @@ import { THEME } from '../theme';
 import { DependencyGraph, MODE_NODE, ROWS_NODE, codeNode, sizeNode } from './reactivity';
 import { CancelError, RunContext } from './tasks';
 import { Spring } from './spring';
+import { plotSvg, type PlotSpec } from './plot';
 
 /** A cell that takes longer than this is moved to the background so the others can run. */
 const RUN_SLICE_MS = 150;
@@ -78,6 +79,8 @@ export interface SheetCellData {
   uid: string;
   code: string;
   output: string[];
+  /** An XY plot drawn in the cell (plot(...)), or null. */
+  plot: PlotSpec | null;
   viewText: string | null;
   codeVisual: CellVisual;
   span: { cols: number; rows: number };
@@ -417,6 +420,7 @@ export class Sheet {
           uid: '',
           code: '',
           output: [],
+          plot: null,
           viewText: null,
           codeVisual: {},
           span: { cols: 1, rows: 1 },
@@ -684,14 +688,37 @@ export class Sheet {
     if (id.startsWith('sheet:')) {
       const d = this.data.get(id.slice(6));
       if (!d) return '';
-      const base = this.baseVisual.get(d.address);
-      const text = this.displayText(d);
-      if (!text) return base?.label ? `<div class="cell-text out">${escapeHtml(base.label)}</div>` : '';
-      const cls = d.code && this.mode === 'view' && d.viewText === null ? 'cell-text code' : 'cell-text out';
-      return `<div class="${cls}">${escapeHtml(text)}</div>`;
+      return this.outputHtml(d.address);
     }
     const value = cell.getValue();
     return value == null ? '' : String(value);
+  }
+
+  /** What a cell shows, as HTML: its text, or its plot with the text as a caption. Sized by the cell unless a size is given. */
+  outputHtml(address: string, size?: { width: number; height: number }, forceOutput = false): string {
+    const d = this.data.get(address);
+    if (!d) return '';
+    const base = this.baseVisual.get(address);
+    const showCode = d.code && this.mode === 'view' && !forceOutput;
+    if (d.plot && !d.error && !showCode) {
+      const geo = this.cells.get(address)?.getGeometry();
+      const w = size?.width ?? geo?.width ?? 200;
+      const h = size?.height ?? geo?.height ?? 100;
+      const caption = d.output.length ? `<div class="cell-text out plot-caption">${escapeHtml(d.output.join('\n'))}</div>` : '';
+      return `<div class="cell-plot">${plotSvg(d.plot, w, h)}${caption}</div>`;
+    }
+    const text = forceOutput ? (d.error ? `⚠ ${d.error}` : d.output.join('\n')) : this.displayText(d);
+    if (!text) return base?.label ? `<div class="cell-text out">${escapeHtml(base.label)}</div>` : '';
+    const cls = showCode && d.viewText === null ? 'cell-text code' : 'cell-text out';
+    return `<div class="${cls}">${escapeHtml(text)}</div>`;
+  }
+
+  /** The fill a cell is drawn with right now (error, its own colour, or the plain code fill). */
+  fillOf(address: string): string {
+    const d = this.data.get(address);
+    if (!d) return THEME.codeFill;
+    if (d.error) return THEME.errorFill;
+    return d.codeVisual.fill ?? this.baseVisual.get(address)?.fill ?? THEME.codeFill;
   }
 
   displayText(d: SheetCellData): string {
@@ -917,6 +944,7 @@ export class Sheet {
       from.memory = {};
       from.runCount = 0;
       from.output = [];
+      from.plot = null;
       from.viewText = null;
       from.error = null;
       this.setSpan(fromAddress, 1, 1);
@@ -925,6 +953,7 @@ export class Sheet {
       to.memory = memory;
       to.codeVisual = visual;
       to.output = [];
+      to.plot = null;
       to.viewText = null;
       to.error = null;
       this.setSpan(toAddress, cols, rows);
@@ -981,6 +1010,7 @@ export class Sheet {
       to.memory = fromMemory;
       to.runCount = fromRuns;
       to.output = [];
+      to.plot = null;
       to.viewText = null;
       to.error = null;
       from.code = toCode;
@@ -989,6 +1019,7 @@ export class Sheet {
       from.memory = toMemory;
       from.runCount = toRuns;
       from.output = [];
+      from.plot = null;
       from.viewText = null;
       from.error = null;
       this.refreshCell(fromAddress);
@@ -1133,6 +1164,7 @@ export class Sheet {
           uid: '',
           code: '',
           output: [],
+          plot: null,
           viewText: null,
           codeVisual: {},
           span: { cols: 1, rows: 1 },
@@ -1181,6 +1213,7 @@ export class Sheet {
           const addr = formatAddress(c, r);
           const d = this.data.get(addr)!;
           d.output = [];
+          d.plot = null;
           d.viewText = null;
           d.codeVisual = {};
           d.span = { cols: 1, rows: 1 };
@@ -1235,6 +1268,7 @@ export class Sheet {
     if (!code.trim()) {
       d.memory = {};
       d.output = [];
+      d.plot = null;
       d.viewText = null;
       d.codeVisual = {};
       this.setSpan(address, 1, 1);
@@ -1377,6 +1411,7 @@ export class Sheet {
             const d = this.data.get(addr);
             if (!d) continue;
             d.output = [];
+            d.plot = null;
             if (d.code) d.viewText = null;
             d.error = null;
             d.codeVisual = {};
@@ -1423,7 +1458,7 @@ export class Sheet {
         this.graph.batchUpdate(() => {
           for (const addr of resetSet) {
             const d = this.data.get(addr);
-            if (d && !d.code && d.output.length) this.refreshCell(addr);
+            if (d && !d.code && (d.output.length || d.plot)) this.refreshCell(addr);
           }
         });
       }

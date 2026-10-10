@@ -127,7 +127,7 @@ export class Hud {
       const add = (id: string, value: string, style: Record<string, unknown>) =>
         graph.insertVertex({ parent: group, id, value, ...box(id), style: { baseStyleNames: ['hud'], ...style } });
 
-      add('hud:title', `<div class="hud-text big">Lattakker Sheet</div><div class="hud-text tiny"><a href="${REPO_URL}" target="_blank" rel="noopener noreferrer">github code</a></div>`, {
+      add('hud:title', `<div class="hud-text big">Lattakker Sheet</div><div class="hud-text tiny">v${__APP_VERSION__} alpha · ${__APP_DATE__} · <a href="${REPO_URL}" target="_blank" rel="noopener noreferrer">github code</a></div>`, {
         fillColor: THEME.headerFill,
         strokeColor: THEME.headerStroke,
         verticalAlign: 'middle',

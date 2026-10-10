@@ -585,4 +585,11 @@ on(cell, 'click', () => {
 })
 paint()`,
   ],
+  [
+    'R39',
+    `// plot() turns the output into an XY plot. Try Math.cos, or (x) => x * x, or change from and to.
+span(4, 2)
+plot({ sin: Math.sin, cos: Math.cos }, { from: 0, to: 6.28, title: 'Waves' })
+show('sin and cos')`,
+  ],
 ];
