@@ -1,0 +1,66 @@
+/** One sober palette for everything drawn by maxGraph. The DOM-side twin lives in style.css (:root). */
+export const THEME = {
+  paper: '#f1f0ec',
+  ink: '#1f2933',
+  inkSoft: '#52606d',
+  line: '#cbd2d9',
+
+  headerFill: '#e4e7eb',
+  headerStroke: '#b8bfc7',
+  headerInk: '#3e4c59',
+
+  cellFill: '#ffffff',
+  cellStroke: '#d3d8de',
+  codeFill: '#f7f9fb',
+  errorFill: '#f6e3e1',
+  errorInk: '#7d2f2b',
+
+  boardLight: '#ebe8dc',
+  boardDark: '#d8dbc9',
+  boardStroke: '#aab19c',
+  redCampLight: '#ecdcd8',
+  redCampDark: '#e1cbc6',
+  blueCampLight: '#dbe2ec',
+  blueCampDark: '#cbd5e3',
+  lake: '#8fb0c8',
+  lakeStroke: '#6f93ad',
+  lakeInk: '#e8f0f6',
+
+  red: '#a8433e',
+  redDark: '#7a2e2a',
+  blue: '#2f5d8c',
+  blueDark: '#1f4166',
+  tileInk: '#f6f3ea',
+
+  select: '#c58b1f',
+  selectFill: '#f2e4bd',
+  moveFill: '#d9e8dd',
+  moveStroke: '#3f7a55',
+  attackFill: '#f0d8d5',
+  attackStroke: '#a8433e',
+
+  primary: '#2f4b66',
+  primaryDark: '#233a50',
+  neutral: '#52606d',
+  neutralDark: '#3e4c59',
+  go: '#3f7a55',
+  goDark: '#2f5f42',
+
+  hudFill: '#f7f8fa',
+  hudStroke: '#c4cbd3',
+  tone: {
+    info: { fill: '#e9eef4', stroke: '#6c88a3' },
+    good: { fill: '#e4efe7', stroke: '#4f8a63' },
+    bad: { fill: '#f3e2e0', stroke: '#a8433e' },
+    advice: { fill: '#f6eedc', stroke: '#b08a3a' },
+    think: { fill: '#eceef1', stroke: '#8a94a0' },
+  },
+  turnRed: { fill: '#f0dedb', stroke: '#a8433e' },
+  turnBlue: { fill: '#dde5ef', stroke: '#2f5d8c' },
+  turnNone: { fill: '#e6e9ed', stroke: '#8a94a0' },
+
+  flash: '#f2e4bd',
+  flashBad: '#f0d8d5',
+  flashSoft: '#e4e7eb',
+  flashWater: '#cfdfec',
+} as const;

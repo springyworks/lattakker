@@ -1,0 +1,65 @@
+# Lattakker Sheet
+
+> A Lattakker board that is also a spreadsheet. Cells below the board hold TypeScript that runs live, reads the game, paints the board and can make moves. Built with maxGraph, TypeScript and Monaco. It runs entirely in the browser: free, local, no API keys, no network calls, no tracking, no analytics. The person playing may be a child learning to program, so explain things in plain words.
+
+Red is the player (bottom of the board, rows 7-10). Blue is the computer (top, rows 1-4), its pieces face down until they fight. Capture the enemy flag to win. The board is squares A1:J10; every cell from row 12 down can hold code.
+
+## How to read the page
+
+- `window.mms.help()` returns the full guide as text. Start there.
+- `mms.state()` gives phase (`setup`, `play`, `over`), turn, winner, moveCount, lastMove and the message the player sees.
+- `mms.board()` gives 10 strings (row 1 first), a legend and a text grid. Tokens: `R10` visible Red piece rank 10 (`RS` spy, `RB` bomb, `RF` flag), `B?` hidden Blue piece, `b5` revealed Blue piece, `~~` lake, `..` empty. Hidden Blue pieces are never revealed to you.
+- The accessibility tree has a region "Game state as text" (`#mms-text`) with the same information: phase, message, board grid, captured pieces, last move, and every code cell with its output and error. It updates after each move and cell run.
+- If the browser supports WebMCP (`document.modelContext`, older drafts `navigator.modelContext`), tools are registered: `get_state`, `get_board`, `legal_moves`, `make_move`, `shuffle_army`, `start_battle`, `undo_move`, `new_game`, `list_cells`, `get_cell`, `set_cell_code`, `run_cell`, `set_mode`, `say_to_player`, `export_svg`. `mms.webmcp` shows what was registered.
+
+## window.mms API
+
+All methods return plain JSON: `{ ok: true, ... }` or `{ ok: false, error: "..." }`. They never throw. (async) means await it.
+
+- `help()` text guide, `state()`, `board()`, `legalMoves('red' | 'B7')`
+- `shuffle()` setup only; `start()` setup to play; `newGame()`; `undo()` takes back Red's last move and Blue's answer
+- `move('B7', 'B6')` (async) Red moves, waits for Blue's reply, returns the new state
+- `cells()` all code cells `{address, code, output, error, mode}`; `getCell('A12')`
+- `setCode('A12', code, { run: true })` (async) write TypeScript into a cell and run it; `runCell('A12')` (async) returns `{output}` or `{error}`; `clearCell('A12')`
+- `setMode('run' | 'view')` show output or code in cells; `say('text')` message bubble for the player
+- `exportSvg()` SVG snapshot; `exportModelXml()` maxGraph model XML
+
+## Cell code API (TypeScript; top-level await works)
+
+- `print(...values)` add output; `view(text)` text shown in view mode; `color('#ffd6e7')` background; `span(cols, rows)` merge cells (not over the board)
+- `at('B7')` another cell with `.text .code .piece .color(c) .print(...) .flash()`; `range('A1:J10')` array of cells with `.color(c)` and `.print(...)`
+- `game.phase`, `game.turn`, `game.winner`, `game.moveCount`, `game.lastMove`, `game.history`
+- `game.pieces('red'|'blue')`, `game.captured(color)`, `game.pieceAt('B7')`, `game.legalMoves('B7' | 'red')`
+- `game.move(from, to)` move a Red piece (Red's turn only), `game.say(text)` message bubble
+- `sheet.mode`, `sheet.cols`, `sheet.rows`, `mode`, `sleep(ms)`, `log(...values)`
+- Reading a cell with `at()`, `range()` or `game.*` makes your cell re-run when that changes, like a spreadsheet formula. Hidden Blue pieces have rank `'?'`.
+- A piece is `{ color, rank, name, revealed, moved }`; rank is 1 (Spy) to 10 (Marshal), `'B'` bomb, `'F'` flag, `'?'` hidden.
+
+Types for all of this are in `src/sheet/apiTypes.ts` of the source.
+
+## Game rules in one breath
+
+Pieces move one square up, down, left or right (no diagonals, not into lakes or onto own pieces). Scouts (2) slide any distance in a line. Moving onto an enemy attacks: higher rank wins, equal ranks both vanish. Bombs beat everything except Miners (3). The Spy (1) beats the Marshal (10) only when the Spy attacks. Bombs and the flag never move.
+
+## Saving
+
+The game (with Undo history) and all code cells are saved automatically in this browser's localStorage (key `lattakker:v1`) and restored on reload. Nothing leaves the page.
+
+## Starter exercises an AI could propose
+
+1. Print the number of Red and Blue pieces: `print(game.pieces('red').length)`.
+2. Paint every Red piece's square pink with `range('A1:J10')` and `square.piece?.color`.
+3. Show whose turn it is with an `if` on `game.turn`, and change the cell colour with `color()`.
+4. Count how many Scouts (rank 2) Red still has, using `filter`.
+5. List the legal moves of one piece with `game.legalMoves('B7')`.
+6. Make a cell that prints the last move in a sentence using `game.lastMove`.
+7. Use `at('A12').text` in another cell to chain cells like a spreadsheet.
+8. A tiny bot: pick the first move from `game.legalMoves('red')` and call `game.move(from, to)`.
+9. Make a danger map: colour squares next to a revealed Blue piece red.
+10. Break the code on purpose, read the error in the cell, and fix it together.
+
+## Tips for helpers
+
+- Call `mms.state()` after each action; moves take about a second because Blue answers.
+- When code fails, the error text is in `getCell(address).error` and shown in red on the sheet. Explain it simply, then fix it with `setCode`.
+- Prefer small steps and celebrate what works. `mms.say('Great job!')` shows a friendly message to the player.
