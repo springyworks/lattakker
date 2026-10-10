@@ -66,6 +66,30 @@ span(4, 2)
 print('Robot is sleeping. Edit me to wake it up!')`,
   ],
   [
+    'N12',
+    `// A stopwatch! every() does something again and again.
+// Try '500ms', '10s' or '1m' instead of '1s'.
+span(3, 2)
+color('#e3dcee')
+every('1s', (n) => {
+  show(\`\${n} seconds\`)
+})
+show('Starting…')`,
+  ],
+  [
+    'N15',
+    `// on() watches something and wakes up when it changes.
+// Here: every time a piece lands on E5, this cell wakes up.
+span(3, 2)
+let visits = 0
+on('E5', (square) => {
+  const p = square.piece
+  if (p) { visits++; show(\`E5: \${p.name} (visit \${visits})\`) }
+  else show(\`E5 is empty (visits: \${visits})\`)
+})
+show('Watching E5…')`,
+  ],
+  [
     'A18',
     `// Column C rows 32 to 55: ranges can also be written C32-55
 span(4, 2)

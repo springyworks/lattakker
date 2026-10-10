@@ -33,6 +33,8 @@ export const THEME = {
   tileInk: '#f6f3ea',
 
   select: '#c58b1f',
+  arrowRed: '#c58b1f',
+  arrowBlue: '#1f9a8a',
   selectFill: '#f2e4bd',
   moveFill: '#d9e8dd',
   moveStroke: '#3f7a55',
@@ -44,6 +46,7 @@ export const THEME = {
   neutral: '#52606d',
   neutralDark: '#3e4c59',
   go: '#3f7a55',
+  pause: '#9a6a1c',
   goDark: '#2f5f42',
 
   hudFill: '#f7f8fa',

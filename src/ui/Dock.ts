@@ -1,4 +1,4 @@
-import { Graph, InternalEvent, type EventObject, type Cell } from '@maxgraph/core';
+import { Graph, InternalEvent, type EventObject, type Cell, type TooltipHandler } from '@maxgraph/core';
 import { THEME } from '../theme';
 import { buttonHtml, turnHtml, type HudSnapshot } from './Hud';
 
@@ -35,7 +35,14 @@ export class Dock {
     this.graph.setCellsEditable(false);
     this.graph.setCellsResizable(false);
     this.graph.setConnectable(false);
-    this.graph.setTooltips(false);
+    this.graph.setTooltips(true);
+    const tips = this.graph.getPlugin<TooltipHandler>('TooltipHandler');
+    if (tips) {
+      tips.getTooltipForCell = (cell: Cell) => {
+        const b = this.snap?.buttons.find((x) => x.id === cell.getId());
+        return b ? `${b.address} · ${b.label}\n${b.help}` : '';
+      };
+    }
 
     this.graph.addListener(InternalEvent.CLICK, (_sender: unknown, evt: EventObject) => {
       const cell = evt.getProperty('cell') as Cell | null | undefined;
@@ -59,7 +66,7 @@ export class Dock {
     if (!this.snap) return;
     const snap = this.snap;
     const width = window.innerWidth;
-    const visible = snap.buttons.filter((b) => b.visible);
+    const visible = snap.buttons;
     const perRow = width < 340 ? 2 : 3;
     const rows = Math.ceil(visible.length / perRow);
     const height = this.expanded ? COLLAPSED_H + MESSAGE_H + PAD + rows * (BUTTON_H + GAP) + PAD : COLLAPSED_H;
@@ -100,7 +107,7 @@ export class Dock {
             value: buttonHtml(b.label, b.status),
             position: [PAD + (i % perRow) * (bw + GAP), COLLAPSED_H + MESSAGE_H + PAD + Math.floor(i / perRow) * (BUTTON_H + GAP)],
             size: [bw, BUTTON_H],
-            style: { fillColor: b.id === 'btn:start' ? THEME.go : b.id === 'btn:new' || b.id === 'btn:code' ? THEME.primary : THEME.neutral, strokeColor: 'none', rounded: true, arcSize: 20, fontColor: '#ffffff', fontSize: 13, whiteSpace: 'wrap', fontFamily: 'system-ui, sans-serif' },
+            style: { fillColor: b.enabled ? b.fill : '#d5dbe1', strokeColor: 'none', rounded: true, arcSize: 20, fontColor: b.enabled ? '#ffffff' : '#52606d', fontSize: 13, whiteSpace: 'wrap', fontFamily: 'system-ui, sans-serif' },
           });
         });
       }

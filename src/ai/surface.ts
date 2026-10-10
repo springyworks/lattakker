@@ -54,6 +54,7 @@ ACT
   mms.shuffle()              setup phase only: re-deal Red's army randomly
   mms.start()                setup -> play (Red moves first)
   mms.move('B7','B6') (async)  Red moves one square (Scouts: any distance in a line); waits for Blue's reply. Returns the new state.
+  mms.pause() / mms.resume() pause or continue the battle (nobody moves while paused)
   mms.newGame()              back to setup with new armies
   mms.undo()                 take back Red's last move and Blue's answer
   mms.setCode('A12', code, { run: true }) (async)   put TypeScript in a cell; run:false returns immediately (it still runs in the background)
@@ -62,7 +63,7 @@ ACT
   mms.setMode('run'|'view')  cells show output (run) or their code (view)
   mms.say('Nice move!')      show a message to the player in the speech bubble
 
-WebMCP: if the browser supports it, the same actions are registered as tools: get_state, get_board, legal_moves, make_move, shuffle_army, start_battle, undo_move, new_game, list_cells, get_cell, set_cell_code, run_cell, set_mode, say_to_player, export_svg. mms.webmcp tells you what was registered.
+WebMCP: if the browser supports it, the same actions are registered as tools: get_state, get_board, legal_moves, make_move, shuffle_army, start_battle, pause_battle, resume_battle, undo_move, new_game, list_cells, get_cell, set_cell_code, run_cell, set_mode, say_to_player, export_svg. mms.webmcp tells you what was registered.
 The page also keeps an accessible text mirror in #mms-text (board grid, captured pieces, last move, code cells with output and errors).
 
 CELL CODE (TypeScript, async allowed, re-runs when things it reads change)
@@ -73,7 +74,10 @@ CELL CODE (TypeScript, async allowed, re-runs when things it reads change)
   game.phase game.turn game.winner game.moveCount game.lastMove game.history
   game.pieces('red') game.captured('blue') game.pieceAt('B7') game.legalMoves('B7'|'red')
   game.move('B7','B6') game.say('hi')
-  sheet.mode sheet.cols sheet.rows   mode   sleep(ms)   log(...)
+  sheet.mode sheet.cols sheet.rows   mode   sleep(ms|'2s')   log(...)
+  show(...) replace output   clear()   span() read size, span(4) keep rows
+  every('1s', n => ...)  after('5s', fn)  on('B7' | 'A1:J10' | 'game', fn)  stop()   (timers die when the cell re-runs)
+  cell.usedBy / cell.reads  addresses that read this cell / that this cell read
   Hidden Blue pieces have rank '?'. Board squares are A1:J10; put code in A12 or below.
 
 EXAMPLES
@@ -141,6 +145,7 @@ export function installAiSurface({ sheet, view, hud, editor }: AiSurfaceDeps): v
     const g = game();
     if (g.phase === 'setup') return "setup (Red is arranging the army; shuffle then start, or the player swaps pieces by hand)";
     if (g.phase === 'over') return `over (${g.winner === 'red' ? 'Red won' : 'Blue won'})`;
+    if (view.isPaused()) return 'play (paused: nobody can move until resume() is called)';
     return `play (${g.turn === 'red' ? "Red's turn" : "Blue's turn, Blue is thinking"})`;
   }
 
@@ -154,6 +159,7 @@ export function installAiSurface({ sheet, view, hud, editor }: AiSurfaceDeps): v
       lastMove: g.lastMove ? view.moveInfo(g.lastMove) : null,
       message: hud.lastMessage.text,
       busy: view.isBusy(),
+      paused: view.isPaused(),
       redPieces: g.pieces('red').length,
       bluePieces: g.pieces('blue').length,
       editorOpenOn: editor.isOpen ? editor.address : null,
@@ -211,6 +217,7 @@ export function installAiSurface({ sheet, view, hud, editor }: AiSurfaceDeps): v
     setText('board', 'pre', `${boardText()}\n${LEGEND}`);
     const cap = (c: 'red' | 'blue') => g.captured[c].map((p) => view.pieceInfo(p, true).name).join(', ') || 'none';
     setText('captured', 'p', `Captured Red pieces: ${cap('red')}. Captured Blue pieces: ${cap('blue')}.`);
+    setText('cockpit', 'p', `Cockpit (grid cells L1:Q10): ${hud.snapshot().buttons.map((b) => `${b.address} ${b.label}${b.enabled ? '' : ' (unavailable)'}`).join('; ')}.`);
     setText('last', 'p', `Last move: ${g.lastMove ? describeMove(view.moveInfo(g.lastMove)) : 'none yet'}.`);
     setText('cells-title', 'h3', `Code cells (mode: ${sheet.mode === 'run' ? 'showing output' : 'showing code'})`);
     const list = part('cells', 'ul');
@@ -338,6 +345,20 @@ export function installAiSurface({ sheet, view, hud, editor }: AiSurfaceDeps): v
       return ok({ state: stateData() });
     },
 
+    pause(): Result {
+      if (game().phase !== 'play') return fail('Only a running battle can be paused (phase is "' + game().phase + '").');
+      view.setPaused(true);
+      flush();
+      return ok({ state: stateData() });
+    },
+
+    resume(): Result {
+      if (game().phase !== 'play') return fail('Only a running battle can be continued (phase is "' + game().phase + '").');
+      view.setPaused(false);
+      flush();
+      return ok({ state: stateData() });
+    },
+
     undo(): Result {
       if (!game().canUndo) return fail('Nothing to undo yet.');
       view.undo();
@@ -411,7 +432,7 @@ export function installAiSurface({ sheet, view, hud, editor }: AiSurfaceDeps): v
       if (mode !== 'run' && mode !== 'view') return fail("mode must be 'run' (show output) or 'view' (show code)");
       if (sheet.mode !== mode) {
         sheet.setMode(mode);
-        hud.setButtonLabel('btn:mode', mode === 'run' ? 'Show code' : 'Show output', mode === 'run' ? 'Cells show their output' : 'Cells show their code');
+        hud.setButtonLabel('btn:mode', mode === 'run' ? 'Show code' : 'Show output', mode === 'run' ? 'Cells show output' : 'Cells show code');
         hud.say(mode === 'view' ? 'View mode: code cells show their TypeScript 👁' : 'Run mode: code cells show what they print ▶', 'info');
       }
       flush();
@@ -510,6 +531,20 @@ export function installAiSurface({ sheet, view, hud, editor }: AiSurfaceDeps): v
       inputSchema: obj({}),
       readOnly: false,
       run: () => api.start(),
+    },
+    {
+      name: 'pause_battle',
+      description: 'Pause the running battle. Nobody can move, not even Blue, until resume_battle is called.',
+      inputSchema: obj({}),
+      readOnly: false,
+      run: () => api.pause(),
+    },
+    {
+      name: 'resume_battle',
+      description: 'Continue a paused battle.',
+      inputSchema: obj({}),
+      readOnly: false,
+      run: () => api.resume(),
     },
     {
       name: 'undo_move',

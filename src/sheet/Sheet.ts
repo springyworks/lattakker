@@ -19,7 +19,11 @@ import {
 import { colToLetters, expandRange, formatAddress, parseAddress, parseRange, shiftAddressesInCode } from './address';
 import { THEME } from '../theme';
 import { DependencyGraph } from './reactivity';
+import { CancelError, RunContext } from './tasks';
 import { Spring } from './spring';
+
+/** A cell that takes longer than this is moved to the background so the others can run. */
+const RUN_SLICE_MS = 150;
 
 export const COLS = 26;
 export const ROWS = 40;
@@ -113,7 +117,10 @@ export class Sheet {
   private rowHeaderGroup!: Cell;
   private corner!: Cell;
   private listeners: SheetListeners | null = null;
-  private runner: ((data: SheetCellData) => Promise<void>) | null = null;
+  private runner: ((data: SheetCellData, ctx: RunContext) => Promise<void>) | null = null;
+  private contexts = new Map<string, RunContext>();
+  private subscriptions = new Set<{ nodes: Set<string>; fire: (node: string) => void }>();
+  private tickTouched = new Set<string>();
   private running = false;
   private runPending = false;
   private runTimer: number | null = null;
@@ -447,7 +454,7 @@ export class Sheet {
     this.listeners = listeners;
   }
 
-  setRunner(runner: (data: SheetCellData) => Promise<void>): void {
+  setRunner(runner: (data: SheetCellData, ctx: RunContext) => Promise<void>): void {
     this.runner = runner;
   }
 
@@ -1016,6 +1023,7 @@ export class Sheet {
     if (!d) return;
     d.code = code;
     d.error = null;
+    this.stopTasks(address);
     if (!code.trim()) {
       d.output = [];
       d.viewText = null;
@@ -1029,13 +1037,62 @@ export class Sheet {
   }
 
   /** Forwarded from api.ts's at()/range()/game access while a cell's code is running. */
-  trackRead(dep: string): void {
-    this.depGraph.trackRead(dep);
+  trackRead(address: string, dep: string): void {
+    this.depGraph.trackRead(address, dep);
   }
 
   /** Forwarded from api.ts when a cell's code writes into another cell (print/color/view/...). */
-  trackWrite(target: string): void {
-    this.depGraph.trackWrite(target);
+  trackWrite(address: string, target: string): void {
+    this.depGraph.trackWrite(address, target);
+  }
+
+  /** Cells whose code read `address` last time they ran. */
+  dependentsOf(address: string): string[] {
+    return this.depGraph.dependentsOf(address);
+  }
+
+  /** What the code in `address` read last time it ran. */
+  readsOf(address: string): string[] {
+    return this.depGraph.readsOf(address);
+  }
+
+  /** Cancels timers, handlers and pending sleeps owned by a cell; the cell itself stays. */
+  stopTasks(address: string): void {
+    const ctx = this.contexts.get(address);
+    if (!ctx) return;
+    ctx.cancel();
+    this.contexts.delete(address);
+  }
+
+  /** How many timers and handlers a cell currently owns. */
+  taskCount(address: string): number {
+    return this.contexts.get(address)?.taskCount ?? 0;
+  }
+
+  /** Starts a fresh run for a cell: the previous run (and everything it started) is cancelled. */
+  private startRun(address: string): RunContext {
+    this.stopTasks(address);
+    const ctx = new RunContext(address);
+    this.contexts.set(address, ctx);
+    this.depGraph.beginRun(address);
+    return ctx;
+  }
+
+  /** A cell changed on its own (timer tick, late finish): refresh it and re-run what reads it. */
+  notifyChanged(address: string): void {
+    this.refreshCell(address);
+    this.depGraph.markDependentsDirty(address);
+    this.tickTouched.add(address);
+    this.requestRun();
+  }
+
+  /** Calls `fire(node)` once after a pass in which any of `nodes` changed. Returns an unsubscribe. */
+  subscribe(nodes: Iterable<string>, fire: (node: string) => void): () => void {
+    const sub = { nodes: new Set(nodes), fire };
+    this.subscriptions.add(sub);
+    return () => {
+      this.subscriptions.delete(sub);
+    };
   }
 
   /** Marks addresses dirty for the next run without re-running immediately (e.g. board changes). */
@@ -1074,7 +1131,11 @@ export class Sheet {
     this.running = true;
     try {
       const universe = this.codeCells().map((d) => d.address);
+      const live = new Set(universe);
+      for (const address of [...this.contexts.keys()]) if (!live.has(address)) this.stopTasks(address);
       const order = this.depGraph.closure(universe);
+      const touched = new Set([...this.depGraph.lastTouched, ...this.tickTouched]);
+      this.tickTouched.clear();
       if (order.length) {
         const resetSet = new Set(order);
         for (const w of this.depGraph.writeTargets(order)) resetSet.add(w);
@@ -1092,14 +1153,32 @@ export class Sheet {
         for (const address of order) {
           const d = this.data.get(address);
           if (!d) continue;
-          this.depGraph.beginRun(address);
-          try {
-            await this.runner(d);
-          } catch (err) {
-            d.error = err instanceof Error ? err.message : String(err);
+          const ctx = this.startRun(address);
+          const finished = Promise.resolve()
+            .then(() => this.runner!(d, ctx))
+            .catch((err) => {
+              if (!(err instanceof CancelError)) d.error = err instanceof Error ? err.message : String(err);
+            })
+            .then(() => {
+              ctx.tracking = false;
+            });
+          let slice = 0;
+          const inTime = await Promise.race([
+            finished.then(() => true),
+            new Promise<boolean>((resolve) => {
+              slice = window.setTimeout(() => resolve(false), RUN_SLICE_MS);
+            }),
+          ]);
+          window.clearTimeout(slice);
+          if (inTime) {
+            this.refreshCell(address);
+          } else {
+            // A slow cell (a long await loop) must not hold up the others: let it carry on in the
+            // background and tell whoever reads it once it is done.
+            void finished.then(() => {
+              if (this.contexts.get(address) === ctx) this.notifyChanged(address);
+            });
           }
-          this.depGraph.endRun(address);
-          this.refreshCell(address);
         }
         // cells that received prints from other cells need a refresh too
         this.graph.batchUpdate(() => {
@@ -1108,6 +1187,14 @@ export class Sheet {
             if (d && !d.code && d.output.length) this.refreshCell(addr);
           }
         });
+      }
+      for (const sub of [...this.subscriptions]) {
+        for (const node of sub.nodes) {
+          if (touched.has(node)) {
+            sub.fire(node);
+            break;
+          }
+        }
       }
       this.afterRunHandlers.forEach((h) => h());
     } finally {

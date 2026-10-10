@@ -1,15 +1,16 @@
 import type { SheetCellData } from './Sheet';
 import type { TranspileResult } from '../editor/monaco';
+import type { RunContext } from './tasks';
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (
   ...args: string[]
 ) => (...values: unknown[]) => Promise<unknown>;
 
-export type ApiFactory = (data: SheetCellData) => Record<string, unknown>;
+export type ApiFactory = (data: SheetCellData, ctx: RunContext) => Record<string, unknown>;
 export type Transpiler = (address: string, source: string) => Promise<TranspileResult>;
 
 /** Runs one cell: transpile its TypeScript, then execute it with the cell API in scope. */
-export async function runCell(data: SheetCellData, makeApi: ApiFactory, transpile: Transpiler): Promise<void> {
+export async function runCell(data: SheetCellData, ctx: RunContext, makeApi: ApiFactory, transpile: Transpiler): Promise<void> {
   const source = data.code;
   if (!source.trim()) return;
   let js = source;
@@ -24,7 +25,8 @@ export async function runCell(data: SheetCellData, makeApi: ApiFactory, transpil
     // Transpiler unavailable: try to run the source as plain JavaScript.
     console.warn('transpile failed, running as JS', err);
   }
-  const api = makeApi(data);
+  if (ctx.cancelled) return;
+  const api = makeApi(data, ctx);
   const names = Object.keys(api);
   const values = names.map((n) => api[n]);
   let fn: (...values: unknown[]) => Promise<unknown>;

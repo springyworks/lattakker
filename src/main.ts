@@ -1,6 +1,6 @@
 import '@maxgraph/core/css/common.css';
 import './style.css';
-import { InternalEvent, type PopupMenuHandler } from '@maxgraph/core';
+import { InternalEvent, type MaxPopupMenu, type PopupMenuHandler } from '@maxgraph/core';
 import { Sheet } from './sheet/Sheet';
 import { HUD_W, HUD_X, Hud } from './ui/Hud';
 import { GameView } from './game/GameView';
@@ -27,7 +27,8 @@ const HELP = `How to play Lattakker
 • Capture Blue's flag to win. "Undo my move" takes back your last move.
 Sheet tricks
 • Double-click any cell to write TypeScript. Ctrl+Enter runs it, Esc saves and closes.
-• Cells can print, change colour, read other cells (at('A12')), paint ranges (range('A1:J10')) and even move pieces.`;
+• Cells can print, change colour, read other cells (at('A12')), paint ranges (range('A1:J10')) and even move pieces.
+• Make things tick: every('1s', () => ...) or watch a square: on('E5', () => ...). Right-click a cell to see who uses it.`;
 
 const HELP_SHORT = 'Pick a red piece, tap a dot to move it. Tap a red cross to attack. Higher rank wins. Capture the Blue flag to win.';
 
@@ -51,21 +52,15 @@ const editor = new CellEditor(sheet, {
     hud.say(`Running ${address} ▶`, 'info');
   },
   onOpen(address) {
-    hud.setButtonStatus('btn:code', `You are coding in ${address}`);
+    hud.setButtonStatus('btn:code', `Coding in ${address}`);
   },
   onClose() {
-    hud.setButtonStatus('btn:code', 'You are not coding');
+    hud.setButtonStatus('btn:code', 'Not coding');
   },
 });
 new CellCodeView(sheet);
 
-sheet.setRunner((data) =>
-  runCell(
-    data,
-    (d) => buildApi(sheet, view, hud, d, (dep) => sheet.trackRead(dep), (target) => sheet.trackWrite(target)),
-    transpile,
-  ),
-);
+sheet.setRunner((data, ctx) => runCell(data, ctx, (d, c) => buildApi(sheet, view, hud, d, c), transpile));
 sheet.raiseHeaders();
 
 function selectCodeCell(address: string): void {
@@ -86,7 +81,7 @@ function selectCodeCell(address: string): void {
 function toggleMode(): void {
   const next = sheet.mode === 'run' ? 'view' : 'run';
   sheet.setMode(next);
-  hud.setButtonLabel('btn:mode', next === 'run' ? 'Show code' : 'Show output', next === 'run' ? 'Cells show their output' : 'Cells show their code');
+  hud.setButtonLabel('btn:mode', next === 'run' ? 'Show code' : 'Show output', next === 'run' ? 'Cells show output' : 'Cells show code');
   hud.say(next === 'view' ? 'View mode: code cells show their TypeScript 👁' : 'Run mode: code cells show what they print ▶', 'info');
 }
 
@@ -106,7 +101,7 @@ function pressButton(id: string): void {
       view.shuffle();
       break;
     case 'btn:start':
-      view.start();
+      view.startOrPause();
       break;
     case 'btn:undo':
       view.undo();
@@ -178,7 +173,7 @@ sheet.setListeners({
   },
   tooltipFor(id) {
     if (id === 'hdr:corner') return 'Click here to go back to the game board';
-    return view.tooltipFor(id);
+    return hud.tooltipFor(id) ?? view.tooltipFor(id);
   },
 });
 
@@ -186,13 +181,27 @@ const BOARD_ADDRESSES: string[] = [];
 for (let r = 0; r < 10; r++) for (let c = 0; c < 10; c++) BOARD_ADDRESSES.push(formatAddress(c, r));
 
 let scheduleSave: () => void = () => {};
+const boardSeen = new Map<string, string>();
+/** Squares whose contents differ from the last look, so a cell reading E5 re-runs only when E5 changes. */
+function changedSquares(): string[] {
+  const changed: string[] = [];
+  for (const address of BOARD_ADDRESSES) {
+    const now = JSON.stringify(view.pieceInfoAt(address));
+    if (boardSeen.get(address) !== now) {
+      boardSeen.set(address, now);
+      changed.push(address);
+    }
+  }
+  return changed;
+}
 view.onChange = () => {
   scheduleSave();
-  sheet.markDirty(BOARD_ADDRESSES);
+  sheet.markDirty(changedSquares());
   sheet.markDirty([GAME_NODE]);
   sheet.requestRun();
 };
 view.init(restored);
+changedSquares();
 
 if (smallScreen) {
   installPinchZoom(sheet);
@@ -249,11 +258,46 @@ popupMenu.factoryMethod = (menu, cell) => {
     });
   } else if (id.startsWith('sheet:')) {
     const address = id.slice(6);
-    if (sheet.isBoardAddress(address)) return;
-    menu.addItem(`Edit ${address}`, null, () => editor.open(address));
-    if (sheet.dataAt(address)?.code) menu.addItem(`Clear ${address}`, null, () => sheet.setCode(address, ''));
+    const isBoard = sheet.isBoardAddress(address);
+    if (!isBoard) {
+      menu.addItem(`Edit ${address}`, null, () => editor.open(address));
+      if (sheet.dataAt(address)?.code) menu.addItem(`Clear ${address}`, null, () => sheet.setCode(address, ''));
+      const tasks = sheet.taskCount(address);
+      if (tasks > 0) {
+        menu.addItem(`Stop timers in ${address} (${tasks})`, null, () => {
+          sheet.stopTasks(address);
+          sheet.notifyChanged(address);
+          hud.say(`Stopped the timers and watchers in ${address}.`, 'good');
+        });
+      }
+      menu.addSeparator();
+    }
+    addCellList(menu, 'Used by', sheet.dependentsOf(address), 'No cell reads this one');
+    if (!isBoard) addCellList(menu, 'Reads', sheet.readsOf(address), 'Reads nothing');
   }
 };
+
+/** Adds a sub-menu listing cells; picking one selects and flashes it. */
+function addCellList(menu: MaxPopupMenu, title: string, items: string[], emptyText: string): void {
+  const board = items.filter((a) => sheet.isBoardAddress(a));
+  const others = items.filter((a) => !sheet.isBoardAddress(a) && a !== GAME_NODE);
+  const parts = [...others];
+  if (items.includes(GAME_NODE)) parts.push('game');
+  if (board.length > 0) parts.push(board.length === 1 ? board[0] : `${board.length} board squares`);
+  if (parts.length === 0) {
+    menu.addItem(`${title}: ${emptyText}`, null, () => {}, null, undefined, false);
+    return;
+  }
+  const sub = menu.addItem(`${title} (${parts.length})`, null, () => {});
+  for (const part of parts.slice(0, 14)) {
+    const target = parseAddress(part) ? part : null;
+    menu.addItem(part, null, () => {
+      if (!target) return;
+      sheet.flash(target, THEME.flash, 600);
+      if (!sheet.isBoardAddress(target)) selectCodeCell(target);
+    }, sub);
+  }
+}
 
 if (restored && saved) {
   while (sheet.rowCount < saved.rows && sheet.rowCount < 500) sheet.insertRow(sheet.rowCount - 1);

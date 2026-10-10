@@ -31,8 +31,19 @@ interface CellRef {
   color(fill: string): CellRef;
   /** Text colour. */
   textColor(color: string): CellRef;
-  /** Merge this cell over cols x rows neighbours (not over the board). */
-  span(cols: number, rows: number): CellRef;
+  /** Merge this cell over cols x rows neighbours (not over the board). Leave one out to keep it. No arguments: just read the size. */
+  span(cols?: number, rows?: number): { cols: number; rows: number };
+  /** How many columns / rows this cell covers now. */
+  readonly cols: number;
+  readonly rows: number;
+  /** Addresses of the cells whose code read this cell (they re-run when it changes). */
+  readonly usedBy: string[];
+  /** What this cell's code read last time it ran ('game' counts too). */
+  readonly reads: string[];
+  /** Throw away this cell's output, then print the values (a display that updates in place). */
+  show(...values: unknown[]): CellRef;
+  /** Throw away this cell's output. */
+  clear(): CellRef;
   /** Flash the cell briefly. */
   flash(color?: string): CellRef;
 }
@@ -89,8 +100,25 @@ declare function print(...values: unknown[]): void;
 declare function view(text: string): void;
 /** Short for cell.color(fill) */
 declare function color(fill: string): void;
-/** Short for cell.span(cols, rows) */
-declare function span(cols: number, rows: number): void;
+/** Short for cell.span(cols, rows). span(4) keeps the rows; span() just returns the current size. */
+declare function span(cols?: number, rows?: number): { cols: number; rows: number };
+/** Short for cell.show(...): replaces the output instead of adding a line. */
+declare function show(...values: unknown[]): void;
+/** Short for cell.clear() */
+declare function clear(): void;
+/** A time: milliseconds, or text like '500ms', '2s', '1m', '1h'. */
+type Interval = number | string;
+/** Do something again and again. every('1s', (n) => ...) or every(fn) for once a second. n counts 1, 2, 3... Returns a stop function. Stops by itself when the cell runs again. */
+declare function every(interval: Interval, fn: (count: number) => unknown): () => void;
+declare function every(fn: (count: number) => unknown): () => void;
+/** Do something once, later: after('5s', () => ...). Returns a cancel function. */
+declare function after(interval: Interval, fn: () => unknown): () => void;
+declare function after(fn: () => unknown): () => void;
+/** Watch a cell, a range or 'game': fn runs after it changes. on('B7', (b7) => ...). Returns a stop function. */
+declare function on(target: string | CellRef, fn: (changed: CellRef) => unknown): () => void;
+declare function on(target: 'game', fn: (game: GameApi) => unknown): () => void;
+/** Stop all timers and watchers this cell started. */
+declare function stop(): void;
 /** Another cell by address, e.g. at('A1') */
 declare function at(address: string): CellRef;
 /** A range of cells, e.g. range('A1:J10') or range('C32-55') */
@@ -99,8 +127,8 @@ declare const sheet: SheetApi;
 declare const game: GameApi;
 /** 'run' or 'view' */
 declare const mode: 'run' | 'view';
-/** Wait a bit: await sleep(500) */
-declare function sleep(ms: number): Promise<void>;
+/** Wait a bit: await sleep(500) or await sleep('2s'). Other cells keep running meanwhile. */
+declare function sleep(time?: Interval): Promise<void>;
 /** console.log that also shows up in the cell */
 declare function log(...values: unknown[]): void;
 `;

@@ -10,7 +10,7 @@ Red is the player (bottom of the board, rows 7-10). Blue is the computer (top, r
 - `mms.state()` gives phase (`setup`, `play`, `over`), turn, winner, moveCount, lastMove and the message the player sees.
 - `mms.board()` gives 10 strings (row 1 first), a legend and a text grid. Tokens: `R10` visible Red piece rank 10 (`RS` spy, `RB` bomb, `RF` flag), `B?` hidden Blue piece, `b5` revealed Blue piece, `~~` lake, `..` empty. Hidden Blue pieces are never revealed to you.
 - The accessibility tree has a region "Game state as text" (`#mms-text`) with the same information: phase, message, board grid, captured pieces, last move, and every code cell with its output and error. It updates after each move and cell run.
-- If the browser supports WebMCP (`document.modelContext`, older drafts `navigator.modelContext`), tools are registered: `get_state`, `get_board`, `legal_moves`, `make_move`, `shuffle_army`, `start_battle`, `undo_move`, `new_game`, `list_cells`, `get_cell`, `set_cell_code`, `run_cell`, `set_mode`, `say_to_player`, `export_svg`. `mms.webmcp` shows what was registered.
+- If the browser supports WebMCP (`document.modelContext`, older drafts `navigator.modelContext`), tools are registered: `get_state`, `get_board`, `legal_moves`, `make_move`, `shuffle_army`, `start_battle`, `pause_battle`, `resume_battle`, `undo_move`, `new_game`, `list_cells`, `get_cell`, `set_cell_code`, `run_cell`, `set_mode`, `say_to_player`, `export_svg`. `mms.webmcp` shows what was registered.
 
 ## window.mms API
 
@@ -31,7 +31,10 @@ All methods return plain JSON: `{ ok: true, ... }` or `{ ok: false, error: "..."
 - `game.phase`, `game.turn`, `game.winner`, `game.moveCount`, `game.lastMove`, `game.history`
 - `game.pieces('red'|'blue')`, `game.captured(color)`, `game.pieceAt('B7')`, `game.legalMoves('B7' | 'red')`
 - `game.move(from, to)` move a Red piece (Red's turn only), `game.say(text)` message bubble
-- `sheet.mode`, `sheet.cols`, `sheet.rows`, `mode`, `sleep(ms)`, `log(...values)`
+- `sheet.mode`, `sheet.cols`, `sheet.rows`, `mode`, `sleep(ms or '2s')`, `log(...values)`
+- `show(...values)` replaces the output (use it for live displays), `clear()` empties it; `span()` with no arguments returns `{cols, rows}`, `span(4)` keeps the rows
+- Timers and watchers (all stop by themselves when the cell runs again, is edited or cleared): `every('1s', (n) => ...)` (also '500ms', '1m', or a number of ms; `every(fn)` = once a second), `after('5s', fn)`, `on('B7' | 'A1:J10' | 'game', fn)` runs fn after that changes, `stop()` stops this cell's timers. Reads inside callbacks are not dependencies; only the top level of the cell is tracked. Several cells can wait or tick at once; a cell running longer than ~150 ms continues in the background. A tight loop with no `await` still freezes the page.
+- `cell.usedBy` (cells that read this one) and `cell.reads` (what this cell read), both arrays of addresses
 - Reading a cell with `at()`, `range()` or `game.*` makes your cell re-run when that changes, like a spreadsheet formula. Hidden Blue pieces have rank `'?'`.
 - A piece is `{ color, rank, name, revealed, moved }`; rank is 1 (Spy) to 10 (Marshal), `'B'` bomb, `'F'` flag, `'?'` hidden.
 

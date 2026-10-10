@@ -1,4 +1,4 @@
-import { Cell, Geometry, InternalEvent, InternalMouseEvent, Morphing } from '@maxgraph/core';
+import { Cell, Geometry, Point, InternalEvent, InternalMouseEvent, Morphing } from '@maxgraph/core';
 import type { MouseListenerSet } from '@maxgraph/core';
 import { formatAddress, parseAddress } from '../sheet/address';
 import { CH, CW, ORIGIN_X, ORIGIN_Y, Sheet } from '../sheet/Sheet';
@@ -36,6 +36,10 @@ interface DragState {
 }
 
 const INSET = 4;
+const TRAIL_MAX = 14;
+const TRAIL_FADE_MS = 10_000;
+const ARROW_WIDTH = 4;
+const ARROW_MAX_OPACITY = 85;
 
 export interface PieceInfo {
   color: Color;
@@ -61,11 +65,13 @@ export class GameView {
   onChange: (() => void) | null = null;
   private pieceCells = new Map<number, Cell>();
   private pieceKeys = new Map<number, string>();
-  private moveArrow: Cell | null = null;
+  private trail: Array<{ cell: Cell; born: number; moveNo: number }> = [];
   private arrowTimer = 0;
   private selected: Pos | null = null;
   private targets: Pos[] = [];
   private busy = false;
+  private paused = false;
+  private epoch = 0;
   private drag: DragState | null = null;
   lastInteraction = 0;
 
@@ -156,8 +162,8 @@ export class GameView {
   /** Blue answers when a saved game was stopped in the middle of Blue's turn. */
   private async blueMoves(): Promise<void> {
     this.busy = true;
-    this.hud.setTurn('Blue is thinking. Please wait', 'blue', 'You cannot move until Blue has moved');
-    await this.sleep(650);
+    this.showBlueThinking();
+    if (!(await this.thinkTime(650))) return;
     const move = chooseBlueMove(this.game);
     this.busy = false;
     if (move) await this.playMove(move.from, move.to, 'blue');
@@ -193,7 +199,7 @@ export class GameView {
 
   private pickablePos(piece: Piece, pos: Pos): boolean {
     if (piece.color !== 'red') return false;
-    if (this.busy) return false;
+    if (this.busy || this.paused) return false;
     if (this.game.phase === 'setup') return true;
     if (this.game.phase !== 'play' || this.game.turn !== 'red') return false;
     return isMobile(piece.rank) && this.game.legalMoves(pos).length > 0;
@@ -384,61 +390,96 @@ export class GameView {
     });
   }
 
-  /** Draws a maxGraph edge with an arrowhead from the origin square to the destination of the latest move. */
-  private showMoveArrow(from: Pos, to: Pos): void {
-    this.clearMoveArrow();
-    const source = this.sheet.cellAt(this.addrOf(from));
-    const target = this.sheet.cellAt(this.addrOf(to));
-    if (!source || !target) return;
-    this.moveArrow = this.sheet.graph.insertEdge({
+  /**
+   * Every move leaves an arrow (a single step too), so the last moves stay readable as a trail:
+   * amber for Red, teal for Blue. Arrows run from square centre to square centre, shortened at both
+   * ends, because neighbouring squares share a border and an edge between their outlines would have no length.
+   */
+  private showMoveArrow(from: Pos, to: Pos, color: Color): void {
+    const a = this.squareCenter(from);
+    const b = this.squareCenter(to);
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    if (len < 1) return;
+    const trim = Math.min(18, len * 0.25);
+    const ux = (b.x - a.x) / len;
+    const uy = (b.y - a.y) / len;
+    const graph = this.sheet.graph;
+    const edge = graph.insertEdge({
       parent: this.sheet.pieceLayer,
-      id: 'move:arrow',
-      source,
-      target,
       value: '',
       style: {
-        strokeColor: THEME.select,
-        strokeWidth: 4,
+        strokeColor: color === 'red' ? THEME.arrowRed : THEME.arrowBlue,
+        strokeWidth: ARROW_WIDTH,
         endArrow: 'classic',
         endSize: 8,
-        opacity: 80,
+        opacity: ARROW_MAX_OPACITY,
         pointerEvents: false,
         movable: false,
         deletable: false,
         editable: false,
       },
     });
-    this.sheet.graph.orderCells(true, [this.moveArrow]);
-    this.startArrowFade(this.moveArrow);
+    const geo = edge.getGeometry()!.clone();
+    geo.setTerminalPoint(new Point(a.x + ux * trim, a.y + uy * trim), true);
+    geo.setTerminalPoint(new Point(b.x - ux * trim, b.y - uy * trim), false);
+    graph.getDataModel().setGeometry(edge, geo);
+    graph.orderCells(true, [edge]);
+    this.trail.push({ cell: edge, born: performance.now(), moveNo: this.game.moveCount });
+    while (this.trail.length > TRAIL_MAX) {
+      const old = this.trail.shift()!;
+      graph.removeCells([old.cell], false);
+    }
+    this.startArrowFade();
   }
 
   /**
-   * The eye judges brightness on a logarithmic scale, so a straight-line fade looks like it drops
-   * at the start and lingers at the end. This curve falls fast at first and then stays visible a
-   * long time: 85% to 0% over about a minute, still about 40% after 20 seconds.
+   * Age is judged on a logarithmic scale: the newest arrows change quickly and show every detail,
+   * while old ones sink slowly into the background (thinner and fainter) instead of vanishing at once.
+   * Opacity falls from 85% to 0 over TRAIL_FADE_MS, about 40% left after a third of that time.
    */
-  private startArrowFade(arrow: Cell): void {
-    const FADE_MS = 60_000;
-    const MAX = 85;
-    const t0 = performance.now();
+  private startArrowFade(): void {
+    if (this.arrowTimer) return;
     this.arrowTimer = window.setInterval(() => {
-      if (this.moveArrow !== arrow) return;
-      const t = Math.min(1, (performance.now() - t0) / FADE_MS);
-      if (t >= 1) {
-        this.clearMoveArrow();
-        return;
-      }
-      const opacity = Math.round(MAX * (1 - Math.log10(1 + 9 * t)));
-      this.sheet.graph.setCellStyles('opacity', opacity, [arrow]);
+      const graph = this.sheet.graph;
+      const now = performance.now();
+      const expired: Cell[] = [];
+      graph.batchUpdate(() => {
+        for (const item of this.trail) {
+          const t = Math.min(1, (now - item.born) / TRAIL_FADE_MS);
+          if (t >= 1) {
+            expired.push(item.cell);
+            continue;
+          }
+          const fall = 1 - Math.log10(1 + 9 * t);
+          graph.setCellStyles('opacity', Math.round(ARROW_MAX_OPACITY * fall), [item.cell]);
+          graph.setCellStyles('strokeWidth', Math.max(1.5, +(ARROW_WIDTH * (0.4 + 0.6 * fall)).toFixed(1)), [item.cell]);
+        }
+        if (expired.length) {
+          graph.removeCells(expired, false);
+          this.trail = this.trail.filter((i) => !expired.includes(i.cell));
+        }
+      });
+      if (!this.trail.length) this.stopArrowTimer();
     }, 250);
   }
 
-  private clearMoveArrow(): void {
+  private stopArrowTimer(): void {
     window.clearInterval(this.arrowTimer);
     this.arrowTimer = 0;
-    if (!this.moveArrow) return;
-    this.sheet.graph.removeCells([this.moveArrow], false);
-    this.moveArrow = null;
+  }
+
+  private clearMoveArrow(): void {
+    this.stopArrowTimer();
+    if (this.trail.length) this.sheet.graph.removeCells(this.trail.map((i) => i.cell), false);
+    this.trail = [];
+  }
+
+  /** After Undo: forget the arrows of moves that no longer happened. */
+  private dropArrowsAfter(moveCount: number): void {
+    const gone = this.trail.filter((i) => i.moveNo > moveCount);
+    if (!gone.length) return;
+    this.sheet.graph.removeCells(gone.map((i) => i.cell), false);
+    this.trail = this.trail.filter((i) => i.moveNo <= moveCount);
   }
 
   /** Takes back Red's last move together with Blue's answer. */
@@ -449,7 +490,7 @@ export class GameView {
       return;
     }
     this.clearSelection();
-    this.clearMoveArrow();
+    this.dropArrowsAfter(this.game.moveCount);
     this.syncPieces();
     this.updateHud();
     this.hud.say('Your last move was taken back. Try something different.', 'info');
@@ -522,6 +563,12 @@ export class GameView {
     const addr = this.addrOf(pos);
     const piece = this.game.at(pos);
     const game = this.game;
+
+    if (this.paused) {
+      this.sheet.flash(addr, THEME.flashSoft);
+      this.hud.say('The battle is paused ⏸ Press "Continue" to go on.', 'advice');
+      return;
+    }
 
     if (this.busy) {
       this.sheet.flash(addr, THEME.flashSoft);
@@ -679,13 +726,13 @@ export class GameView {
       this.report(result);
     }
     this.syncPieces();
-    this.showMoveArrow(from, to);
+    this.showMoveArrow(from, to, who);
     this.updateHud();
     this.onChange?.();
 
     if (this.game.phase === 'play' && this.game.turn === 'blue') {
-      this.hud.setTurn('Blue is thinking. Please wait', 'blue', 'You cannot move until Blue has moved');
-      await this.sleep(who === 'red' ? 650 : 250);
+      this.showBlueThinking();
+      if (!(await this.thinkTime(who === 'red' ? 650 : 250))) return;
       const move = chooseBlueMove(this.game);
       this.busy = false;
       if (move) await this.playMove(move.from, move.to, 'blue');
@@ -728,24 +775,54 @@ export class GameView {
     this.hud.addLog(text.replace(/ Your turn! 🔴$/, ''));
   }
 
+  private showBlueThinking(): void {
+    if (this.paused) this.hud.setTurn('The battle is paused', 'none', 'Press Continue to go on');
+    else this.hud.setTurn('Blue is thinking. Please wait', 'blue', 'You cannot move until Blue has moved');
+  }
+
+  /** Blue's thinking pause. It also holds while the battle is paused. False means the game was reset meanwhile. */
+  private async thinkTime(ms: number): Promise<boolean> {
+    const epoch = this.epoch;
+    await this.sleep(ms);
+    while (this.paused && epoch === this.epoch) await this.sleep(120);
+    return epoch === this.epoch;
+  }
+
   updateHud(): void {
     const g = this.game;
     const progress = g.moveCount === 0 ? 'No move played yet' : `${g.moveCount} move${g.moveCount === 1 ? '' : 's'} played`;
+    const hud = this.hud;
     if (g.phase === 'setup') {
-      this.hud.setTurn('You are arranging your army now', 'red', 'The battle has not started');
-      this.hud.showButtons(['btn:shuffle', 'btn:start', 'btn:new', 'btn:help', 'btn:mode', 'btn:code']);
+      hud.setTurn('You are arranging your army now', 'red', 'The battle has not started');
+      hud.setButtonLabel('btn:start', 'Start the battle', 'The battle has not started');
+      hud.setButtonLook('btn:start', THEME.go, true);
+      hud.setButtonHelp('btn:start', 'Starts the battle. You move first. While the battle runs, this button pauses it.');
     } else if (g.phase === 'play') {
-      if (g.turn === 'red') this.hud.setTurn('It is your turn now', 'red', 'Click a red piece, then a green dot');
-      else this.hud.setTurn('Blue is thinking. Please wait', 'blue', 'You cannot move until Blue has moved');
-      this.hud.showButtons(g.canUndo ? ['btn:undo', 'btn:new', 'btn:help', 'btn:mode', 'btn:code'] : ['btn:new', 'btn:help', 'btn:mode', 'btn:code']);
+      if (this.paused) hud.setTurn('The battle is paused', 'none', 'Press Continue to go on');
+      else if (g.turn === 'red') hud.setTurn('It is your turn now', 'red', 'Click a red piece, then a green dot');
+      else hud.setTurn('Blue is thinking. Please wait', 'blue', 'You cannot move until Blue has moved');
+      if (this.paused) {
+        hud.setButtonLabel('btn:start', 'Continue', 'The battle is paused');
+        hud.setButtonLook('btn:start', THEME.go, true);
+        hud.setButtonHelp('btn:start', 'Carries on with the battle where you stopped.');
+      } else {
+        hud.setButtonLabel('btn:start', 'Pause', 'The battle is running');
+        hud.setButtonLook('btn:start', THEME.pause, true);
+        hud.setButtonHelp('btn:start', 'Pauses the battle. Nobody can move, not even Blue, until you press Continue.');
+      }
     } else {
-      this.hud.setTurn(g.winner === 'red' ? 'The game is over. You won' : 'The game is over. Blue won', g.winner === 'red' ? 'red' : 'blue', 'Press New game to play again');
-      this.hud.showButtons(g.canUndo ? ['btn:undo', 'btn:new', 'btn:help', 'btn:mode', 'btn:code'] : ['btn:new', 'btn:help', 'btn:mode', 'btn:code']);
+      hud.setTurn(g.winner === 'red' ? 'The game is over. You won' : 'The game is over. Blue won', g.winner === 'red' ? 'red' : 'blue', 'Press New game to play again');
+      hud.setButtonLabel('btn:start', 'Start the battle', 'The game is over');
+      hud.setButtonLook('btn:start', THEME.go, false);
+      hud.setButtonHelp('btn:start', 'The game is over. Press New game to play again.');
     }
-    this.hud.setButtonStatus('btn:new', g.phase === 'setup' ? 'No move played yet' : progress);
-    this.hud.setButtonStatus('btn:start', g.phase === 'setup' ? 'The battle has not started' : 'The battle is running');
+    hud.setButtonStatus('btn:shuffle', g.phase === 'setup' ? 'Places can still change' : 'Only before the battle');
+    hud.setButtonLook('btn:shuffle', THEME.neutral, g.phase === 'setup');
+    hud.setButtonStatus('btn:undo', g.canUndo ? 'Takes back your move' : 'Nothing to take back');
+    hud.setButtonLook('btn:undo', THEME.neutral, g.canUndo);
+    hud.setButtonStatus('btn:new', g.phase === 'setup' ? 'No move played yet' : progress);
     const fmt = (list: Piece[]) => list.map((p) => pieceName(p));
-    this.hud.setCaptured(fmt(g.captured.red), fmt(g.captured.blue));
+    hud.setCaptured(fmt(g.captured.red), fmt(g.captured.blue));
   }
 
   // ------------------------------------------------------------- buttons
@@ -762,8 +839,29 @@ export class GameView {
     this.onChange?.();
   }
 
+  /** The big left-hand button: start in setup, Pause while the battle runs, Continue while paused. */
+  startOrPause(): void {
+    const phase = this.game.phase;
+    if (phase === 'setup') this.start();
+    else if (phase === 'play') this.setPaused(!this.paused);
+    else this.hud.say('The game is over. Press "New game" to play again.', 'advice');
+  }
+
+  isPaused(): boolean {
+    return this.paused;
+  }
+
+  setPaused(paused: boolean): void {
+    if (this.game.phase !== 'play' || this.paused === paused) return;
+    this.paused = paused;
+    this.clearSelection();
+    this.updateHud();
+    this.hud.say(paused ? 'The battle is paused ⏸ Nobody can move. Press "Continue" when you are ready.' : 'Carry on! ▶ The battle goes on.', paused ? 'info' : 'good');
+  }
+
   start(): void {
     if (this.game.phase !== 'setup') return;
+    this.paused = false;
     this.clearSelection();
     this.clearMoveArrow();
     this.game.start();
@@ -777,6 +875,8 @@ export class GameView {
   newGame(): void {
     this.clearSelection();
     this.busy = false;
+    this.paused = false;
+    this.epoch++;
     this.clearMoveArrow();
     this.game.reset();
     this.sheet.graph.batchUpdate(() => {
@@ -797,6 +897,7 @@ export class GameView {
     const from = this.posOf(fromAddr);
     const to = this.posOf(toAddr);
     if (!from || !to) return 'Use board addresses like B7 and B6.';
+    if (this.paused) return 'The battle is paused. Press Continue first.';
     if (this.busy) return 'Pieces are still moving, try again in a moment.';
     if (this.game.phase !== 'play') return 'The battle has not started.';
     if (this.game.turn !== 'red') return "It is Blue's turn.";

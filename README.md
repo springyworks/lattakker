@@ -38,6 +38,10 @@ npm run typecheck    # type-check only, no build output
 - Every piece shows one big insignia (a plain Unicode symbol, free to use),
   its number, its name and a ten-step strength meter. Bomb and flag have
   their own pictures.
+- Every move (one step or a long Scout jump) leaves an arrow: amber for
+  Red, teal for Blue. Arrows fade on a logarithmic scale, so the latest
+  move is bold and older ones thin out and nearly vanish within about ten
+  seconds (the last 14 are kept). Undo removes the arrows of undone moves.
 - Click a red piece, then click a highlighted square to move it. Scouts
   (rank 2) can move any distance in a straight line.
 - Click a highlighted enemy square to attack it. The higher rank wins;
@@ -45,10 +49,14 @@ npm run typecheck    # type-check only, no build output
 - Bombs beat every attacker except Miners (rank 3). The Spy (rank 1) beats
   the Marshal (rank 10) only when the Spy is the attacker.
 - Capture the enemy flag to win.
-- The buttons under the board: shuffle the setup, start the game, start a
-  new game, toggle between code view and output view, cycle the zoom
-  level, open the help text, and open the code editor for the
-  last-selected cell.
+- The cockpit sits on the sheet grid, columns L to Q and rows 1 to 10, so
+  every part has an A1-style name (for example the Start button is L5:N5).
+  Buttons are never hidden: unavailable ones are greyed out and explain
+  themselves when pressed. Hover any part for its helper text.
+  The big button at the left starts the battle, then becomes **Pause**,
+  and while paused it says **Continue** (nobody can move, not even Blue).
+  The others: shuffle, undo, new game, how to play, show code/output, and
+  the code editor for the last-selected cell.
 
 ## Saved in your browser
 
@@ -81,60 +89,235 @@ To edit a cell:
 Inside the popup editor: Ctrl+Enter runs the code once without closing the
 editor, Escape saves and closes.
 
-## Writing code in a cell
+## Your first program (start here)
 
-Each cell's code runs in its own function scope (so names never clash
-between cells) with a few globals available. The editor shows type information for all of them while you
-type.
+You do not need to know any programming to begin. The game works as it is:
+press **Start the battle!**, click a red piece, click a dot. Below the board
+are some grey-green cells that already do things: one counts the pieces, one
+paints the board, one tells whose turn it is. They update by themselves after
+every move. They are small programs, written in **TypeScript**.
 
-- `cell` — the cell the code is running in.
-- `print(...values)` — append a line of output, shown in run mode.
-- `view(text)` — replace what is shown in view mode (default: the code
-  itself).
-- `color(fill)` — set the cell's background colour.
-- `span(cols, rows)` — merge the cell over the given number of columns and
-  rows (not over the board). Merged blocks can be moved too, see above.
-- `at(address)` — get another cell by address, e.g. `at('B7')`. Returns a
-  `CellRef` with `.text`, `.code`, `.piece`, `.color()`, `.print()`, and so
-  on.
-- `range(text)` — get a range of cells, e.g. `range('A1:J10')` or
-  `range('C32-55')`. Returns an array with `.color()` and `.print()`
-  helpers that apply to every cell in the range.
-- `game` — read-only information about the match: `game.phase`,
-  `game.turn`, `game.winner`, `game.moveCount`, `game.lastMove`,
-  `game.history`, `game.pieces(color?)`, `game.captured(color)`,
-  `game.pieceAt(address)`, `game.legalMoves(addressOrColor)`. Also
-  `game.move(from, to)` to move a red piece from code, and `game.say(text)`
-  to show a message in the game's message bubble.
-- `sheet` — `sheet.mode` (`'run'` or `'view'`), `sheet.cols`, `sheet.rows`.
-- `mode` — shorthand for `sheet.mode`.
-- `sleep(ms)` — `await sleep(500)` to pause inside a cell's code.
-- `log(...values)` — like `print`, but also writes to the browser console.
+1. Click a cell such as `A12` and press **Show code** (or double-click the cell).
+   You are now reading the program that makes the numbers.
+2. Change `'red'` to `'blue'`, press **Ctrl+Enter**. The numbers change.
+3. Click an empty cell, double-click it and type `print('Hello!')`. Press
+   Ctrl+Enter. That is your first program.
+4. Make it alive:
 
-Reading a cell with `at()` or `range()` registers a dependency: when the
-cell you read from changes (including board squares after a move), your
-cell re-runs automatically. There is no need to manually refresh anything.
+   ```ts
+   every('1s', (n) => show(`${n} seconds`))
+   ```
 
-Example, read live in cell A12 of the default sheet:
+   A stopwatch. Replace `'1s'` with `'500ms'` for twice as fast.
+5. Make it react to the game:
+
+   ```ts
+   on('game', () => show('Move number ' + game.moveCount))
+   ```
+
+TypeScript is JavaScript with labels that catch mistakes while you type
+(`let age: number = 10`; try `age = 'ten'` and the editor underlines it). If
+you know Java or C#, it will feel familiar: classes, interfaces, generics,
+`async`/`await`. It is "Java, only lighter and it runs in every browser".
+Everything you can use inside a cell is listed below.
+
+## Programmer's manual: the cell API
+
+Each cell's code runs in its own scope, so names never clash between cells.
+Top-level `await` works. The editor shows these names with help text as you type.
+
+### Output and looks
+
+| Call | What it does |
+|---|---|
+| `print(...values)` | Add a line to this cell's output (shown in run mode). Only the last 300 lines are kept. |
+| `show(...values)` | Replace the output with one line. Use this for displays that update in place. |
+| `clear()` | Empty the output. |
+| `view(text)` | Replace what is shown in view mode (default: the code itself). |
+| `color(fill)` | Background colour, e.g. `'#ffd6e7'` or `'lightgreen'`. |
+| `log(...values)` | Like `print`, and also writes to the browser console. |
+| `span(cols?, rows?)` | Merge the cell over `cols` x `rows` cells (never over the board). Leave one out to keep it: `span(4)` keeps the rows. With no arguments it changes nothing and returns `{ cols, rows }`. |
+
+The cell's size can be set (and read) from code. Dragging a cell border to
+resize it is deliberately not offered: rewriting your `span(...)` line behind
+your back would fight with the code you are typing. The code is the single
+source of truth for the size.
+
+### The cell itself and other cells
+
+`cell` is the cell the code lives in. `at('B7')` gives any other cell, and
+`range('A1:J10')` (or `range('C32-55')`, a column down) an array of cells.
+Every cell reference has:
+
+| Member | Meaning |
+|---|---|
+| `.address`, `.col`, `.row` | Where it is (`'B7'`, column 1, row 6; both start at 0). |
+| `.text` | The text shown in it right now. |
+| `.code` | Its source code, if any. |
+| `.piece` | The piece standing on this square (board squares only), or `null`. |
+| `.isBoard`, `.isLake` | Is it on the board; is it a lake. |
+| `.cols`, `.rows` | How many columns and rows it covers. |
+| `.usedBy` | Addresses of cells whose code read this cell (they re-run when it changes). |
+| `.reads` | What this cell's code read last time it ran (`'game'` counts too). |
+| `.print()`, `.show()`, `.clear()`, `.view()`, `.color()`, `.textColor()`, `.span()`, `.flash()` | Write into that cell. They return the cell, so you can chain: `at('L12').print('Hi').color('#f2e4bd')`. |
+
+A range also has `.color(fill)` and `.print(...)` that apply to every cell in it.
+Right-click any cell for the same information as menus: **Used by** and
+**Reads** list the cells (click one to jump to it), and **Stop timers** appears
+when the cell has timers running.
+
+### The game
+
+| Call | Meaning |
+|---|---|
+| `game.phase` | `'setup'`, `'play'` or `'over'`. |
+| `game.turn`, `game.winner`, `game.moveCount` | Whose turn, who won (or `null`), moves played. |
+| `game.lastMove`, `game.history` | Details of the last move, or of all moves. |
+| `game.pieces(color?)` | All pieces on the board (`'red'` / `'blue'` / both), each with an `address`. |
+| `game.captured(color)` | Pieces of that colour that were removed. |
+| `game.pieceAt('B7', { peek? })` | The piece on a square. `peek: true` shows hidden Blue ranks (cheating, but handy for bots). |
+| `game.legalMoves('B7' or 'red')` | Where a piece (or a whole colour) can move. |
+| `game.move(from, to)` | Move a red piece, only on Red's turn. Returns a message. |
+| `game.say(text)` | Show a message in the game's speech bubble. |
+
+Also: `sheet.mode` (`'run'`/`'view'`), `sheet.cols`, `sheet.rows`, `mode`.
+
+### Time: sleep, every, after
+
+| Call | Meaning |
+|---|---|
+| `await sleep(500)` | Wait. A number is milliseconds; text works too: `'2s'`. Other cells keep running while you wait. |
+| `every(interval, fn)` | Run `fn` again and again. `fn(n)` gets the count 1, 2, 3... `every(fn)` means once a second. |
+| `after(interval, fn)` | Run `fn` once, later. |
+| `stop()` | Stop every timer and watcher this cell started. |
+
+An *interval* is a number of milliseconds or text: `'250ms'`, `'1s'`, `'1.5s'`,
+`'1m'` (a minute), `'1h'`. The shortest allowed is 10 ms. `every` and `after`
+return a function that stops just that one: `const off = every('1s', ...)`
+and later `off()`.
+
+Rules that keep it simple and safe:
+
+- **Timers belong to the cell.** When the cell runs again (you edited it, or
+  something it read changed), is cleared, or is moved, its old timers stop
+  first. You cannot pile up timers by pressing Ctrl+Enter ten times.
+- A tick that is still busy (its code is waiting on `sleep`) is not started
+  twice. The next tick waits; no pile-up.
+- If code inside a tick throws an error, the cell shows it and that timer stops.
+- After every tick the cell is shown again and **cells that read it re-run**,
+  so a clock cell can feed other cells (see below).
+
+### Watching things: on
 
 ```ts
-span(4, 2)
-const red = game.pieces('red').length
-const blue = game.pieces('blue').length
-print(`Red has ${red} pieces`)
-print(`Blue has ${blue} pieces`)
-color(red >= blue ? '#dcfce7' : '#fee2e2')
+on('B7', (square) => show(square.piece?.name ?? 'empty'))
+on('A1:J10', (square) => print(square.address + ' changed'))   // once per change
+on('game', (g) => show('Move ' + g.moveCount))
 ```
 
-Painting the board from a cell:
+`on(target, fn)` waits until the cell, any cell of the range, or the `game`
+changes, then calls `fn` with the cell that changed (or `game`). Board
+squares count as changed only when what stands on them is different. It
+returns a function that stops the watcher.
+
+The difference between *reading* and *watching*, which is the one idea worth
+remembering:
+
+- **Top level of a cell** (`const n = at('B7').text`): reading makes a
+  dependency. The *whole cell* runs again when B7 changes. Good for
+  "calculate something from other cells".
+- **Inside `every`/`on`/`after`**: reading is free and not tracked. Only the
+  function runs again. Good for "keep a counter or a clock".
+
+### Examples
 
 ```ts
-let count = 0
-for (const square of range('A1:J10')) {
-  if (square.piece?.color === 'red') { square.color('#ffd6e7'); count++ }
-}
-print(`Painted ${count} squares pink`)
+// A chess clock: counts only while it is Red's turn
+let seconds = 0
+every('1s', () => { if (game.turn === 'red') show(++seconds + ' s') })
 ```
+
+```ts
+// Show how many cells use this one
+every('2s', () => show(cell.usedBy.length + ' cells read me'))
+```
+
+```ts
+// A cell that waits without blocking the game or other cells
+await sleep('3s')
+print('three seconds later')
+```
+
+The default sheet has a stopwatch in `N12` and a watcher in `N15` to copy from.
+
+## How the cell code is run (internals)
+
+### When does a cell run?
+
+A cell runs in exactly these situations (`src/sheet/Sheet.ts`, `runAll`):
+
+1. you saved or edited its code (also: pressed Ctrl+Enter, or a helper called `mms.setCode`);
+2. something it **read** changed (another cell, a board square, or the game);
+3. the page loaded, or rows were inserted or content moved (its address changed).
+
+Nothing else. A cell that reads nothing runs once and then waits until you
+touch it, just as a plain number in a spreadsheet does not recalculate. The
+board and `game` count as changed when a move, undo, shuffle or new game happens.
+
+### Is this reactive programming?
+
+Yes. Reactive programming means: you describe *what depends on what*, and the
+system, not you, pushes changes through. A spreadsheet is the best-known
+example (`=A1+B1` updates by itself). Frameworks call the same idea signals,
+observables or computed values. Here it is implemented like this
+(`src/sheet/reactivity.ts`, `DependencyGraph`):
+
+1. **Dependencies are discovered, not declared.** While a cell runs, every
+   `at()`, `range()` and `game.*` it uses is recorded as an edge "this cell
+   reads that node". You never write a list of dependencies. The edges are
+   rebuilt each time the cell runs, so an `if` that reads A1 only sometimes
+   gets the edge only sometimes (a *dynamic* dependency graph).
+2. **Changes are pushed.** An edit, a move, a timer tick or a finished cell
+   marks nodes *dirty* (`markDirty`, `markDependentsDirty`).
+3. **Only the affected cells run, in the right order.** `closure()` collects the
+   dirty nodes and everything that transitively reads them, then sorts them
+   topologically (Kahn's algorithm), so a cell never runs before the cells it
+   reads. That avoids the classic "glitch" of showing a half-updated
+   result. If cells read each other in a circle, a warning is logged and they
+   run in grid order instead of hanging.
+4. **Events are the same machinery.** `on()` is a subscription on a node; the
+   same "this node changed" fact that re-runs readers also wakes watchers.
+
+What we deliberately do not have: cells are not individual formulas but whole
+programs, so a re-run starts the program from the top; and the only
+change-detection ("did the value really change?") is for board squares. A
+cell that prints the same text again still counts as changed. We checked this
+by test: a cell reading `A12` re-runs when `A12` changes; a watcher on `A1`
+stays quiet when a piece moves elsewhere, and fires when `A6` changes.
+
+### Multitasking: how several cells and timers run at once
+
+The browser runs your JavaScript on **one thread**, so nothing in a cell
+runs truly in parallel. What we get is cooperative multitasking, the same
+trick as `async`/`await` in the article that inspired this: a cell hands
+control back every time it does `await sleep(...)`, so others can run.
+
+- Every run of a cell has a **run context** (`src/sheet/tasks.ts`). It is the
+  owner of the cell's timers, watchers and pending sleeps. Cancelling it
+  (re-run, edit, clear, move) stops them all. Code that is still running from
+  an old run is stopped at its next call (`print`, `at`, `sleep`, ...).
+- Cells run one after another in dependency order. A cell that takes longer
+  than **150 ms** (usually: it is waiting in a `sleep`) is moved to the
+  background, so the cells after it are not held up. When it finishes, cells
+  that read it run again to pick up its result.
+- Timers (`every`, `after`) use the browser's timers; `on` uses the same
+  change notifications that re-run cells.
+
+Limit to know about: **a loop that never awaits** (`while (true) {}`) cannot
+be interrupted, because there is only one thread, and it freezes the page.
+Put `await sleep(0)` in a long loop to let others breathe. Web Workers could
+give real parallelism, but a worker cannot touch the board or other cells, so
+cell code would lose its main feature. We chose not to.
 
 ## How TypeScript runs inside a cell (for the curious)
 
@@ -169,7 +352,8 @@ happens when a cell runs (`src/sheet/runtime.ts`, `src/editor/monaco.ts`):
 4. **Reads are tracked.** `at()`, `range()` and `game.*` record which cells
    the code looked at (`src/sheet/reactivity.ts`). When one of them
    changes, only the cells that read it run again, like a spreadsheet
-   formula.
+   formula. Timers, `on()` and the rules of running are described in
+   "How the cell code is run" above.
 
 So, in the words you asked about: not a compiler to machine code (the
 browser does that last step), not an interpreter we built, but a
@@ -229,7 +413,7 @@ the shift.
 ## Project layout
 
 ```
-src/sheet/        Sheet model: cells, addresses, dependency tracking, row insertion
+src/sheet/        Sheet model: cells, addresses, dependency tracking (reactivity.ts), run contexts and timers (tasks.ts), the cell API (api.ts)
 src/editor/       Monaco integration, popup editor, inline per-cell editor
 src/game/     Game rules, board state, AI move suggestions
 src/ui/           Control panel, phone dock, touch gestures
@@ -255,3 +439,6 @@ framework), Monaco for code editing, Vite for the dev server and build.
 
 The `deploy` GitHub Actions workflow builds the project and publishes
 `dist/` to GitHub Pages on every push to `main`.
+
+## Source
+[L'Attaque wikipedia](https://en.wikipedia.org/wiki/L%27Attaque)

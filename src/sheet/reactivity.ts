@@ -15,42 +15,47 @@ export class DependencyGraph {
   /** address -> set of addresses it wrote to last time it ran (e.g. at('L12').print(...)) */
   private writes = new Map<string, Set<string>>();
   private dirty = new Set<string>();
-  private currentReads: Set<string> | null = null;
-  private currentWrites: Set<string> | null = null;
+  /** Everything the last closure() visited: dirty seeds plus transitive dependents. */
+  lastTouched = new Set<string>();
 
-  /** Call before running a cell's code; collects the reads/writes it makes. */
-  beginRun(_address: string): void {
-    this.currentReads = new Set();
-    this.currentWrites = new Set();
-  }
-
-  /** Called from the running cell's at()/range()/game access to record a dependency. */
-  trackRead(dep: string): void {
-    this.currentReads?.add(dep);
-  }
-
-  /** Called when the running cell writes into another cell (print/view/color/textColor/flash). */
-  trackWrite(target: string): void {
-    this.currentWrites?.add(target);
-  }
-
-  /** Call after running a cell; replaces its previous edges with what this run actually read/wrote. */
-  endRun(address: string): void {
-    const reads = this.currentReads ?? new Set<string>();
-    const writes = this.currentWrites ?? new Set<string>();
-    this.currentReads = null;
-    this.currentWrites = null;
+  /** Call before a cell's code runs: forgets its old edges, they are re-recorded as it reads. */
+  beginRun(address: string): void {
     const previous = this.dependsOn.get(address);
-    if (previous) {
-      for (const dep of previous) this.dependents.get(dep)?.delete(address);
-    }
-    this.dependsOn.set(address, reads);
-    for (const dep of reads) {
-      let set = this.dependents.get(dep);
-      if (!set) this.dependents.set(dep, (set = new Set()));
-      set.add(address);
-    }
-    this.writes.set(address, writes);
+    if (previous) for (const dep of previous) this.dependents.get(dep)?.delete(address);
+    this.dependsOn.set(address, new Set());
+    this.writes.set(address, new Set());
+  }
+
+  /** Records that `address` read `dep` (called from at()/range()/game access during its run). */
+  trackRead(address: string, dep: string): void {
+    let reads = this.dependsOn.get(address);
+    if (!reads) this.dependsOn.set(address, (reads = new Set()));
+    reads.add(dep);
+    let set = this.dependents.get(dep);
+    if (!set) this.dependents.set(dep, (set = new Set()));
+    set.add(address);
+  }
+
+  /** Records that `address` wrote into `target` (print/view/color/textColor/flash/span). */
+  trackWrite(address: string, target: string): void {
+    let set = this.writes.get(address);
+    if (!set) this.writes.set(address, (set = new Set()));
+    set.add(target);
+  }
+
+  /** Cells that read `address` (what would re-run if it changed). */
+  dependentsOf(address: string): string[] {
+    return [...(this.dependents.get(address) ?? [])];
+  }
+
+  /** What `address` read the last time it ran. */
+  readsOf(address: string): string[] {
+    return [...(this.dependsOn.get(address) ?? [])];
+  }
+
+  /** Marks only the readers of `address` dirty (it changed by itself, e.g. a timer tick). */
+  markDependentsDirty(address: string): void {
+    for (const dep of this.dependents.get(address) ?? []) this.dirty.add(dep);
   }
 
   /** Union of the last-known write targets of every address in `addresses`. */
@@ -106,6 +111,7 @@ export class DependencyGraph {
       const addr = queue.shift()!;
       seedDependents(addr);
     }
+    this.lastTouched = new Set([...this.dirty, ...affected]);
     this.dirty.clear();
 
     const subset = [...affected].filter((a) => known.has(a));
