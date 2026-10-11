@@ -40,6 +40,9 @@ const RUN_SLICE_MS = 150;
 
 export const COLS = 26;
 export const ROWS = 40;
+/** Hard ceilings for auto-grow: addresses stay at most two letters and three digits (ZZ999-style). */
+export const MAX_COLS = 52;
+export const MAX_ROWS = 999;
 export const CW = 60;
 export const CH = 60;
 export const HDR_W = 44;
@@ -152,6 +155,7 @@ export class Sheet {
   mode: Mode = 'run';
   /** Grows by 1 every insertRow(); start seeded from the ROWS constant. */
   rowCount = ROWS;
+  colCount = COLS;
 
   private baseVisual = new Map<string, CellVisual>();
   private selectionVisual = new Map<string, CellVisual>();
@@ -172,6 +176,7 @@ export class Sheet {
   private runTimer: number | null = null;
   private modeChangeHandlers: Array<(mode: Mode) => void> = [];
   private rowsInsertedHandlers: Array<(afterRowIndex: number) => void> = [];
+  private roomMadeHandlers: Array<(info: { displaced: number; addedCols: number; addedRows: number }) => void> = [];
   private contentMovedHandlers: Array<(from: string, to: string) => void> = [];
   private codeChangedHandlers: Array<(address: string) => void> = [];
   private referencesHandlers: Array<(report: ReferenceReport) => void> = [];
@@ -187,8 +192,12 @@ export class Sheet {
   /** cell id -> a live DOM node to host as that cell's label (e.g. the Monaco editor frame). */
   private nodeLabels = new Map<string, HTMLElement>();
 
-  constructor(container: HTMLElement) {
+  /** Only the main tab has the Lattakker board (A1:J10) and the reserved rows below it. */
+  private readonly board: boolean;
+
+  constructor(container: HTMLElement, options: { board?: boolean } = {}) {
     this.container = container;
+    this.board = options.board ?? false;
     // SelectionCellsHandler must be registered before SelectionHandler: mouse listeners fire in
     // plugin-registration order, and VertexHandler's resize-handle hit-test (owned by
     // SelectionCellsHandler) needs first refusal on a mousedown, or SelectionHandler consumes it
@@ -226,11 +235,11 @@ export class Sheet {
     graph.getLabel = (cell?: Cell | null) => this.labelFor(cell ?? null);
     graph.isHtmlLabel = (cell: Cell) => {
       const id = cell.getId() ?? '';
-      return id.startsWith('sheet:') || id.startsWith('hud:') || id.startsWith('btn:') || id.startsWith('ed:') || id.startsWith('help:');
+      return id.startsWith('sheet:') || id.startsWith('hud:') || id.startsWith('btn:') || id.startsWith('ed:') || id.startsWith('help:') || id.startsWith('ctx:live:');
     };
     graph.getCursorForCell = (cell: Cell) => {
       const id = cell.getId() ?? '';
-      if (id.startsWith('piece:') || id.startsWith('btn:') || id.startsWith('ed:btn') || id === 'hdr:corner') return 'pointer';
+      if (id.startsWith('piece:') || id.startsWith('btn:') || id.startsWith('ed:btn') || id === 'hdr:corner' || id.startsWith('ctx:row:') || id.startsWith('ctx:livebar:')) return 'pointer';
       if (id.startsWith('sheet:')) return 'cell';
       if (id === 'ed:frame') return 'move';
       return null;
@@ -400,37 +409,62 @@ export class Sheet {
   }
 
   private buildGrid(): void {
-    const { graph } = this;
     for (let r = 0; r < ROWS; r++) {
-      for (let c = 0; c < COLS; c++) {
-        const address = formatAddress(c, r);
-        const cell = graph.insertVertex({
-          parent: this.sheetLayer,
-          id: `sheet:${address}`,
-          value: '',
-          position: [ORIGIN_X + c * CW, ORIGIN_Y + r * CH],
-          size: [CW, CH],
-          style: { baseStyleNames: ['sheet'] },
-        });
-        this.cells.set(address, cell);
-        this.data.set(address, {
-          address,
-          col: c,
-          row: r,
-          uid: '',
-          code: '',
-          output: [],
-          plot: null,
-          viewText: null,
-          codeVisual: {},
-          span: { cols: 1, rows: 1 },
-          error: null,
-          memory: {},
-          runCount: 0,
-          runReason: 'edit',
+      for (let c = 0; c < COLS; c++) this.makeCell(c, r);
+    }
+  }
+
+  private makeCell(c: number, r: number): void {
+    const address = formatAddress(c, r);
+    const cell = this.graph.insertVertex({
+      parent: this.sheetLayer,
+      id: `sheet:${address}`,
+      value: '',
+      position: [ORIGIN_X + c * CW, ORIGIN_Y + r * CH],
+      size: [CW, CH],
+      style: { baseStyleNames: ['sheet'] },
+    });
+    this.cells.set(address, cell);
+    this.data.set(address, {
+      address,
+      col: c,
+      row: r,
+      uid: '',
+      code: '',
+      output: [],
+      plot: null,
+      viewText: null,
+      codeVisual: {},
+      span: { cols: 1, rows: 1 },
+      error: null,
+      memory: {},
+      runCount: 0,
+      runReason: 'edit',
+    });
+  }
+
+  /** Grows the sheet to the right: new cells for every row plus their column headers. */
+  addColumns(n: number): void {
+    if (n <= 0) return;
+    const model = this.graph.getDataModel();
+    model.batchUpdate(() => {
+      const from = this.colCount;
+      this.colCount += n;
+      for (let c = from; c < this.colCount; c++) {
+        for (let r = 0; r < this.rowCount; r++) this.makeCell(c, r);
+        this.graph.insertVertex({
+          parent: this.colHeaderGroup,
+          id: `hdr:c${c}`,
+          value: colToLetters(c),
+          position: [ORIGIN_X + c * CW, 0],
+          size: [CW, HDR_H],
+          style: { baseStyleNames: ['header'] },
         });
       }
-    }
+      const cg = this.colHeaderGroup.getGeometry()!;
+      model.setGeometry(this.colHeaderGroup, new Geometry(cg.x, cg.y, ORIGIN_X + this.colCount * CW, cg.height));
+    });
+    this.raiseHeaders();
   }
 
   private buildHeaders(): void {
@@ -531,7 +565,7 @@ export class Sheet {
   // ------------------------------------------------------------ addressing
 
   isBoardAddress(address: string): boolean {
-    return BOARD_RE.test(address);
+    return this.board && BOARD_RE.test(address);
   }
 
   cellAt(address: string): Cell | undefined {
@@ -549,7 +583,7 @@ export class Sheet {
 
   resolve(text: string): string | null {
     const p = parseAddress(text);
-    if (!p || p.col < 0 || p.col >= COLS || p.row < 0 || p.row >= this.rowCount) return null;
+    if (!p || p.col < 0 || p.col >= this.colCount || p.row < 0 || p.row >= this.rowCount) return null;
     return formatAddress(p.col, p.row);
   }
 
@@ -558,7 +592,7 @@ export class Sheet {
     if (!r) return [];
     r.c1 = Math.max(0, r.c1);
     r.r1 = Math.max(0, r.r1);
-    r.c2 = Math.min(COLS - 1, r.c2);
+    r.c2 = Math.min(this.colCount - 1, r.c2);
     r.r2 = Math.min(this.rowCount - 1, r.r2);
     if (r.c1 > r.c2 || r.r1 > r.r2) return [];
     return expandRange(r);
@@ -611,7 +645,7 @@ export class Sheet {
       const t = step / steps;
       const color = '#' + rgb.map((v) => Math.round(v + (255 - v) * t).toString(16).padStart(2, '0')).join('');
       this.graph.batchUpdate(() => {
-        for (let c = 0; c < COLS; c++) {
+        for (let c = 0; c < this.colCount; c++) {
           const address = formatAddress(c, rowIndex);
           if (step >= steps) this.flashVisual.delete(address);
           else this.flashVisual.set(address, { fill: color });
@@ -780,7 +814,7 @@ export class Sheet {
     const d = this.data.get(address);
     const cell = this.cells.get(address);
     if (!d || !cell) return;
-    cols = Math.max(1, Math.min(Math.floor(cols), COLS - d.col));
+    cols = Math.max(1, Math.min(Math.floor(cols), this.colCount - d.col));
     rows = Math.max(1, Math.min(Math.floor(rows), this.rowCount - d.row));
     if (d.span.cols === cols && d.span.rows === rows) return;
     const model = this.graph.getDataModel();
@@ -894,31 +928,103 @@ export class Sheet {
     return true;
   }
 
-  /** Can a block of cols x rows with its top-left on `anchor` sit there? Its own old squares are free. */
-  private blockFits(fromAddress: string, anchor: string, cols: number, rows: number): boolean {
-    const src = this.data.get(fromAddress);
-    const to = this.data.get(anchor);
-    if (!src || !to) return false;
-    if (to.col + cols > COLS || to.row + rows > this.rowCount) return false;
-    for (let r = to.row; r < to.row + rows; r++) {
-      for (let c = to.col; c < to.col + cols; c++) {
+  /** Grows the sheet (columns on the right, rows at the bottom) so that square (c2, r2) exists. */
+  private ensureRoom(c2: number, r2: number): { cols: number; rows: number } {
+    let cols = 0;
+    let rows = 0;
+    if (c2 >= this.colCount) {
+      cols = c2 + 1 - this.colCount;
+      this.addColumns(cols);
+    }
+    while (this.rowCount <= r2) {
+      this.insertRow(this.rowCount - 1);
+      rows++;
+    }
+    return { cols, rows };
+  }
+
+  /** Owners of code or merged blocks that sit (even partly) inside `rect`, other than `except`. */
+  private occupantsOf(rect: BlockMove['from'], except: string): string[] {
+    const owners = new Set<string>();
+    for (let r = rect.r1; r <= rect.r2 && r < this.rowCount; r++) {
+      for (let c = rect.c1; c <= rect.c2 && c < this.colCount; c++) {
         const a = formatAddress(c, r);
-        if (this.isBoardAddress(a)) return false;
-        if (c >= src.col && c < src.col + cols && r >= src.row && r < src.row + rows) continue;
+        const owner = this.coveredBy.get(a) ?? a;
+        if (owner === except) continue;
+        const d = this.data.get(owner);
+        if (d && (d.code.trim() || d.span.cols > 1 || d.span.rows > 1)) owners.add(owner);
+      }
+    }
+    return [...owners];
+  }
+
+  private rectFree(c: number, r: number, cols: number, rows: number, avoid: Array<BlockMove['from']>): boolean {
+    for (let rr = r; rr < r + rows; rr++) {
+      for (let cc = c; cc < c + cols; cc++) {
+        if (avoid.some((v) => cc >= v.c1 && cc <= v.c2 && rr >= v.r1 && rr <= v.r2)) return false;
+        if (cc >= this.colCount) continue;
+        if (rr >= this.rowCount) return false;
+        const a = formatAddress(cc, rr);
+        if (this.isBoardAddress(a) || this.coveredBy.has(a)) return false;
         const d = this.data.get(a);
-        if (!d || d.code.trim()) return false;
-        const owner = this.coveredBy.get(a);
-        if (owner && owner !== fromAddress) return false;
+        if (d && (d.code.trim() || d.span.cols > 1 || d.span.rows > 1)) return false;
       }
     }
     return true;
   }
 
-  private moveBlock(fromAddress: string, toAddress: string): boolean {
+  /** First free spot for a cols x rows block on `row`, scanning right from `startCol` (columns beyond the sheet are always free). */
+  private findSpot(row: number, cols: number, rows: number, startCol: number, avoid: Array<BlockMove['from']>): number | null {
+    for (let c = startCol; c + cols <= MAX_COLS; c++) {
+      if (this.rectFree(c, row, cols, rows, avoid)) return c;
+    }
+    return null;
+  }
+
+  /** Moves a block anywhere on the sheet: the sheet grows to fit and whatever sits in the way is shifted aside. */
+  private moveBlock(fromAddress: string, pos: { col: number; row: number }): boolean {
+    const from = this.data.get(fromAddress)!;
+    const { cols, rows } = from.span;
+    const dst = { c1: pos.col, r1: pos.row, c2: pos.col + cols - 1, r2: pos.row + rows - 1 };
+    if (dst.c2 >= MAX_COLS || dst.r2 >= MAX_ROWS) return false;
+    for (let r = dst.r1; r <= dst.r2; r++) {
+      for (let c = dst.c1; c <= dst.c2; c++) if (this.isBoardAddress(formatAddress(c, r))) return false;
+    }
+    const grew = this.ensureRoom(dst.c2, dst.r2);
+    const avoid = [dst, this.blockRect(from, cols, rows)];
+    const plan: Array<{ address: string; col: number; row: number }> = [];
+    for (const owner of this.occupantsOf(dst, fromAddress)) {
+      const od = this.data.get(owner)!;
+      const col = this.findSpot(od.row, od.span.cols, od.span.rows, dst.c2 + 1, avoid);
+      if (col === null) return false;
+      avoid.push({ c1: col, r1: od.row, c2: col + od.span.cols - 1, r2: od.row + od.span.rows - 1 });
+      plan.push({ address: owner, col, row: od.row });
+    }
+    for (const p of plan) {
+      const od = this.data.get(p.address)!;
+      const more = this.ensureRoom(p.col + od.span.cols - 1, p.row + od.span.rows - 1);
+      grew.cols += more.cols;
+      grew.rows += more.rows;
+      this.moveBlockRaw(p.address, formatAddress(p.col, p.row));
+    }
+    this.moveBlockRaw(fromAddress, formatAddress(pos.col, pos.row));
+    if (plan.length > 0 || grew.cols > 0 || grew.rows > 0) {
+      const info = { displaced: plan.length, addedCols: grew.cols, addedRows: grew.rows };
+      this.roomMadeHandlers.forEach((h) => h(info));
+    }
+    return true;
+  }
+
+  /** Called when a move had to shift other blocks aside or grow the sheet. */
+  onRoomMade(handler: (info: { displaced: number; addedCols: number; addedRows: number }) => void): void {
+    this.roomMadeHandlers.push(handler);
+  }
+
+  /** Moves one block onto squares that are already free (or its own). */
+  private moveBlockRaw(fromAddress: string, toAddress: string): void {
     const from = this.data.get(fromAddress)!;
     const to = this.data.get(toAddress)!;
     const { cols, rows } = from.span;
-    if (!this.blockFits(fromAddress, toAddress, cols, rows)) return false;
     const src = this.blockRect(from, cols, rows);
     const dst = this.blockRect(to, cols, rows);
     const overlapping = src.c1 <= dst.c2 && dst.c1 <= src.c2 && src.r1 <= dst.r2 && dst.r1 <= src.r2;
@@ -970,7 +1076,6 @@ export class Sheet {
       h(toAddress);
     });
     this.announceReferences(references);
-    return true;
   }
 
   /** Moves/swaps one cell's code (and derived visual) with another, Excel-drag style. */
@@ -978,13 +1083,18 @@ export class Sheet {
     if (fromAddress === toAddress) return false;
     if (!this.draggable(fromAddress)) return false;
     if (this.isBoardAddress(toAddress)) return false;
+    const pos = parseAddress(toAddress);
     const from = this.data.get(fromAddress);
+    if (!pos || pos.col < 0 || pos.row < 0 || !from) return false;
     const to = this.data.get(toAddress);
-    if (!from || !to) return false;
-    if (from.span.cols > 1 || from.span.rows > 1) return this.moveBlock(fromAddress, toAddress);
-    if (to.span.cols > 1 || to.span.rows > 1) return false;
-    if (this.coveredBy.has(toAddress)) return false;
+    const plain = from.span.cols === 1 && from.span.rows === 1 && to && to.span.cols === 1 && to.span.rows === 1 && !this.coveredBy.has(toAddress);
+    if (!plain) return this.moveBlock(fromAddress, pos);
+    return this.swapCells(fromAddress, toAddress);
+  }
 
+  private swapCells(fromAddress: string, toAddress: string): boolean {
+    const from = this.data.get(fromAddress)!;
+    const to = this.data.get(toAddress)!;
     // A swap: references to either cell follow its content to the other square.
     const here = this.blockRect(from, 1, 1);
     const there = this.blockRect(to, 1, 1);
@@ -1104,10 +1214,10 @@ export class Sheet {
   /** `drop` is the pointer position in model units, or null when the drag was cancelled. */
   private async resolveContentDrop(drag: ContentDragState, drop: { x: number; y: number } | null): Promise<void> {
     // The block's top-left corner decides where it lands, so a wide block can be placed precisely.
-    const col = drop ? Math.round((drop.x - drag.grab.x - ORIGIN_X) / CW) : -1;
-    const row = drop ? Math.round((drop.y - drag.grab.y - ORIGIN_Y) / CH) : -1;
-    const inBounds = col >= 0 && col < COLS && row >= 0 && row < this.rowCount;
-    const toAddress = inBounds ? formatAddress(col, row) : null;
+    const rawCol = drop ? Math.round((drop.x - drag.grab.x - ORIGIN_X) / CW) : -9;
+    const rawRow = drop ? Math.round((drop.y - drag.grab.y - ORIGIN_Y) / CH) : -9;
+    // Dropping past the right or bottom edge grows the sheet; only a drop well outside the top/left cancels.
+    const toAddress = rawCol >= -1 && rawRow >= -1 ? formatAddress(Math.max(0, Math.min(MAX_COLS - 1, rawCol)), Math.max(0, Math.min(MAX_ROWS - 1, rawRow))) : null;
     const moved = toAddress ? this.moveCellContent(drag.address, toAddress) : false;
 
     const settleAddress = moved ? toAddress! : drag.address;
@@ -1128,11 +1238,11 @@ export class Sheet {
   /**
    * Inserts a blank row right after `afterRowIndex` (0-based), like a spreadsheet: everything from
    * that point down shifts down by one row, the sheet grows by one row at the bottom, and every code
-   * cell's address-literal references are rewritten to match (see rowInsertRewrite). Only allowed
-   * below row 11 (0-based index >= 11), since rows 0-9 are the Lattakker board.
+   * cell's address-literal references are rewritten to match (see rowInsertRewrite). On the board
+   * tab only allowed below row 11 (0-based index >= 11), since rows 0-9 are the Lattakker board.
    */
   insertRow(afterRowIndex: number): void {
-    if (afterRowIndex < 11) return;
+    if (this.board && afterRowIndex < 11) return;
     const oldRowCount = this.rowCount;
     const newRowIndex = oldRowCount;
     const fromRow1Based = afterRowIndex + 2;
@@ -1146,7 +1256,7 @@ export class Sheet {
 
     this.graph.batchUpdate(() => {
       // Append one fresh blank row at the bottom so there's a destination slot to shift into.
-      for (let c = 0; c < COLS; c++) {
+      for (let c = 0; c < this.colCount; c++) {
         const address = formatAddress(c, newRowIndex);
         const cell = this.graph.insertVertex({
           parent: this.sheetLayer,
@@ -1190,7 +1300,7 @@ export class Sheet {
       // Shift .code down one row at a time, from the new bottom row up to the insertion point;
       // everything else (output/error/visual/span) is left for the next run to rebuild.
       for (let r = newRowIndex; r > afterRowIndex + 1; r--) {
-        for (let c = 0; c < COLS; c++) {
+        for (let c = 0; c < this.colCount; c++) {
           const dst = this.data.get(formatAddress(c, r))!;
           const src = this.data.get(formatAddress(c, r - 1))!;
           dst.code = src.code;
@@ -1199,7 +1309,7 @@ export class Sheet {
           dst.runCount = src.runCount;
         }
       }
-      for (let c = 0; c < COLS; c++) {
+      for (let c = 0; c < this.colCount; c++) {
         const fresh = this.data.get(formatAddress(c, afterRowIndex + 1))!;
         fresh.code = '';
         fresh.uid = '';
@@ -1209,7 +1319,7 @@ export class Sheet {
 
       // Clear transient per-cell state across the whole shifted band; it'll be rebuilt by requestRun().
       for (let r = afterRowIndex + 1; r <= newRowIndex; r++) {
-        for (let c = 0; c < COLS; c++) {
+        for (let c = 0; c < this.colCount; c++) {
           const addr = formatAddress(c, r);
           const d = this.data.get(addr)!;
           d.output = [];
@@ -1231,12 +1341,12 @@ export class Sheet {
         if (coveredRow > afterRowIndex || ownerRow > afterRowIndex) this.coveredBy.delete(covered);
       }
       for (let r = afterRowIndex + 1; r <= newRowIndex; r++) {
-        for (let c = 0; c < COLS; c++) this.applyStyle(formatAddress(c, r));
+        for (let c = 0; c < this.colCount; c++) this.applyStyle(formatAddress(c, r));
       }
     });
 
     for (let r = afterRowIndex + 1; r < this.rowCount; r++) {
-      for (let c = 0; c < COLS; c++) {
+      for (let c = 0; c < this.colCount; c++) {
         const addr = formatAddress(c, r);
         this.depGraph.markDirty(addr);
         if (this.data.get(addr)?.code) this.nextReason.set(addr, 'moved');

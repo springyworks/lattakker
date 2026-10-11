@@ -351,3 +351,36 @@ body.grab-armed #app {
   font-style: italic;
   font-size: 0.9em;
 }
+
+/* Hover-driven reference popups: everything is maxGraph SVG except the live Monaco preview,
+   hosted through the same foreignObject node-label mechanism as the cell editors above. */
+.ctx-preview-host {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  pointer-events: auto;
+}
+.ctx-preview-editor {
+  flex: 1 1 auto;
+  min-height: 0;
+  pointer-events: auto;
+}
+.ctx-preview-out {
+  flex: 0 0 auto;
+  overflow: hidden;
+  border-top: 1px solid #cbd2d9;
+  padding: 2px 4px;
+  box-sizing: border-box;
+  font: 11px/1.3 system-ui, sans-serif;
+}
+.ctx-preview-empty {
+  color: #9aa5b1;
+  font-size: 10px;
+}
+/* Short line highlight in an editor when a reference row is expanded or clicked */
+.ctx-ref-flash {
+  background: #f2e4bd;
+}

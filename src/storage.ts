@@ -6,6 +6,7 @@ const KEY = 'lattakker:v1';
 interface SavedApp {
   game: SavedGame;
   rows: number;
+  cols?: number;
   cells: Array<[string, string, string?]>;
   mode: Mode;
 }
@@ -32,6 +33,7 @@ export function startAutoSave(game: Game, sheet: Sheet): () => void {
       const app: SavedApp = {
         game: game.serialize(),
         rows: sheet.rowCount,
+        cols: sheet.colCount,
         cells: sheet.codeCells().map((d) => [d.address, d.code, d.uid]),
         mode: sheet.mode,
       };
@@ -46,6 +48,7 @@ export function startAutoSave(game: Game, sheet: Sheet): () => void {
   sheet.onCodeChanged(schedule);
   sheet.onRowsInserted(schedule);
   sheet.onContentMoved(schedule);
+  sheet.onRoomMade(schedule);
   sheet.onModeChange(schedule);
   window.addEventListener('pagehide', write);
   document.addEventListener('visibilitychange', () => {

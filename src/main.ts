@@ -6,12 +6,13 @@ import { HUD_W, HUD_X, Hud } from './ui/Hud';
 import { GameView } from './game/GameView';
 import { CellEditor } from './editor/CellEditor';
 import { CellCodeView } from './editor/CellCodeView';
+import { ContextPopups } from './editor/ContextPopups';
 import { transpile } from './editor/monaco';
 import { runCell } from './sheet/runtime';
 import { buildApi } from './sheet/api';
 import { EXAMPLES } from './examples';
 import { colToLetters, formatAddress, parseAddress } from './sheet/address';
-import { COLS, CW, ORIGIN_X } from './sheet/Sheet';
+import { CW, MAX_COLS, ORIGIN_X } from './sheet/Sheet';
 import { Dock } from './ui/Dock';
 import { Navigator } from './ui/Navigator';
 import { fitBoardToWidth, installGrabGesture, installPinchZoom } from './ui/touch';
@@ -37,11 +38,14 @@ const HELP_SHORT = 'Pick a red piece, tap a dot to move it. Tap a red cross to a
 
 const smallScreen = window.matchMedia('(max-width: 900px), (pointer: coarse)').matches;
 const container = document.getElementById('app')!;
-const sheet = new Sheet(container);
+const sheet = new Sheet(container, { board: true });
 const hud = new Hud(sheet);
 const view = new GameView(sheet, hud);
 const saved = loadSaved();
 const restored = saved ? view.game.restore(saved.game) : false;
+// Must exist before any Monaco editor is created: it listens for every new editor to add
+// the hover-driven, maxGraph-drawn reference popups.
+const popups = new ContextPopups(sheet);
 let selectedCodeCell: string | null = null;
 let lastSheetCell = 'A12';
 
@@ -143,6 +147,10 @@ sheet.setListeners({
     editor.open(address);
   },
   onOtherClick(id) {
+    if (id.startsWith('ctx:')) {
+      popups.handleClick(id);
+      return;
+    }
     if (id.startsWith('piece:')) {
       view.onPieceClick(Number(id.slice(6)));
       return;
@@ -167,8 +175,8 @@ sheet.setListeners({
     }
     if (id.startsWith('hdr:r')) {
       const row = Number(id.slice(5));
-      for (let c = 0; c < COLS; c++) sheet.flash(formatAddress(c, row), THEME.flash, 400);
-      hud.say(`Row ${row + 1} — cells A${row + 1} to ${colToLetters(COLS - 1)}${row + 1}.`, 'info');
+      for (let c = 0; c < sheet.colCount; c++) sheet.flash(formatAddress(c, row), THEME.flash, 400);
+      hud.say(`Row ${row + 1} — cells A${row + 1} to ${colToLetters(sheet.colCount - 1)}${row + 1}.`, 'info');
       return;
     }
     if (id === 'hud:msg' || id === 'hud:title' || id === 'hud:turn') {
@@ -177,6 +185,8 @@ sheet.setListeners({
   },
   tooltipFor(id) {
     if (id === 'hdr:corner') return 'Click here to go back to the game board';
+    if (id.startsWith('ctx:row:')) return 'Rest here ½ second to peek · click to jump there';
+    if (id.startsWith('ctx:livebar:')) return 'A live copy — edits here are real. Click to go to the cell.';
     return hud.tooltipFor(id) ?? view.tooltipFor(id);
   },
 });
@@ -246,6 +256,14 @@ sheet.onContentMoved((from, to) => {
   if (lastSheetCell === from) lastSheetCell = to;
   if (editor.isOpen && (editor.address === from || editor.address === to)) editor.close(false);
   hud.say(`Moved ${from}'s content to ${to} 📦`, 'good');
+});
+
+sheet.onRoomMade(({ displaced, addedCols, addedRows }) => {
+  const parts: string[] = [];
+  if (displaced > 0) parts.push(`${displaced} ${displaced === 1 ? 'cell' : 'cells'} stepped aside`);
+  if (addedCols > 0) parts.push(`${addedCols} new ${addedCols === 1 ? 'column' : 'columns'}`);
+  if (addedRows > 0) parts.push(`${addedRows} new ${addedRows === 1 ? 'row' : 'rows'}`);
+  if (parts.length > 0) hud.say(`Made room: ${parts.join(', ')}.`, 'good');
 });
 
 sheet.onReferencesUpdated(({ count, cells, warnings }) => {
@@ -365,6 +383,7 @@ function loadExamples(): number {
 
 if (restored && saved) {
   while (sheet.rowCount < saved.rows && sheet.rowCount < 500) sheet.insertRow(sheet.rowCount - 1);
+  if (saved.cols && saved.cols > sheet.colCount) sheet.addColumns(Math.min(saved.cols, MAX_COLS) - sheet.colCount);
   for (const [address, code, uid] of saved.cells) sheet.setCode(address, code, uid);
   if (saved.mode === 'view') toggleMode();
 } else {

@@ -193,7 +193,7 @@ export interface TranspileResult {
 }
 
 /** The TypeScript language service starts lazily; the first request can arrive before it has registered. */
-async function typescriptWorker(): Promise<Awaited<ReturnType<typeof ts.getTypeScriptWorker>>> {
+export async function typescriptWorker(): Promise<Awaited<ReturnType<typeof ts.getTypeScriptWorker>>> {
   for (let attempt = 0; ; attempt++) {
     try {
       return await ts.getTypeScriptWorker();
