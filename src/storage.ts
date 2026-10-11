@@ -56,3 +56,52 @@ export function startAutoSave(game: Game, sheet: Sheet): () => void {
   });
   return schedule;
 }
+
+const LAB_KEY = 'lattakker:lab:v1';
+
+interface SavedLab {
+  rows: number;
+  cols?: number;
+  cells: Array<[string, string, string?]>;
+  mode: Mode;
+}
+
+/** What this browser remembered about the Lab's sheet, or null on the first visit. */
+export function loadLabSaved(): SavedLab | null {
+  try {
+    const raw = localStorage.getItem(LAB_KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw) as SavedLab;
+    return d && Array.isArray(d.cells) ? d : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Keeps the Lab's code cells in this browser, a moment after any change. */
+export function startLabAutoSave(sheet: Sheet): void {
+  let timer = 0;
+  const write = (): void => {
+    timer = 0;
+    try {
+      const lab: SavedLab = {
+        rows: sheet.rowCount,
+        cols: sheet.colCount,
+        cells: sheet.codeCells().map((d) => [d.address, d.code, d.uid]),
+        mode: sheet.mode,
+      };
+      localStorage.setItem(LAB_KEY, JSON.stringify(lab));
+    } catch {
+      // storage full or blocked: the Lab still works, it just is not remembered
+    }
+  };
+  const schedule = (): void => {
+    if (!timer) timer = window.setTimeout(write, 300);
+  };
+  sheet.onCodeChanged(schedule);
+  sheet.onRowsInserted(schedule);
+  sheet.onContentMoved(schedule);
+  sheet.onRoomMade(schedule);
+  sheet.onModeChange(schedule);
+  window.addEventListener('pagehide', write);
+}

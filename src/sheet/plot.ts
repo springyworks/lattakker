@@ -11,6 +11,10 @@ export interface PlotSpec {
   xLabel: string;
   yLabel: string;
   series: PlotSeries[];
+  /** Fixed edges of the picture; an edge left out follows the data. */
+  bounds: { xMin?: number; xMax?: number; yMin?: number; yMax?: number };
+  /** False draws only the lines (no numbers, grid or legend). */
+  axes: boolean;
 }
 
 export interface PlotOptions {
@@ -25,6 +29,13 @@ export interface PlotOptions {
   /** Draw a dot at every point. */
   dots?: boolean;
   color?: string;
+  /** Fix the edges of the picture, so an animation does not jump around. */
+  xMin?: number;
+  xMax?: number;
+  yMin?: number;
+  yMax?: number;
+  /** false: no numbers, grid or legend, just the lines. */
+  axes?: boolean;
 }
 
 const PALETTE = ['#3b6ea5', '#c4553b', '#3f8f5a', '#a66cc4', '#d19a2a', '#2f9aa8'];
@@ -79,7 +90,15 @@ export function makePlot(source: Source, options: PlotOptions = {}): PlotSpec {
     dots: options.dots ?? false,
   }));
   if (series.every((s) => s.points.length === 0)) throw new Error('plot found no numbers to draw');
-  return { title: options.title ?? '', xLabel: options.xLabel ?? '', yLabel: options.yLabel ?? '', series };
+  const edge = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+  return {
+    title: options.title ?? '',
+    xLabel: options.xLabel ?? '',
+    yLabel: options.yLabel ?? '',
+    series,
+    bounds: { xMin: edge(options.xMin), xMax: edge(options.xMax), yMin: edge(options.yMin), yMax: edge(options.yMax) },
+    axes: options.axes !== false,
+  };
 }
 
 function esc(text: string): string {
@@ -110,7 +129,7 @@ function label(v: number): string {
 export function plotSvg(spec: PlotSpec, width: number, height: number): string {
   const w = Math.max(20, width);
   const h = Math.max(20, height);
-  const roomy = h >= 80 && w >= 120;
+  const roomy = spec.axes && h >= 80 && w >= 120;
   const fs = Math.max(8, Math.min(12, h / 12));
   const left = roomy ? fs * 3.6 : 4;
   const right = roomy ? 8 : 4;
@@ -120,10 +139,11 @@ export function plotSvg(spec: PlotSpec, width: number, height: number): string {
   const ph = Math.max(10, h - top - bottom);
 
   const all = spec.series.flatMap((s) => s.points);
-  let xmin = Math.min(...all.map((p) => p[0]));
-  let xmax = Math.max(...all.map((p) => p[0]));
-  let ymin = Math.min(...all.map((p) => p[1]));
-  let ymax = Math.max(...all.map((p) => p[1]));
+  const b = spec.bounds;
+  let xmin = b.xMin ?? Math.min(...all.map((p) => p[0]));
+  let xmax = b.xMax ?? Math.max(...all.map((p) => p[0]));
+  let ymin = b.yMin ?? Math.min(...all.map((p) => p[1]));
+  let ymax = b.yMax ?? Math.max(...all.map((p) => p[1]));
   const xt = niceTicks(xmin, xmax, Math.max(2, Math.floor(pw / 60)));
   const yt = niceTicks(ymin, ymax, Math.max(2, Math.floor(ph / 35)));
   if (!(xmax > xmin)) [xmin, xmax] = [xt[0], xt[xt.length - 1]];
@@ -155,7 +175,7 @@ export function plotSvg(spec: PlotSpec, width: number, height: number): string {
     if (!s.dots || s.points.length > 1) parts.push(`<polyline points="${pts.join(' ')}" fill="none" stroke="${esc(s.color)}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`);
     if (s.dots || s.points.length === 1) for (const p of pts) parts.push(`<circle cx="${p.split(',')[0]}" cy="${p.split(',')[1]}" r="3" fill="${esc(s.color)}"/>`);
   }
-  const named = spec.series.filter((s) => s.name);
+  const named = spec.series.filter((s) => s.name && !s.name.startsWith('_'));
   if (roomy && named.length) {
     named.forEach((s, i) => {
       const y = top + 4 + fs * 1.2 * (i + 1);

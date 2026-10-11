@@ -6,11 +6,15 @@ html, body {
   background: #f1f0ec;
 }
 
-#app {
+[hidden] {
+  display: none !important;
+}
+
+#app, #lab {
   position: relative;
   width: 100vw;
-  height: calc(100vh - var(--dock-h, 0px));
-  height: calc(100dvh - var(--dock-h, 0px));
+  height: calc(100vh - var(--dock-h, 0px) - var(--tabs-h, 0px));
+  height: calc(100dvh - var(--dock-h, 0px) - var(--tabs-h, 0px));
   overflow: auto;
   background: #f1f0ec;
   outline: none;
@@ -19,22 +23,22 @@ html, body {
 
 /* Never let a press-and-drag on the board or controls select text or drag a picture; that made
    the whole canvas appear to move while a piece was being dragged. Code editors keep selection. */
-#app, #dock {
+#app, #lab, #dock {
   -webkit-user-select: none;
   user-select: none;
   -webkit-user-drag: none;
   -webkit-touch-callout: none;
 }
-body.grab-ctrl #app, body.grab-ctrl #app * {
+body.grab-ctrl .sheet-pane, body.grab-ctrl .sheet-pane * {
   cursor: grab !important;
 }
-body.grab-armed #app, body.grab-armed #app * {
+body.grab-armed .sheet-pane, body.grab-armed .sheet-pane * {
   cursor: grabbing !important;
 }
-body.grab-armed #app {
+body.grab-armed .sheet-pane {
   box-shadow: inset 0 0 0 4px rgba(46, 125, 50, 0.55);
 }
-#app .monaco-editor, #app .monaco-editor * {
+#app .monaco-editor, #app .monaco-editor *, #lab .monaco-editor, #lab .monaco-editor * {
   -webkit-user-select: text;
   user-select: text;
 }
@@ -158,11 +162,10 @@ body.grab-armed #app {
   height: 64px;
   overflow: hidden;
   border-top: 1px solid #cbd2d9;
-  cursor: zoom-in;
+  cursor: pointer;
   pointer-events: auto;
 }
 .cell-editor-out.open {
-  cursor: zoom-out;
   background: #eef1f4;
 }
 .cell-editor-out-tag {
@@ -170,9 +173,16 @@ body.grab-armed #app {
   top: 2px;
   right: 6px;
   z-index: 2;
-  font: 10px/1 system-ui, sans-serif;
-  color: #7b8794;
-  pointer-events: none;
+  font: 11px/1 system-ui, sans-serif;
+  color: #52606d;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid #cbd2d9;
+  border-radius: 4px;
+  padding: 3px 6px;
+  cursor: pointer;
+}
+.cell-editor-out-tag:hover {
+  background: #e9edf1;
 }
 .cell-editor-out-cell {
   position: absolute;
@@ -196,22 +206,113 @@ body.grab-armed #app {
   height: 100%;
   pointer-events: auto;
 }
-.cell-code-view-grip {
+/* The ⋮ in a cell's corner: opens that cell's menu, and is a handle for moving the cell. */
+.cell-menu-icon {
   position: absolute;
-  top: 1px;
-  right: 2px;
-  width: 14px;
-  height: 14px;
-  line-height: 14px;
-  text-align: center;
-  font-size: 11px;
-  color: #7b8794;
+  z-index: 30;
+  box-sizing: border-box;
+  width: 16px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: 700 15px/1 system-ui, sans-serif;
+  color: #52606d;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid #cbd2d9;
+  border-radius: 4px;
   cursor: grab;
-  z-index: 2;
+  user-select: none;
+  touch-action: none;
+}
+.cell-menu-icon:hover {
+  color: #1f2933;
+  background: #ffffff;
+  border-color: #2f4b66;
+}
+.cell-id-badge {
+  position: absolute;
+  z-index: 25;
+  pointer-events: none;
+  font: 8px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: #7b8794;
+  background: rgba(255, 255, 255, 0.7);
+  padding: 1px 2px;
+  border-radius: 2px;
+}
+
+/* Hover menus (plain DOM on <body>) */
+.hover-menu {
+  position: fixed;
+  z-index: 100050;
+  box-sizing: border-box;
+  min-width: 190px;
+  max-width: 320px;
+  padding: 4px;
+  background: #ffffff;
+  color: #1f2933;
+  border: 1px solid #7b8794;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  font: 13px/1.3 system-ui, sans-serif;
   user-select: none;
 }
-.cell-code-view-grip:hover {
-  color: #1f2933;
+.hover-menu.fresh {
+  animation: hover-menu-in 0.12s ease-out;
+}
+@keyframes hover-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}
+.hover-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.hover-menu-item.actionable,
+.hover-menu-item:has(.hover-menu-arrow):not(.disabled) {
+  cursor: pointer;
+}
+.hover-menu-item:not(.disabled):not(.tiny):hover,
+.hover-menu-item.actionable:hover {
+  background: #e3ecf5;
+}
+.hover-menu-item.tiny {
+  font: 10px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: #52606d;
+}
+.hover-menu-item.disabled {
+  color: #9aa5b1;
+}
+.hover-menu-item.danger:not(.disabled) {
+  color: #a8433e;
+}
+.hover-menu-item.danger:not(.disabled):hover {
+  background: #f6e3e1;
+}
+.hover-menu-label {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hover-menu-hint {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: #7b8794;
+}
+.hover-menu-arrow {
+  flex: 0 0 auto;
+  color: #7b8794;
+}
+.hover-menu-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: #e4e7eb;
 }
 
 /* Tiny floating menu for the row-header right-click ("insert row") */
@@ -283,10 +384,10 @@ body.grab-armed #app {
 }
 
 /* Long-sheet navigator: a "Go to" box and a miniature of the whole sheet along the right edge. */
-#nav {
+.sheet-nav {
   position: fixed;
   right: 20px;
-  top: 34px;
+  top: calc(var(--tabs-h, 0px) + 34px);
   bottom: calc(var(--dock-h, 0px) + 12px);
   width: 58px;
   z-index: 40;
@@ -296,7 +397,7 @@ body.grab-armed #app {
   gap: 6px;
   pointer-events: none;
 }
-#nav input {
+.sheet-nav input {
   pointer-events: auto;
   width: 54px;
   box-sizing: border-box;
@@ -310,15 +411,15 @@ body.grab-armed #app {
   -webkit-user-select: text;
   user-select: text;
 }
-#nav input:focus {
+.sheet-nav input:focus {
   border-color: #2f4b66;
   width: 80px;
 }
-#nav input.bad {
+.sheet-nav input.bad {
   border-color: #a8433e;
   background: #f6e3e1;
 }
-#nav-track {
+.sheet-nav-track {
   pointer-events: auto;
   position: relative;
   flex: 1;
@@ -331,11 +432,11 @@ body.grab-armed #app {
   cursor: pointer;
   touch-action: none;
 }
-#nav-track canvas {
+.sheet-nav-track canvas {
   position: absolute;
   inset: 0;
 }
-#nav-window {
+.sheet-nav-window {
   position: absolute;
   left: 0;
   right: 0;
@@ -383,4 +484,241 @@ body.grab-armed #app {
 /* Short line highlight in an editor when a reference row is expanded or clicked */
 .ctx-ref-flash {
   background: #f2e4bd;
+}
+
+/* Tabs: Game board / Examples */
+body.has-tabs {
+  --tabs-h: 40px;
+}
+#tabs {
+  box-sizing: border-box;
+  height: var(--tabs-h);
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  padding: 0 12px;
+  background: #e4e7eb;
+  border-bottom: 1px solid #b8bfc7;
+}
+#tabs .tab {
+  font: 600 14px system-ui, sans-serif;
+  color: #3e4c59;
+  background: #d3d8de;
+  border: 1px solid #b8bfc7;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  padding: 7px 16px;
+  cursor: pointer;
+}
+#tabs .tab:hover {
+  background: #e9edf1;
+}
+#tabs .tab.active {
+  color: #1f2933;
+  background: #f1f0ec;
+  box-shadow: 0 1px 0 #f1f0ec;
+  margin-bottom: -1px;
+  padding-bottom: 8px;
+}
+#tabs .tab:focus-visible {
+  outline: 2px solid #2f4b66;
+  outline-offset: -2px;
+}
+body.tab-examples #dock,
+body.tab-lab #dock {
+  display: none;
+}
+
+/* The Examples tab */
+#examples {
+  box-sizing: border-box;
+  width: 100vw;
+  height: calc(100vh - var(--tabs-h, 0px));
+  height: calc(100dvh - var(--tabs-h, 0px));
+  overflow: auto;
+  background: #f1f0ec;
+  padding: 0 20px 40px;
+}
+.gallery-head {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 18px 0 8px;
+}
+.gallery-head h1 {
+  margin: 0 0 4px;
+  font: 700 24px system-ui, sans-serif;
+  color: #1f2933;
+}
+.gallery-head p {
+  margin: 0 0 12px;
+  font: 14px/1.4 system-ui, sans-serif;
+  color: #52606d;
+}
+.gallery-head input {
+  box-sizing: border-box;
+  width: min(420px, 100%);
+  padding: 8px 10px;
+  font: 14px system-ui, sans-serif;
+  border: 1px solid #b8bfc7;
+  border-radius: 8px;
+  outline: none;
+}
+.gallery-head input:focus {
+  border-color: #2f4b66;
+}
+.gallery-status {
+  margin-top: 6px;
+  font: 12px system-ui, sans-serif;
+  color: #7b8794;
+}
+.gallery-list {
+  max-width: 980px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.gallery-card {
+  background: #ffffff;
+  border: 1px solid #cbd2d9;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.gallery-card-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 8px 12px;
+  background: #e9edf1;
+  border-bottom: 1px solid #cbd2d9;
+}
+.gallery-card-bar h2 {
+  flex: 1 1 260px;
+  margin: 0;
+  font: 600 15px system-ui, sans-serif;
+  color: #1f2933;
+}
+.gallery-tag {
+  font: 12px system-ui, sans-serif;
+  color: #7b8794;
+}
+.gallery-buttons {
+  display: flex;
+  gap: 6px;
+}
+.gallery-buttons button {
+  font: 600 13px system-ui, sans-serif;
+  color: #1f2933;
+  background: #ffffff;
+  border: 1px solid #9aa5b1;
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+.gallery-buttons button:hover {
+  background: #f0f4f8;
+}
+.gallery-buttons .gallery-use {
+  color: #ffffff;
+  background: #3b7a57;
+  border-color: #2e6246;
+}
+.gallery-buttons .gallery-use:hover {
+  background: #2e6246;
+}
+.gallery-buttons .gallery-use.lab {
+  background: #3b6ea5;
+  border-color: #2f5a88;
+}
+.gallery-buttons .gallery-use.lab:hover {
+  background: #2f5a88;
+}
+.gallery-editor {
+  width: 100%;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* The Lab tab: a toolbar above its own sheet */
+#lab-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: calc(100vh - var(--tabs-h, 0px));
+  height: calc(100dvh - var(--tabs-h, 0px));
+  background: #f1f0ec;
+}
+.lab-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: #e9edf1;
+  border-bottom: 1px solid #cbd2d9;
+  font: 13px system-ui, sans-serif;
+  color: #1f2933;
+}
+.lab-say {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #52606d;
+}
+.lab-say[data-tone='good'] {
+  color: #2e6246;
+}
+.lab-say[data-tone='bad'] {
+  color: #a8433e;
+}
+.lab-bar button {
+  font: 600 12px system-ui, sans-serif;
+  color: #1f2933;
+  background: #ffffff;
+  border: 1px solid #9aa5b1;
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.lab-bar button:hover {
+  background: #f0f4f8;
+}
+#lab-panel #lab {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+}
+
+/* Making room: the landing spot pulses and displaced blocks glide to their new places (pictures only) */
+.room-landing {
+  position: absolute;
+  z-index: 26;
+  box-sizing: border-box;
+  pointer-events: none;
+  border: 3px dashed #2e7d32;
+  background: rgba(46, 125, 50, 0.12);
+  border-radius: 3px;
+}
+.room-ghost {
+  position: absolute;
+  z-index: 27;
+  box-sizing: border-box;
+  pointer-events: none;
+  overflow: hidden;
+  padding: 4px 6px;
+  border: 2px solid #d19a2a;
+  border-radius: 4px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+  font: 11px/1.3 system-ui, sans-serif;
+  color: #1f2933;
+}
+.room-ghost-label {
+  font-weight: 700;
+}
+.room-ghost-text {
+  margin-top: 2px;
+  color: #52606d;
 }

@@ -12,8 +12,8 @@ interface Mounted {
  * Hosts a real, directly-editable Monaco instance inline on the canvas for every non-empty code
  * cell shown in 'view' mode — the same foreignObject/node-label mechanism CellEditor uses for the
  * popup (Sheet.setNodeLabel), so both views edit the exact same Monaco model (editor/monaco.ts's
- * modelFor cache). A small grip icon sits outside the editor's own stopPropagation'd area so the
- * existing content-drag feature (Sheet.ts's onContentMouseDown/Move/Up) still works per cell.
+ * modelFor cache). The editor swallows the mouse, so moving a cell works through the ⋮ handle that
+ * ui/CellMenu.ts places in the cell's corner (or Ctrl/armed grab, see isGrabEvent).
  */
 export class CellCodeView {
   private mounted = new Map<string, Mounted>();
@@ -66,11 +66,7 @@ export class CellCodeView {
 
     const mount = document.createElement('div');
     mount.className = 'cell-code-view-editor';
-    const grip = document.createElement('div');
-    grip.className = 'cell-code-view-grip';
-    grip.textContent = '⠿';
-    grip.title = 'Drag to move this cell';
-    host.append(mount, grip);
+    host.append(mount);
 
     // Swallow interaction inside the editor area so Monaco (not the graph) handles it; the grip
     // icon deliberately gets none of this, so a mousedown there bubbles to the graph untouched and
@@ -80,7 +76,7 @@ export class CellCodeView {
       mount.addEventListener(type, (e) => { if (!this.sheet.isGrabEvent(e)) e.stopPropagation(); }, { passive: type === 'wheel' || type === 'touchstart' });
     }
 
-    const model = modelFor(address, d.code);
+    const model = modelFor(address, d.code, this.sheet.id);
     const editor = createCellViewEditor(mount, model);
     editor.onDidChangeModelContent(() => this.sheet.setCode(address, editor.getValue()));
 

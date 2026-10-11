@@ -123,6 +123,26 @@ interface ContentDragState {
 }
 
 const DRAG_THRESHOLD = 4;
+const SHIFT_MS = 650;
+const SHIFT_STAGGER_MS = 90;
+
+/** What a move had to do to make room. `shifts` lists the blocks that stepped aside, by address. */
+export interface RoomInfo {
+  displaced: number;
+  addedCols: number;
+  addedRows: number;
+  shifts: Array<{ from: string; to: string }>;
+}
+
+/** A block that is about to step aside: how it looked and where it was, in model units. */
+interface ShiftGhost {
+  from: string;
+  to: string;
+  fill: string;
+  text: string;
+  box: { x: number; y: number; width: number; height: number };
+  dest?: { x: number; y: number; width: number; height: number };
+}
 
 const BOARD_RE = /^[A-J](10|[1-9])$/;
 
@@ -176,7 +196,7 @@ export class Sheet {
   private runTimer: number | null = null;
   private modeChangeHandlers: Array<(mode: Mode) => void> = [];
   private rowsInsertedHandlers: Array<(afterRowIndex: number) => void> = [];
-  private roomMadeHandlers: Array<(info: { displaced: number; addedCols: number; addedRows: number }) => void> = [];
+  private roomMadeHandlers: Array<(info: RoomInfo) => void> = [];
   private contentMovedHandlers: Array<(from: string, to: string) => void> = [];
   private codeChangedHandlers: Array<(address: string) => void> = [];
   private referencesHandlers: Array<(report: ReferenceReport) => void> = [];
@@ -194,10 +214,15 @@ export class Sheet {
 
   /** Only the main tab has the Lattakker board (A1:J10) and the reserved rows below it. */
   private readonly board: boolean;
+  /** Names this sheet apart from the others ('' for the game board's sheet): it scopes the editor models. */
+  readonly id: string;
+  private suspended = false;
+  private pendingRefresh = new Set<string>();
 
-  constructor(container: HTMLElement, options: { board?: boolean } = {}) {
+  constructor(container: HTMLElement, options: { board?: boolean; id?: string } = {}) {
     this.container = container;
     this.board = options.board ?? false;
+    this.id = options.id ?? '';
     // SelectionCellsHandler must be registered before SelectionHandler: mouse listeners fire in
     // plugin-registration order, and VertexHandler's resize-handle hit-test (owned by
     // SelectionCellsHandler) needs first refusal on a mousedown, or SelectionHandler consumes it
@@ -786,7 +811,21 @@ export class Sheet {
     this.graph.getDataModel().setStyle(cell, style);
   }
 
+  /** A sheet on a hidden tab keeps running but does not redraw its cells until it is shown again. */
+  setSuspended(on: boolean): void {
+    if (this.suspended === on) return;
+    this.suspended = on;
+    if (on) return;
+    const pending = [...this.pendingRefresh];
+    this.pendingRefresh.clear();
+    for (const address of pending) this.refreshCell(address);
+  }
+
   refreshCell(address: string): void {
+    if (this.suspended) {
+      this.pendingRefresh.add(address);
+      return;
+    }
     const cell = this.cells.get(address);
     if (!cell) return;
     // A hosted live node (e.g. a mounted inline Monaco editor) must not be detached/reattached
@@ -1000,23 +1039,113 @@ export class Sheet {
       avoid.push({ c1: col, r1: od.row, c2: col + od.span.cols - 1, r2: od.row + od.span.rows - 1 });
       plan.push({ address: owner, col, row: od.row });
     }
+    const shifts: ShiftGhost[] = [];
     for (const p of plan) {
       const od = this.data.get(p.address)!;
       const more = this.ensureRoom(p.col + od.span.cols - 1, p.row + od.span.rows - 1);
       grew.cols += more.cols;
       grew.rows += more.rows;
-      this.moveBlockRaw(p.address, formatAddress(p.col, p.row));
+      const to = formatAddress(p.col, p.row);
+      const ghost = this.captureGhost(p.address, to);
+      this.moveBlockRaw(p.address, to);
+      if (ghost) shifts.push(this.landGhost(ghost));
     }
     this.moveBlockRaw(fromAddress, formatAddress(pos.col, pos.row));
     if (plan.length > 0 || grew.cols > 0 || grew.rows > 0) {
-      const info = { displaced: plan.length, addedCols: grew.cols, addedRows: grew.rows };
+      const info = { displaced: plan.length, addedCols: grew.cols, addedRows: grew.rows, shifts: shifts.map((g) => ({ from: g.from, to: g.to })) };
+      this.playShifts(shifts, dst);
       this.roomMadeHandlers.forEach((h) => h(info));
     }
     return true;
   }
 
+  /** Remembers how a block looks before it steps aside, so a ghost of it can glide to its new place. */
+  private captureGhost(from: string, to: string): ShiftGhost | null {
+    const geo = this.geometryOf(from);
+    const d = this.data.get(from);
+    if (!geo || !d) return null;
+    const first = d.code.split('\n').find((l) => l.trim()) ?? '';
+    return {
+      from,
+      to,
+      fill: this.fillOf(from),
+      text: first.replace(/^\s*\/\/\s*/, '').trim(),
+      box: { x: geo.x, y: geo.y, width: geo.width, height: geo.height },
+    };
+  }
+
+  private landGhost(ghost: ShiftGhost): ShiftGhost {
+    const geo = this.geometryOf(ghost.to);
+    if (geo) ghost.dest = { x: geo.x, y: geo.y, width: geo.width, height: geo.height };
+    return ghost;
+  }
+
+  /**
+   * Shows the make-room: the square the dropped block lands on pulses, and each block that had to
+   * step aside slides (as a ghost on top of the sheet) from where it was to where it is now. Only a
+   * picture: the cells themselves are already in their new places, so nothing depends on timing.
+   */
+  private playShifts(ghosts: ShiftGhost[], landing: { c1: number; r1: number; c2: number; r2: number }): void {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const view = this.graph.getView();
+    const scale = view.getScale();
+    const t = view.getTranslate();
+    const toPx = (b: { x: number; y: number; width: number; height: number }) => ({
+      x: (b.x + t.x) * scale,
+      y: (b.y + t.y) * scale,
+      width: b.width * scale,
+      height: b.height * scale,
+    });
+    const place = (el: HTMLElement, b: { x: number; y: number; width: number; height: number }): void => {
+      el.style.left = `${b.x}px`;
+      el.style.top = `${b.y}px`;
+      el.style.width = `${b.width}px`;
+      el.style.height = `${b.height}px`;
+    };
+
+    const first = this.geometryOf(formatAddress(landing.c1, landing.r1));
+    if (first) {
+      const drop = document.createElement('div');
+      drop.className = 'room-landing';
+      place(drop, toPx({ x: first.x, y: first.y, width: (landing.c2 - landing.c1 + 1) * CW, height: (landing.r2 - landing.r1 + 1) * CH }));
+      this.container.append(drop);
+      drop.animate([{ opacity: 0.9 }, { opacity: 0.9, offset: 0.6 }, { opacity: 0 }], { duration: SHIFT_MS + SHIFT_STAGGER_MS * ghosts.length, easing: 'ease-out' }).finished.then(() => drop.remove(), () => drop.remove());
+    }
+
+    ghosts.forEach((g, i) => {
+      if (!g.dest) return;
+      const a = toPx(g.box);
+      const b = toPx(g.dest);
+      const el = document.createElement('div');
+      el.className = 'room-ghost';
+      el.style.background = g.fill;
+      place(el, a);
+      const label = document.createElement('div');
+      label.className = 'room-ghost-label';
+      label.textContent = `${g.from} → ${g.to}`;
+      const note = document.createElement('div');
+      note.className = 'room-ghost-text';
+      note.textContent = g.text;
+      el.append(label, note);
+      this.container.append(el);
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const anim = el.animate(
+        [
+          { transform: 'translate(0, 0) scale(1)', opacity: 0.95 },
+          { transform: `translate(0, 0) scale(1.04)`, opacity: 1, offset: 0.15 },
+          { transform: `translate(${dx}px, ${dy}px) scale(1.04)`, opacity: 1, offset: 0.85 },
+          { transform: `translate(${dx}px, ${dy}px) scale(1)`, opacity: 0 },
+        ],
+        { duration: Math.min(1500, SHIFT_MS + Math.hypot(dx, dy) * 0.5), delay: i * SHIFT_STAGGER_MS, easing: 'cubic-bezier(0.3, 0, 0.2, 1)', fill: 'both' },
+      );
+      anim.finished.then(() => el.remove(), () => el.remove());
+      this.flash(g.to, THEME.flash, SHIFT_MS + 400);
+    });
+  }
+
   /** Called when a move had to shift other blocks aside or grow the sheet. */
-  onRoomMade(handler: (info: { displaced: number; addedCols: number; addedRows: number }) => void): void {
+  onRoomMade(handler: (info: RoomInfo) => void): void {
     this.roomMadeHandlers.push(handler);
   }
 

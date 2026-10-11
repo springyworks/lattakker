@@ -1,7 +1,7 @@
-import type { Cell, InternalMouseEvent } from '@maxgraph/core';
+import type { Cell, InternalMouseEvent, TooltipHandler } from '@maxgraph/core';
 import type { Sheet } from '../sheet/Sheet';
 import { THEME } from '../theme';
-import { createCellViewEditor, modelFor, monaco, typescriptWorker } from './monaco';
+import { createCellViewEditor, modelFor, monaco, parseCellUri, typescriptWorker } from './monaco';
 
 /**
  * Hover-driven "references" popups drawn with maxGraph vertices instead of Monaco's HTML widgets.
@@ -86,6 +86,7 @@ export class ContextPopups {
   private pendingWordKey = '';
   private closeTimer = 0;
   private lastAliveAt = 0;
+  private hoveredEditor: monaco.editor.ICodeEditor | null = null;
 
   constructor(private sheet: Sheet) {
     monaco.editor.onDidCreateEditor((editor) => this.attachEditor(editor));
@@ -140,6 +141,7 @@ export class ContextPopups {
   // ------------------------------------------------------------ hover routing
 
   private onGraphMove(me: InternalMouseEvent): void {
+    if (!this.hoveredEditor) this.setCellTooltips(true);
     const id = me.getCell()?.getId() ?? '';
     if (id.startsWith('ctx:')) {
       this.alive();
@@ -192,8 +194,12 @@ export class ContextPopups {
   private attachEditor(editor: monaco.editor.ICodeEditor): void {
     editor.onMouseMove((e) => {
       const model = editor.getModel();
-      if (!model || !model.uri.path.startsWith('/cells/')) return;
+      const owner = model ? parseCellUri(model.uri) : null;
+      if (!model || !owner || owner.scope !== this.sheet.id) return;
       this.alive();
+      this.hoveredEditor = editor;
+      // The cell tooltip of whatever lies under the editor must not pile on top of Monaco's own hover.
+      this.setCellTooltips(false);
       const pos = e.target.position;
       const word = pos ? model.getWordAtPosition(pos) : null;
       if (!pos || !word) {
@@ -209,13 +215,23 @@ export class ContextPopups {
       const client = { x: me.clientX, y: me.clientY };
       this.wordTimer = window.setTimeout(() => {
         this.pendingWordKey = '';
+        this.alive();
         void this.openFromEditor(editor, depth, pos, client);
       }, DWELL_MS);
     });
     editor.onMouseLeave(() => {
+      if (this.hoveredEditor === editor) this.hoveredEditor = null;
+      this.setCellTooltips(true);
       this.cancelWordDwell();
       this.scheduleClose(true);
     });
+  }
+
+  private setCellTooltips(on: boolean): void {
+    const tip = this.sheet.graph.getPlugin<TooltipHandler>('TooltipHandler');
+    if (!tip || tip.isEnabled() === on) return;
+    if (!on) tip.hide();
+    tip.setEnabled(on);
   }
 
   private cancelWordDwell(): void {
@@ -238,7 +254,7 @@ export class ContextPopups {
     const existing = this.levels[depth];
     if (existing?.kind === 'panel' && existing.word === word && existing.uri === uri) return;
 
-    const ownAddress = /\/cells\/([A-Z0-9]+)\.ts$/.exec(model.uri.path)?.[1] ?? '';
+    const ownAddress = parseCellUri(model.uri)?.address ?? '';
     const address = ADDRESS_WORD_RE.test(word) ? this.sheet.resolve(word) : null;
     let refs: RefEntry[] = [];
     try {
@@ -250,7 +266,8 @@ export class ContextPopups {
     }
     if (model.isDisposed()) return;
     // The pointer left the chain while the worker was thinking: do not pop up behind its back.
-    if (performance.now() - this.lastAliveAt > GRACE_MS) return;
+    if (this.hoveredEditor !== editor) return;
+    this.alive();
 
     const rows: RowSpec[] = [];
     if (address) {
@@ -267,7 +284,7 @@ export class ContextPopups {
       const p = model.getPositionAt(ref.textSpan.start);
       const text = model.getLineContent(p.lineNumber).trim();
       const lineAddr = this.firstAddressIn(text, word);
-      rows.push({ label: `L${p.lineNumber}  ${text}`, line: p.lineNumber, uri, address: lineAddr ?? undefined });
+      rows.push({ label: `line ${p.lineNumber}: ${text}`, line: p.lineNumber, uri, address: lineAddr ?? undefined });
       if (rows.length >= MAX_REF_ROWS + 4) break;
     }
     const seen = new Set<string>();
@@ -275,7 +292,8 @@ export class ContextPopups {
     if (!unique.length) return;
 
     const refCount = refs.filter((r) => r.fileName === uri).length;
-    const title = address ? `${word} · cell` : `${word} · ${refCount} reference${refCount === 1 ? '' : 's'}`;
+    const where = ownAddress ? ` in the code of ${ownAddress}` : '';
+    const title = address ? `${word} · cell` : `${word} · ${refCount} reference${refCount === 1 ? '' : 's'}${where}`;
     this.openPanel(depth, this.modelPt(client.x + 12, client.y + 14), title, unique, word, uri);
   }
 
@@ -422,7 +440,7 @@ export class ContextPopups {
     host.addEventListener('pointermove', () => this.alive());
     this.sheet.setNodeLabel(`ctx:live:${depth}`, host);
 
-    const editor = createCellViewEditor(mount, modelFor(address, d.code));
+    const editor = createCellViewEditor(mount, modelFor(address, d.code, this.sheet.id));
     this.editorDepth.set(editor, depth + 1);
     editor.onDidChangeModelContent(() => this.sheet.setCode(address, editor.getValue()));
 

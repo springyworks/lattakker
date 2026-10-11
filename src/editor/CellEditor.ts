@@ -22,6 +22,8 @@ export interface CellEditorHooks {
   onRun(address: string, code: string): void;
   onClose(): void;
   onOpen?(address: string): void;
+  /** A click on the output preview at the bottom of the editor: it counts as a click on the cell itself. */
+  onOutputClick?(address: string): void;
 }
 
 /**
@@ -67,7 +69,7 @@ export class CellEditor {
   /** Pulls the cell's current code into the open editor, so saving it later cannot bring old addresses back. */
   refreshFromSheet(): void {
     const d = this.address ? this.sheet.dataAt(this.address) : undefined;
-    if (d && this.editor) modelFor(d.address, d.code);
+    if (d && this.editor) modelFor(d.address, d.code, this.sheet.id);
   }
 
   get isOpen(): boolean {
@@ -324,19 +326,26 @@ export class CellEditor {
     host.appendChild(body);
     const out = document.createElement('div');
     out.className = 'cell-editor-out';
-    out.title = 'The latest output of this cell. Click to enlarge or shrink.';
-    const tag = document.createElement('div');
+    out.title = 'The latest output of this cell. Clicking here clicks the cell, like on the sheet.';
+    const tag = document.createElement('button');
+    tag.type = 'button';
     tag.className = 'cell-editor-out-tag';
-    tag.textContent = 'output · click to enlarge';
+    tag.textContent = '⤢ enlarge';
+    tag.title = 'Show the output bigger (or smaller again)';
     const outCell = document.createElement('div');
     outCell.className = 'cell-editor-out-cell';
     out.appendChild(tag);
     out.appendChild(outCell);
-    out.addEventListener('click', () => {
+    // Only the button resizes the preview: a click on the preview itself may be what the cell's code waits for.
+    tag.addEventListener('click', (e) => {
+      e.stopPropagation();
       this.outOpen = !this.outOpen;
       out.classList.toggle('open', this.outOpen);
-      tag.textContent = this.outOpen ? 'output · click to shrink' : 'output · click to enlarge';
+      tag.textContent = this.outOpen ? '⤡ shrink' : '⤢ enlarge';
       this.layoutOutput();
+    });
+    out.addEventListener('click', () => {
+      if (this.address) this.hooks.onOutputClick?.(this.address);
     });
     host.appendChild(out);
     this.outBox = out;
@@ -348,7 +357,7 @@ export class CellEditor {
     }
     this.sheet.setNodeLabel('ed:frame', host);
 
-    const model = modelFor(address, data.code);
+    const model = modelFor(address, data.code, this.sheet.id);
     this.editor = createEditor(body, model);
     this.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => this.run());
     this.editor.addCommand(monaco.KeyCode.Escape, () => this.close(true));

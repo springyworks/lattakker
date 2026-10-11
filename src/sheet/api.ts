@@ -1,7 +1,6 @@
 import type { Sheet, SheetCellData } from './Sheet';
 import { COLS } from './Sheet';
 import type { GameView } from '../game/GameView';
-import type { Hud } from '../ui/Hud';
 import { isLake } from '../game/model';
 import { GAME_NODE, MODE_NODE, describeNode, ROWS_NODE, clickNode, codeNode, sizeNode } from './reactivity';
 import { CancelError, parseInterval, type RunContext } from './tasks';
@@ -29,7 +28,7 @@ function fmt(value: unknown): string {
 export function buildApi(
   sheet: Sheet,
   view: GameView,
-  hud: Hud,
+  hud: { say(text: string, tone?: 'info' | 'good' | 'bad'): void },
   data: SheetCellData,
   ctx: RunContext,
 ): Record<string, unknown> {
@@ -72,7 +71,7 @@ export function buildApi(
         return d.code;
       },
       get piece() {
-        return view.pieceInfoAt(address);
+        return sheet.isBoardAddress(address) ? view.pieceInfoAt(address) : null;
       },
       get cols() {
         track(sizeNode(address));

@@ -1,24 +1,19 @@
 import '@maxgraph/core/css/common.css';
 import './style.css';
-import { InternalEvent, type MaxPopupMenu, type PopupMenuHandler } from '@maxgraph/core';
 import { Sheet } from './sheet/Sheet';
 import { HUD_W, HUD_X, Hud } from './ui/Hud';
 import { GameView } from './game/GameView';
-import { CellEditor } from './editor/CellEditor';
-import { CellCodeView } from './editor/CellCodeView';
-import { ContextPopups } from './editor/ContextPopups';
-import { transpile } from './editor/monaco';
-import { runCell } from './sheet/runtime';
-import { buildApi } from './sheet/api';
 import { EXAMPLES } from './examples';
-import { colToLetters, formatAddress, parseAddress } from './sheet/address';
+import { formatAddress, parseAddress } from './sheet/address';
 import { CW, MAX_COLS, ORIGIN_X } from './sheet/Sheet';
 import { Dock } from './ui/Dock';
-import { Navigator } from './ui/Navigator';
+import { Tabs } from './ui/Tabs';
+import { ExamplesGallery, type GalleryExample, type GalleryTarget } from './ui/ExamplesGallery';
 import { fitBoardToWidth, installGrabGesture, installPinchZoom } from './ui/touch';
-import { GAME_NODE, clickNode, describeNode } from './sheet/reactivity';
+import { GAME_NODE } from './sheet/reactivity';
+import { SheetPane } from './ui/SheetPane';
+import { createLab } from './lab';
 import { installAiSurface } from './ai/surface';
-import { THEME } from './theme';
 import { loadSaved, startAutoSave } from './storage';
 
 const HELP = `How to play Lattakker
@@ -38,52 +33,47 @@ const HELP_SHORT = 'Pick a red piece, tap a dot to move it. Tap a red cross to a
 
 const smallScreen = window.matchMedia('(max-width: 900px), (pointer: coarse)').matches;
 const container = document.getElementById('app')!;
+container.classList.add('sheet-pane');
 const sheet = new Sheet(container, { board: true });
 const hud = new Hud(sheet);
 const view = new GameView(sheet, hud);
 const saved = loadSaved();
 const restored = saved ? view.game.restore(saved.game) : false;
-// Must exist before any Monaco editor is created: it listens for every new editor to add
-// the hover-driven, maxGraph-drawn reference popups.
-const popups = new ContextPopups(sheet);
-let selectedCodeCell: string | null = null;
-let lastSheetCell = 'A12';
 
-const editor = new CellEditor(sheet, {
-  onSave(address, code) {
-    sheet.setCode(address, code);
-    hud.say(`Saved ${address} ✓ ${code.trim() ? 'It runs now and after every move.' : 'The cell is empty again.'}`, 'good');
+const pane = new SheetPane(
+  sheet,
+  view,
+  {
+    say: (text, tone) => hud.say(text, tone),
+    firstFreeRow: 11,
+    hasBoard: true,
+    onEditorOpen: (address) => hud.setButtonStatus('btn:code', `Coding in ${address}`),
+    onEditorClose: () => hud.setButtonStatus('btn:code', 'Not coding'),
+    onBoardClick: (address) => view.onSquareClick(address),
+    // During the battle double-clicks on the board are part of moving; use the "Code cell" button instead.
+    mayEdit: (address) => !(sheet.isBoardAddress(address) && view.game.phase === 'play'),
+    onOtherClick: (id) => {
+      if (id.startsWith('piece:')) {
+        view.onPieceClick(Number(id.slice(6)));
+        return true;
+      }
+      if (id.startsWith('btn:')) {
+        pressButton(id);
+        return true;
+      }
+      if (id === 'hud:msg' || id === 'hud:title' || id === 'hud:turn') {
+        hud.say(id === 'hud:title' ? 'That is the title 😄 The buttons below do things!' : 'This bubble tells you what is going on. Try clicking a piece!', 'info');
+        return true;
+      }
+      return false;
+    },
+    tooltipFor: (id) => (id === 'hdr:corner' ? 'Click here to go back to the game board' : (hud.tooltipFor(id) ?? view.tooltipFor(id))),
+    onCorner: () => goToGame(),
   },
-  onRun(address, code) {
-    sheet.setCode(address, code);
-    hud.say(`Running ${address} ▶`, 'info');
-  },
-  onOpen(address) {
-    hud.setButtonStatus('btn:code', `Coding in ${address}`);
-  },
-  onClose() {
-    hud.setButtonStatus('btn:code', 'Not coding');
-  },
-});
-new CellCodeView(sheet);
-
-sheet.setRunner((data, ctx) => runCell(data, ctx, (d, c) => buildApi(sheet, view, hud, d, c), transpile));
-sheet.raiseHeaders();
-
-function selectCodeCell(address: string): void {
-  if (selectedCodeCell) sheet.setSelectionVisual(selectedCodeCell, null);
-  selectedCodeCell = address;
-  lastSheetCell = address;
-  sheet.setSelectionVisual(address, { stroke: THEME.select, strokeWidth: 3 });
-  sheet.flash(address, THEME.flash);
-  const d = sheet.dataAt(address)!;
-  hud.say(
-    d.code
-      ? `Cell ${address} has code in it. Double-click it (or press "Code cell") to edit. ${sheet.mode === 'view' ? 'You are looking at its code.' : 'You are looking at its output.'}`
-      : `Cell ${address} is empty. Double-click it (or press "Code cell") to write TypeScript there ✏️`,
-    'info',
-  );
-}
+  'A12',
+);
+const { editor, popups } = pane;
+const lab = createLab(view, smallScreen);
 
 function toggleMode(): void {
   const next = sheet.mode === 'run' ? 'view' : 'run';
@@ -123,73 +113,11 @@ function pressButton(id: string): void {
       toggleMode();
       break;
     case 'btn:code':
-      editor.open(lastSheetCell);
-      hud.say(`Editing ${lastSheetCell}. Click a cell first to edit a different one.`, 'info');
+      editor.open(pane.lastSheetCell);
+      hud.say(`Editing ${pane.lastSheetCell}. Click a cell first to edit a different one.`, 'info');
       break;
   }
 }
-
-sheet.setListeners({
-  onCellClick(address) {
-    sheet.pulse(clickNode(address));
-    if (sheet.isBoardAddress(address)) {
-      lastSheetCell = address;
-      view.onSquareClick(address);
-    } else {
-      selectCodeCell(address);
-    }
-  },
-  onCellDoubleClick(address) {
-    if (sheet.isBoardAddress(address) && view.game.phase === 'play') {
-      // During the battle double-clicks on the board are part of moving; use the "Code cell" button instead.
-      return;
-    }
-    editor.open(address);
-  },
-  onOtherClick(id) {
-    if (id.startsWith('ctx:')) {
-      popups.handleClick(id);
-      return;
-    }
-    if (id.startsWith('piece:')) {
-      view.onPieceClick(Number(id.slice(6)));
-      return;
-    }
-    if (id.startsWith('ed:btn')) {
-      editor.handleButton(id);
-      return;
-    }
-    if (id.startsWith('btn:')) {
-      pressButton(id);
-      return;
-    }
-    if (id === 'hdr:corner') {
-      goToGame();
-      return;
-    }
-    if (id.startsWith('hdr:c')) {
-      const col = Number(id.slice(5));
-      for (let r = 0; r < sheet.rowCount; r++) sheet.flash(formatAddress(col, r), THEME.flash, 400);
-      hud.say(`Column ${colToLetters(col)} — cells ${colToLetters(col)}1 to ${colToLetters(col)}${sheet.rowCount}.`, 'info');
-      return;
-    }
-    if (id.startsWith('hdr:r')) {
-      const row = Number(id.slice(5));
-      for (let c = 0; c < sheet.colCount; c++) sheet.flash(formatAddress(c, row), THEME.flash, 400);
-      hud.say(`Row ${row + 1} — cells A${row + 1} to ${colToLetters(sheet.colCount - 1)}${row + 1}.`, 'info');
-      return;
-    }
-    if (id === 'hud:msg' || id === 'hud:title' || id === 'hud:turn') {
-      hud.say(id === 'hud:title' ? 'That is the title 😄 The buttons below do things!' : 'This bubble tells you what is going on. Try clicking a piece!', 'info');
-    }
-  },
-  tooltipFor(id) {
-    if (id === 'hdr:corner') return 'Click here to go back to the game board';
-    if (id.startsWith('ctx:row:')) return 'Rest here ½ second to peek · click to jump there';
-    if (id.startsWith('ctx:livebar:')) return 'A live copy — edits here are real. Click to go to the cell.';
-    return hud.tooltipFor(id) ?? view.tooltipFor(id);
-  },
-});
 
 const BOARD_ADDRESSES: string[] = [];
 for (let r = 0; r < 10; r++) for (let c = 0; c < 10; c++) BOARD_ADDRESSES.push(formatAddress(c, r));
@@ -213,6 +141,8 @@ view.onChange = () => {
   sheet.markDirty(changedSquares());
   sheet.markDirty([GAME_NODE]);
   sheet.requestRun();
+  lab.sheet.markDirty([GAME_NODE]);
+  lab.sheet.requestRun();
 };
 view.init(restored);
 changedSquares();
@@ -226,150 +156,6 @@ if (smallScreen) {
   dock.update(hud.snapshot());
 }
 
-sheet.onRowsInserted((afterRowIndex) => {
-  const remap = (addr: string): string => {
-    const p = parseAddress(addr);
-    if (!p || p.row <= afterRowIndex) return addr;
-    return formatAddress(p.col, p.row + 1);
-  };
-  if (selectedCodeCell) {
-    const next = remap(selectedCodeCell);
-    if (next !== selectedCodeCell) {
-      sheet.setSelectionVisual(selectedCodeCell, null);
-      selectedCodeCell = next;
-      sheet.setSelectionVisual(selectedCodeCell, { stroke: THEME.select, strokeWidth: 3 });
-    }
-  }
-  lastSheetCell = remap(lastSheetCell);
-  if (editor.isOpen && editor.address) {
-    const p = parseAddress(editor.address);
-    if (p && p.row > afterRowIndex) editor.close(false);
-  }
-});
-
-sheet.onContentMoved((from, to) => {
-  if (selectedCodeCell === from) {
-    sheet.setSelectionVisual(selectedCodeCell, null);
-    selectedCodeCell = to;
-    sheet.setSelectionVisual(selectedCodeCell, { stroke: THEME.select, strokeWidth: 3 });
-  }
-  if (lastSheetCell === from) lastSheetCell = to;
-  if (editor.isOpen && (editor.address === from || editor.address === to)) editor.close(false);
-  hud.say(`Moved ${from}'s content to ${to} 📦`, 'good');
-});
-
-sheet.onRoomMade(({ displaced, addedCols, addedRows }) => {
-  const parts: string[] = [];
-  if (displaced > 0) parts.push(`${displaced} ${displaced === 1 ? 'cell' : 'cells'} stepped aside`);
-  if (addedCols > 0) parts.push(`${addedCols} new ${addedCols === 1 ? 'column' : 'columns'}`);
-  if (addedRows > 0) parts.push(`${addedRows} new ${addedRows === 1 ? 'row' : 'rows'}`);
-  if (parts.length > 0) hud.say(`Made room: ${parts.join(', ')}.`, 'good');
-});
-
-sheet.onReferencesUpdated(({ count, cells, warnings }) => {
-  if (editor.isOpen) editor.refreshFromSheet();
-  if (cells.length > 0 && cells.length <= 12) for (const address of cells) sheet.flash(address, THEME.flash, 700);
-  const parts: string[] = [];
-  if (count > 0) {
-    parts.push(
-      `Updated ${count} ${count === 1 ? 'reference' : 'references'} in ${cells.length <= 4 ? cells.join(', ') : `${cells.length} cells`} so the code still points at the same cells.`,
-    );
-  }
-  parts.push(...warnings.slice(0, 3));
-  if (warnings.length > 3) parts.push(`(and ${warnings.length - 3} more like that)`);
-  hud.say(parts.join(' '), warnings.length > 0 ? 'bad' : 'good');
-});
-
-InternalEvent.disableContextMenu(container);
-const popupMenu = sheet.graph.getPlugin<PopupMenuHandler>('PopupMenuHandler')!;
-popupMenu.selectOnPopup = false;
-popupMenu.factoryMethod = (menu, cell) => {
-  const id = cell?.getId() ?? '';
-  if (id.startsWith('hdr:r')) {
-    const rowIndex = Number(id.slice(5));
-    if (rowIndex < 11) return;
-    menu.addItem(`Insert row below ${rowIndex + 1}`, null, () => {
-      sheet.insertRow(rowIndex);
-      sheet.reveal(rowIndex + 1);
-      sheet.highlightRow(rowIndex + 1);
-      hud.say(`Inserted a new row ${rowIndex + 2}. Everything below moved down one; references in code are updated.`, 'good');
-    });
-  } else if (id.startsWith('sheet:')) {
-    const address = id.slice(6);
-    const isBoard = sheet.isBoardAddress(address);
-    if (!isBoard) {
-      menu.addItem(`Edit ${address}`, null, () => editor.open(address));
-      if (sheet.dataAt(address)?.code) menu.addItem(`Clear ${address}`, null, () => sheet.setCode(address, ''));
-      const tasks = sheet.taskCount(address);
-      if (tasks > 0) {
-        menu.addItem(`Stop timers in ${address} (${tasks})`, null, () => {
-          sheet.stopTasks(address);
-          sheet.notifyChanged(address);
-          hud.say(`Stopped the timers and watchers in ${address}.`, 'good');
-        });
-      }
-      const d = sheet.dataAt(address);
-      if (d?.code) {
-        const { cols, rows } = d.span;
-        const sub = menu.addItem(`Size ${cols}×${rows}`, null, () => {});
-        const resize = (c: number, r: number): void => {
-          sheet.setSpan(address, c, r);
-          const now = sheet.dataAt(address)!.span;
-          hud.say(`${address} is now ${now.cols}×${now.rows}. Code that reads cell.cols or watches 'size' wakes up.`, 'good');
-        };
-        menu.addItem('Wider', null, () => resize(cols + 1, rows), sub);
-        menu.addItem('Narrower', null, () => resize(cols - 1, rows), sub, undefined, cols > 1);
-        menu.addItem('Taller', null, () => resize(cols, rows + 1), sub);
-        menu.addItem('Shorter', null, () => resize(cols, rows - 1), sub, undefined, rows > 1);
-        menu.addItem('Back to 1×1', null, () => resize(1, 1), sub, undefined, cols > 1 || rows > 1);
-      }
-      menu.addSeparator();
-    }
-    addCellList(menu, 'Used by', sheet.dependentsOf(address), 'No cell reads this one');
-    if (!isBoard) addCellList(menu, 'Reads', sheet.readsOf(address), 'Reads nothing');
-  }
-};
-
-/** Adds a sub-menu listing cells; picking one selects and flashes it. */
-function addCellList(menu: MaxPopupMenu, title: string, items: string[], emptyText: string): void {
-  const board = items.filter((a) => sheet.isBoardAddress(a));
-  const others = items.filter((a) => !sheet.isBoardAddress(a) && a !== GAME_NODE);
-  const parts = others.map(describeNode);
-  if (items.includes(GAME_NODE)) parts.push('game');
-  if (board.length > 0) parts.push(board.length === 1 ? board[0] : `${board.length} board squares`);
-  if (parts.length === 0) {
-    menu.addItem(`${title}: ${emptyText}`, null, () => {}, null, undefined, false);
-    return;
-  }
-  const sub = menu.addItem(`${title} (${parts.length})`, null, () => {});
-  for (const part of parts.slice(0, 14)) {
-    const first = part.split(' ')[0];
-    const target = parseAddress(first) ? first : null;
-    menu.addItem(part, null, () => {
-      if (!target) return;
-      sheet.flash(target, THEME.flash, 600);
-      if (!sheet.isBoardAddress(target)) selectCodeCell(target);
-    }, sub);
-  }
-}
-
-new Navigator(sheet, {
-  onJump({ address, row }) {
-    sheet.reveal(row, address ? parseAddress(address)?.col : undefined);
-    if (!address) {
-      sheet.highlightRow(row, 800, [247, 214, 130]);
-      hud.say(`Row ${row + 1}.`, 'info');
-    } else if (sheet.isBoardAddress(address)) {
-      sheet.flash(address, THEME.flash, 800);
-    } else {
-      selectCodeCell(address);
-    }
-  },
-  onBadInput(text) {
-    hud.say(`"${text}" is not a cell or a row. Try Q120 or 120.`, 'bad');
-  },
-});
-
 /** Puts the example cells into every cell that is still empty (cells you wrote yourself are never touched). */
 function loadExamples(): number {
   let added = 0;
@@ -380,6 +166,61 @@ function loadExamples(): number {
   }
   return added;
 }
+
+/** How many rows a piece of code asks for with span(cols, rows); 1 when it does not. */
+function rowsAskedBy(code: string): number {
+  return Number(/\bspan\(\s*\d+\s*,\s*(\d+)/.exec(code)?.[1] ?? 1);
+}
+
+/** Free room for a new cell: column A, one row below every cell that already holds code (and at least below `firstRow`). */
+function freeAddressBelowCode(target: Sheet, code: string, firstRow: number): string {
+  let bottom = firstRow - 1;
+  for (const d of target.codeCells()) bottom = Math.max(bottom, d.row + Math.max(d.span.rows, rowsAskedBy(d.code)));
+  const row = bottom + 1;
+  const needed = Math.min(500, row + rowsAskedBy(code) + 1);
+  while (target.rowCount < needed) target.insertRow(target.rowCount - 1);
+  return formatAddress(0, row);
+}
+
+/** "Put on the board": an untouched example goes back to its own cell if that is empty; anything else gets a fresh cell. In the Lab it always gets a fresh cell. */
+function placeExample(example: GalleryExample, code: string, target: GalleryTarget): string {
+  if (target === 'lab') {
+    const address = freeAddressBelowCode(lab.sheet, code, 0);
+    lab.sheet.setCode(address, code);
+    tabs.select('lab');
+    const pos = parseAddress(address);
+    if (pos) lab.sheet.reveal(pos.row, pos.col, false);
+    lab.pane.selectCodeCell(address);
+    return address;
+  }
+  const home = sheet.dataAt(example.address);
+  const homeFree = !!home && (!home.code.trim() || home.code === code);
+  const address = homeFree ? example.address : freeAddressBelowCode(sheet, code, 11);
+  sheet.setCode(address, code);
+  tabs.select('board');
+  const pos = parseAddress(address);
+  if (pos) sheet.reveal(pos.row, pos.col, false);
+  pane.selectCodeCell(address);
+  hud.say(`Your example is running in ${address} ✨ Double-click it to change it.`, 'good');
+  return address;
+}
+
+const gallery = new ExamplesGallery(
+  EXAMPLES.map(([address, code]) => ({ address, code })),
+  { onUse: placeExample },
+);
+lab.root.after(gallery.root);
+const tabs = new Tabs({ board: container, lab: lab.root, examples: gallery.root });
+tabs.onChange((tab) => {
+  popups.closeAll();
+  pane.cellMenu.closeMenu();
+  pane.navigator.root.hidden = tab !== 'board';
+  sheet.setSuspended(tab !== 'board');
+  lab.setActive(tab === 'lab');
+  if (tab === 'examples') gallery.relayout();
+  else if (tab === 'board') sheet.container.focus({ preventScroll: true });
+});
+tabs.select(tabs.fromHash());
 
 if (restored && saved) {
   while (sheet.rowCount < saved.rows && sheet.rowCount < 500) sheet.insertRow(sheet.rowCount - 1);
@@ -392,5 +233,5 @@ if (restored && saved) {
 scheduleSave = startAutoSave(view.game, sheet);
 
 // Expose a few handles for tinkering from the browser console / AI chats.
-Object.assign(window as unknown as Record<string, unknown>, { sheet, game: view.game, view, hud, loadExamples });
+Object.assign(window as unknown as Record<string, unknown>, { sheet, game: view.game, view, hud, loadExamples, tabs, lab: lab.sheet, labPane: lab.pane });
 installAiSurface({ sheet, view, hud, editor });

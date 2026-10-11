@@ -26,6 +26,13 @@ interface PlotOptions {
   dots?: boolean;
   /** Line colour (one series only). */
   color?: string;
+  /** Fix the edges of the picture, so an animation does not jump around. Left out: the edge follows the data. */
+  xMin?: number;
+  xMax?: number;
+  yMin?: number;
+  yMax?: number;
+  /** false: draw only the lines (no numbers, grid or legend). */
+  axes?: boolean;
 }
 
 /** One spreadsheet cell, addressed like A1, C7 or M14. */
@@ -130,7 +137,7 @@ declare function show(...values: unknown[]): void;
  * plot([3, 1, 4, 1, 5])                            numbers against 0, 1, 2, ...
  * plot([[0, 0], [1, 2], [2, 4]])                   [x, y] pairs
  * plot(Math.sin, { from: 0, to: 6.28 })            a function of x
- * plot({ sin: Math.sin, cos: Math.cos })           several lines with a legend
+ * plot({ sin: Math.sin, cos: Math.cos })           several lines with a legend (a name that starts with _ stays out of the legend)
  */
 declare function plot(data: PlotData, options?: PlotOptions): void;
 /** Short for cell.clear() */

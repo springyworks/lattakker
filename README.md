@@ -8,6 +8,8 @@ Monaco editor is used for code editing.
 
 Live demo: https://springyworks.github.io/lattakker/
 
+![Lattakker in action: playing the board, editing a cell, the Lab and the Examples tab](resources/animated_screen_recording.gif)
+
 <a id="contents"></a>
 
 ## Contents
@@ -134,9 +136,9 @@ To edit a cell:
 - Double-click it to open it in a popup Monaco editor. Drag its title bar to
   move it, double-click the title bar to fill the screen (and again to go
   back), and resize it from its corner handle.
-- Or, in view mode, type directly into the cell on the sheet itself. A
-  small grip icon in the corner of the cell lets you drag the cell's
-  content (code, output, colour, span) to another, empty cell.
+- Or, in view mode, type directly into the cell on the sheet itself. The
+  tiny ⋮ in the corner of the cell (see [the ⋮ menu](#the--menu)) is a handle: drag
+  it to move the cell's content (code, output, colour, span) to another cell.
 - To move a cell, or a merged block of cells, from anywhere on it: hold
   Ctrl (Cmd on a Mac) and drag, or on a touch screen tap, then tap again
   and hold, and move. The block follows your finger and snaps to the grid.
@@ -180,7 +182,10 @@ drag the strip to scroll. A row you insert scrolls into view and glows green
 for half a second.
 
 Inside the popup editor: Ctrl+Enter runs the code once without closing the
-editor, Escape saves and closes.
+editor, Escape saves and closes. The strip at the bottom shows the cell's
+latest output. A click on that strip counts as a click on the cell (so code
+that waits with `on(cell, 'click', ...)` reacts); the small **enlarge / shrink**
+button in its corner makes the strip bigger.
 
 ## 7 Your first program (start here)
 
@@ -233,6 +238,58 @@ kept in the code (`src/recipes.ts`, `src/examples.ts`), so they stay as
 written even when someone edits the example cells in the sheet.
 Everything you can use inside a cell is listed in [8 Programmer's manual: the cell API](#8-programmers-manual-the-cell-api).
 
+**Tabs.** Three tabs sit above the page:
+
+- **Game board**: the battle and your cells.
+- **Lab** (`/#lab`): a second sheet with exactly the same abilities as the one
+  under the board (cell addresses, TypeScript in cells and merged cell-blocks,
+  the popup and inline editors, menus, reactivity, `plot()`), but no playing
+  field. There is only one game, on the first tab; `game` in Lab code reads it,
+  and the Lab's cells wake up when it changes. It starts full of live demos (an
+  animated wave, a bouncing ball, a sorting race, a clock, Game of Life painted
+  on cells, charts that read other cells...). Everything is saved in the
+  browser (separately from the board's sheet); **Restore demos** puts the demos
+  back as written. Addresses mean the Lab's
+  own cells there: `at('A1')` in the Lab is the Lab's A1.
+  A hidden Lab keeps running but does not redraw until you open it.
+- **Examples** (`/#examples`): every example from `src/examples.ts` as a card with a real Monaco editor. It has
+  the same help as a cell: hover a word for its type and a plain-words
+  explanation (for example `const`, `every`, `span`), completions, and the coach's
+  hints on errors. A search box filters the cards. **Put on the board** sends the
+  code (with your changes) to a cell and switches to the board: an untouched
+  example goes back to its own cell if that is empty, anything else goes to a
+  fresh cell in column A below the last code cell. **Put in the Lab** does the
+  same on the Lab's sheet (always a fresh cell). **Start over** restores the
+  original text and **Copy** copies it.
+
+The board keeps its scroll position and its running cells while you browse the other tabs.
+
+<a id="the--menu"></a>
+
+**The ⋮ menu.** Rest the pointer on a cell (not a board square) and a tiny ⋮
+appears in its top-right corner (on the visible part of a big block). Rest on
+the ⋮ and a menu opens with what you can do with that cell or cell-block:
+
+| Item | What it does |
+|---|---|
+| tiny first line | The cell's address, its stable id (`c-1f3a9b02`, the same after moves) and how often it ran. Click to copy the id. |
+| Edit code / Write TypeScript here | Opens the popup editor. |
+| Run again, Size, Stop timers | Re-run the code; make the block wider, narrower, taller, shorter or 1×1; cancel its `every`/`on` tasks. |
+| Used by / Reads | Lists of cells (pick one to jump there). *Used by* counts cells that read this one, watch its size/code/clicks, or name its address in their code. |
+| Copy | Address, id or code. |
+| Show ids on all cells | Draws each code cell's id in tiny type in its corner. |
+| Delete cell / cell-block | Clears the code (and the block's size). It is **disabled while another cell uses this one** and says how many; otherwise it asks "Click again to delete". |
+
+The ⋮ is also a drag handle for moving the block. The menu is built from plain
+item lists (`src/ui/HoverMenu.ts`), so other things (pieces, buttons) can get
+the same kind of menu later. The right-click menu still works as before.
+
+**Hover help.** Resting the pointer on a word in any cell editor shows Monaco's
+own hover (type, docs, and the kid-friendly "💡" line). After half a second, an
+extra panel drawn by maxGraph lists the places where that word is used in the
+cell, and cell addresses expand into a live, editable copy of that cell. (The
+Examples tab uses Monaco's hover only, because the panel is drawn on the sheet.)
+
 ## 8 Programmer's manual: the cell API
 
 [↑ Contents](#contents)
@@ -249,7 +306,7 @@ Top-level `await` works. The editor shows these names with help text as you type
 | `print(...values)` | Add a line to this cell's output (shown in run mode). Only the last 300 lines are kept. |
 | `show(...values)` | Replace the output with one line. Use this for displays that update in place. |
 | `clear()` | Empty the output and remove the plot. |
-| `plot(data, options?)` | Draw an XY plot as this cell's output. `data` is a list of numbers, a list of `[x, y]` pairs, a list of `{ x, y }` points, a function of x such as `Math.sin` or `(x) => x * x`, or an object of several of these (`{ sin: Math.sin, cos: Math.cos }`, drawn with a legend). Options: `title`, `xLabel`, `yLabel`, `from`/`to`/`steps` (for functions: default -10 to 10 in 200 steps), `dots`, `color`. Call it again to redraw (do this inside `every()` for a live plot). Whatever you `print` or `show` becomes a caption under the plot. Make the cell bigger with `span(4, 3)`; a small cell draws a bare line without axes. |
+| `plot(data, options?)` | Draw an XY plot as this cell's output. `data` is a list of numbers, a list of `[x, y]` pairs, a list of `{ x, y }` points, a function of x such as `Math.sin` or `(x) => x * x`, or an object of several of these (`{ sin: Math.sin, cos: Math.cos }`, drawn with a legend). Options: `title`, `xLabel`, `yLabel`, `from`/`to`/`steps` (for functions: default -10 to 10 in 200 steps), `dots`, `color`, and `xMin`/`xMax`/`yMin`/`yMax` to fix the edges (so an animation does not jump around) and `axes: false` for just the lines. A series name that starts with `_` stays out of the legend. Call it again to redraw (do this inside `every()` for a live plot). Whatever you `print` or `show` becomes a caption under the plot. Make the cell bigger with `span(4, 3)`; a small cell draws a bare line without axes. |
 | `view(text)` | Replace what is shown in view mode (default: the code itself). |
 | `color(fill)` | Background colour, e.g. `'#ffd6e7'` or `'lightgreen'`. |
 | `log(...values)` | Like `print`, and also writes to the browser console. |
@@ -974,7 +1031,8 @@ the shift. The rules are the same as for moved cells, see
 src/sheet/        Sheet model: cells, addresses, dependency tracking (reactivity.ts), run contexts and timers (tasks.ts), the cell API (api.ts)
 src/editor/       Monaco integration, popup editor, inline per-cell editor
 src/game/     Game rules, board state, AI move suggestions
-src/ui/           Control panel, phone dock, touch gestures
+src/ui/           Control panel, phone dock, touch gestures, the tab strip (Tabs.ts), the Examples tab (ExamplesGallery.ts), SheetPane.ts (everything one sheet needs; used by the board and the Lab) and the ⋮ menu (CellMenu.ts, HoverMenu.ts)
+src/lab.ts        The Lab tab: a second sheet, its toolbar and saving; labDemos.ts holds its demo cells
 src/storage.ts    Saves and restores the game and cells in localStorage
 src/ai/           window.mms, WebMCP tools, the text copy for AI helpers, and bridge.ts (the page end of /mcp)
 src/theme.ts      The colour palette

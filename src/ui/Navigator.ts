@@ -2,6 +2,8 @@ import type { Sheet } from '../sheet/Sheet';
 import { CH, ORIGIN_Y } from '../sheet/Sheet';
 
 export interface NavigatorHooks {
+  /** Draw the line under the game board's rows (only the board's sheet has one). */
+  hasBoard?: boolean;
   /** The player typed a cell address ("Q120") or a row number ("120") and it was revealed. */
   onJump(target: { address?: string; row: number }): void;
   onBadInput(text: string): void;
@@ -13,7 +15,7 @@ export interface NavigatorHooks {
  * Click or drag on the strip to scroll there.
  */
 export class Navigator {
-  private readonly root = document.createElement('div');
+  readonly root = document.createElement('div');
   private readonly input = document.createElement('input');
   private readonly track = document.createElement('div');
   private readonly canvas = document.createElement('canvas');
@@ -24,15 +26,15 @@ export class Navigator {
     private readonly sheet: Sheet,
     private readonly hooks: NavigatorHooks,
   ) {
-    this.root.id = 'nav';
+    this.root.className = 'sheet-nav';
     this.input.type = 'text';
     this.input.placeholder = 'Go to';
     this.input.title = 'Type a cell (Q120) or a row number, then press Enter';
     this.input.setAttribute('aria-label', 'Go to cell or row');
     this.input.autocomplete = 'off';
     this.input.spellcheck = false;
-    this.track.id = 'nav-track';
-    this.windowBox.id = 'nav-window';
+    this.track.className = 'sheet-nav-track';
+    this.windowBox.className = 'sheet-nav-window';
     this.track.append(this.canvas, this.windowBox);
     this.root.append(this.input, this.track);
     document.body.append(this.root);
@@ -135,7 +137,7 @@ export class Navigator {
     const { scale, top } = this.metrics();
     const rowY = (row: number): number => (((top + row * CH) * scale) / total) * height;
     ctx.fillStyle = '#d7dbe0';
-    ctx.fillRect(0, rowY(10), width, 1);
+    if (this.hooks.hasBoard) ctx.fillRect(0, rowY(10), width, 1);
     const rows = new Map<number, boolean>();
     for (const d of this.sheet.codeCells()) rows.set(d.row, (rows.get(d.row) ?? false) || d.error !== null);
     for (const [row, hasError] of rows) {
