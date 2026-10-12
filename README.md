@@ -727,6 +727,27 @@ show('board A12 says: ' + at('/board/A12').text)
 - Every cell reference has `cell.tab` (`'lab'`) and `cell.path` (`'/lab/J24'`);
   a tile has the same, plus its own `x` and `y`.
 - `range()` only covers the tab the code is in.
+- *Two tabs that keep changing each other are stopped.* If a cell is woken more
+  than 50 times in a second by cells of another tab (for example a cell in the
+  board that shows the Lab's cell plus one, and a Lab cell that shows the
+  board's cell plus one), the reader stops with the error "woke this cell up over
+  50 times in a second... Do two tabs keep changing each other?". `on()`,
+  `mcp.watch` and `mcp.on` have the same guard.
+
+**What crosses tabs, and what does not**
+
+| | Across tabs? |
+|---|---|
+| Reading a cell: `at('/lab/J24')` | yes, and reactive: the reader runs again when that cell changes |
+| Watching: `on('/lab/J24', 'change' \| 'size' \| 'code' \| 'click', fn)` | yes |
+| A trigger: `await mcp.click('/lab/J24')` | yes (it wakes that cell's `on(cell, 'click')`) |
+| Your own events: `mcp.emit(name, data)` and `mcp.on(name, fn)` | yes, every tab hears them |
+| Following a cell over MCP: `mcp.watch(path, fn)` | yes (the news is an MCP notification, a little later than `at()`) |
+| The game: `game.*` and `on('game', fn)` | yes: there is one game and every tab is woken when it changes |
+| Writing another tab's cell (`print`, `show`, `color`, `span`) | no, read-only; send a signal or use an MCP tool instead |
+| `range()`, `on('sheet', 'rows' \| 'mode')` | the tab the code is in only |
+| Which tab is in front, where the pointer is | not available to cells (yet) |
+| Order between tabs | none: a change in one tab reaches the other a moment later |
 
 ### 8.10 Talking to tabs over MCP: the mcp global
 

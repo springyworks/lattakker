@@ -31,6 +31,9 @@ function fmt(value: unknown): string {
   return String(value);
 }
 
+/** When a cell was last woken up by a cell of another tab, per reader and watched cell (see trackForeign). */
+const wakeStamps = new Map<string, number[]>();
+
 /** Builds the globals a cell's code can use: cell, print, at, range, game, sheet, ... */
 export function buildApi(
   sheet: Sheet,
@@ -70,7 +73,21 @@ export function buildApi(
     const key = `${owner.id}|${node}`;
     if (foreignSubs.has(key)) return;
     foreignSubs.add(key);
+    // Two tabs that keep changing each other never settle: more than this many wake-ups in a second stops the reader.
+    // Every run of the cell makes a new subscription, so the count is kept per reader and watched cell, not per run.
+    const stampKey = `${sheet.id}:${data.address}|${owner.id}|${node}`;
+    const stamps = wakeStamps.get(stampKey) ?? [];
+    wakeStamps.set(stampKey, stamps);
     const stop = owner.subscribe([node], () => {
+      const now = Date.now();
+      while (stamps.length && now - stamps[0] > 1000) stamps.shift();
+      stamps.push(now);
+      if (stamps.length > MAX_FIRES_PER_SECOND) {
+        data.error = `${describeNode(node)} in the ${owner.id} tab woke this cell up over ${MAX_FIRES_PER_SECOND} times in a second, so it was stopped. Do two tabs keep changing each other?`;
+        stop();
+        sheet.notifyChanged(data.address);
+        return;
+      }
       sheet.markDirty([data.address]);
       sheet.requestRun();
     });

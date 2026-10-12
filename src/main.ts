@@ -151,8 +151,12 @@ view.onChange = () => {
   sheet.markDirty(changedSquares());
   sheet.markDirty([GAME_NODE]);
   sheet.requestRun();
-  lab.sheet.markDirty([GAME_NODE]);
-  lab.sheet.requestRun();
+  // The one game is read by every tab (the Lab, the Examples notebook, any tab added later), so each is told.
+  for (const tab of workspace.list()) {
+    if (tab.sheet === sheet) continue;
+    tab.sheet.markDirty([GAME_NODE]);
+    tab.sheet.requestRun();
+  }
 };
 view.init(restored);
 changedSquares();
