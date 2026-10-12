@@ -1284,3 +1284,30 @@ body.ai-open #examples-panel {
 .ai-note {
   white-space: pre-wrap;
 }
+.cell-editor-split {
+  flex: 0 0 7px;
+  cursor: row-resize;
+  background: linear-gradient(#e4e7eb, #cbd2d9);
+  border-top: 1px solid #b8bfc7;
+  position: relative;
+  touch-action: none;
+}
+.cell-editor-split::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 2px;
+  width: 36px;
+  height: 2px;
+  margin-left: -18px;
+  border-radius: 1px;
+  background: #7b8794;
+}
+.cell-editor-split:hover {
+  background: linear-gradient(#d3d9df, #aeb7c0);
+}
+.ai-drag {
+  cursor: move;
+  touch-action: none;
+  user-select: none;
+}

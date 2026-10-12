@@ -175,7 +175,9 @@ export class AiChatUi {
       this.openSide();
     };
     close.onclick = () => this.closeMini();
-    const head = el('div', { className: 'ai-head' }, el('span', { className: 'ai-mini-title-wrap' }, '🤖 ', title), more, close);
+    const head = el('div', { className: 'ai-head ai-drag' }, el('span', { className: 'ai-mini-title-wrap' }, '🤖 ', title), more, close);
+    head.title = 'Drag here to move this little chat';
+    this.makeDraggable(head);
     this.miniInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
@@ -187,6 +189,30 @@ export class AiChatUi {
     const sent = el('div', { className: 'ai-sent' });
     sent.dataset.role = 'sent';
     this.mini.append(head, modelLine(), this.miniLog, sent, el('div', { className: 'ai-form' }, this.miniInput, send));
+  }
+
+  /** The little chat can be moved: press on its header (not on a button) and drag. It stays inside the window. */
+  private makeDraggable(head: HTMLElement): void {
+    head.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || (e.target as HTMLElement).closest('button')) return;
+      e.preventDefault();
+      head.setPointerCapture(e.pointerId);
+      const box = this.mini.getBoundingClientRect();
+      const dx = e.clientX - box.left;
+      const dy = e.clientY - box.top;
+      const move = (ev: PointerEvent): void => {
+        this.mini.style.left = `${Math.max(0, Math.min(ev.clientX - dx, window.innerWidth - 80))}px`;
+        this.mini.style.top = `${Math.max(0, Math.min(ev.clientY - dy, window.innerHeight - 40))}px`;
+      };
+      const up = (): void => {
+        head.removeEventListener('pointermove', move);
+        head.removeEventListener('pointerup', up);
+        head.removeEventListener('pointercancel', up);
+      };
+      head.addEventListener('pointermove', move);
+      head.addEventListener('pointerup', up);
+      head.addEventListener('pointercancel', up);
+    });
   }
 
   /** Opens the little chat near `anchor` (a point on screen) about `ctx`. */

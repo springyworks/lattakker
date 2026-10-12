@@ -277,7 +277,10 @@ cell's timers and runs its code again from the top, and **Restart & close**
 (Escape) does the same and closes the editor. **Close** throws the edit away. The strip at the bottom shows the cell's
 latest output. A click on that strip counts as a click on the cell (so code
 that waits with `on(cell, 'click', ...)` reacts); the small **enlarge / shrink**
-button in its corner makes the strip bigger.
+button in its corner makes the strip bigger. To choose the size yourself, **drag the
+separator** between the code and the output up or down: the output scales with the pane
+(double-click the separator to go back to the small strip). The little AI chat
+([11.4](#114-the-built-in-ai-helper-optional)) can be moved by dragging its header.
 
 ### 6.3 Tabs and cell paths: where am I?
 

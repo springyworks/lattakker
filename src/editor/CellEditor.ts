@@ -12,6 +12,9 @@ import { getSettings, isConfigured } from '../aichat/config';
 /** True when the built-in helper is set up and will pick up a question by itself. */
 const helperAnswers = (): boolean => isConfigured() && getSettings().autoPopup;
 
+/** The separator position the person chose last, so the next editor opens the same way. */
+let rememberedOutH: number | null = null;
+
 const FRAME_W = 580;
 const FRAME_H = 360;
 const MIN_W = 320;
@@ -50,6 +53,8 @@ export class CellEditor {
   private outCell: HTMLElement | null = null;
   private outHtml = '';
   private outOpen = false;
+  /** Height of the output pane (px) chosen by dragging the separator; null = the strip or the enlarged preset. Remembered for the whole session. */
+  private outH: number | null = rememberedOutH;
   /** Set by the AI bridge: is an assistant listening for questions right now? */
   aiListening: () => boolean = () => false;
 
@@ -170,7 +175,12 @@ export class CellEditor {
     const ch = Math.max(20, geo.height);
     const availW = Math.max(40, this.frame.getGeometry()!.width - 4);
     let k: number;
-    if (this.outOpen) {
+    if (this.outH !== null) {
+      // The person dragged the separator: the pane has exactly that height and the output is scaled to fill it.
+      const h = Math.max(40, Math.min(this.outH, this.frame.getGeometry()!.height * 0.8));
+      box.style.height = `${Math.round(h)}px`;
+      k = Math.min(4, availW / cw, (h - 6) / ch);
+    } else if (this.outOpen) {
       const maxH = Math.max(80, this.frame.getGeometry()!.height * 0.65);
       k = Math.min(1.3, availW / cw, maxH / ch);
       box.style.height = `${Math.ceil(ch * k) + 6}px`;
@@ -332,6 +342,10 @@ export class CellEditor {
     body.className = 'cell-editor-body';
     host.appendChild(titleBar);
     host.appendChild(body);
+    const split = document.createElement('div');
+    split.className = 'cell-editor-split';
+    split.title = 'Drag up or down to give the output more or less room; the output scales with it. Double-click: back to the small strip.';
+    host.appendChild(split);
     const out = document.createElement('div');
     out.className = 'cell-editor-out';
     out.title = 'The latest output of this cell. Clicking here clicks the cell, like on the sheet.';
@@ -347,6 +361,9 @@ export class CellEditor {
     // Only the button resizes the preview: a click on the preview itself may be what the cell's code waits for.
     tag.addEventListener('click', (e) => {
       e.stopPropagation();
+      // The button goes back to the two presets.
+      this.outH = null;
+      rememberedOutH = null;
       this.outOpen = !this.outOpen;
       out.classList.toggle('open', this.outOpen);
       tag.textContent = this.outOpen ? '⤡ shrink' : '⤢ enlarge';
@@ -356,10 +373,12 @@ export class CellEditor {
       if (this.address) this.hooks.onOutputClick?.(this.address);
     });
     host.appendChild(out);
+    this.installSplit(split);
     this.installWindowMenus(titleBar, out, outCell, tag);
     this.outBox = out;
     this.outCell = outCell;
     this.outOpen = false;
+    out.classList.toggle('open', this.outH !== null);
     this.outHtml = '';
     for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click', 'dblclick', 'contextmenu', 'wheel', 'touchstart', 'keydown']) {
       host.addEventListener(type, (e) => e.stopPropagation(), { passive: type === 'wheel' || type === 'touchstart' });
@@ -379,6 +398,44 @@ export class CellEditor {
     this.updateHints();
     this.layoutOutput();
     this.outTimer = window.setInterval(() => this.renderOutput(), 400);
+  }
+
+  /** The separator between the code and the output: drag it to resize the output pane smoothly. */
+  private installSplit(split: HTMLElement): void {
+    split.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || !this.outBox) return;
+      e.preventDefault();
+      split.setPointerCapture(e.pointerId);
+      const startY = e.clientY;
+      const startH = this.outBox.getBoundingClientRect().height;
+      // The editor lives inside the zoomed graph: a screen pixel is 1/scale of a pixel of the editor.
+      const scale = this.sheet.graph.getView().scale || 1;
+      const move = (ev: PointerEvent): void => {
+        this.outH = startH / scale + (startY - ev.clientY) / scale;
+        rememberedOutH = this.outH;
+        this.outBox?.classList.add('open');
+        this.layoutOutput();
+        this.editor?.layout();
+      };
+      const up = (): void => {
+        split.removeEventListener('pointermove', move);
+        split.removeEventListener('pointerup', up);
+        split.removeEventListener('pointercancel', up);
+      };
+      split.addEventListener('pointermove', move);
+      split.addEventListener('pointerup', up);
+      split.addEventListener('pointercancel', up);
+    });
+    split.addEventListener('dblclick', () => {
+      this.outH = null;
+      rememberedOutH = null;
+      this.outOpen = false;
+      this.outBox?.classList.remove('open');
+      const tag = this.outBox?.querySelector('.cell-editor-out-tag');
+      if (tag) tag.textContent = '⤢ enlarge';
+      this.layoutOutput();
+      this.editor?.layout();
+    });
   }
 
   private askContext(): AiContext | null {
