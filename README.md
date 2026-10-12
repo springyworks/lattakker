@@ -61,6 +61,7 @@ Live demo: https://springyworks.github.io/lattakker/
     - [11.4.3 A “// AI:” line pops the helper up](#1143-a--ai--line-pops-the-helper-up)
     - [11.4.4 What the helper can and cannot do](#1144-what-the-helper-can-and-cannot-do)
     - [11.4.5 Memory, and outside AIs asking the helper](#1145-memory-and-outside-ais-asking-the-helper)
+    - [11.4.6 What is going on? The status service](#1146-what-is-going-on-the-status-service)
 - [12 Rows](#12-rows)
 - [13 Project layout](#13-project-layout)
 - [14 Licence and artwork](#14-licence-and-artwork)
@@ -1462,6 +1463,41 @@ A big model that has been idle must be loaded into memory first, which can take
 download of hundreds of megabytes and a browser with WebGPU. The helper's providers
 are one small interface (`providers.ts`), so such a model can be added there later and
 the memory and the `helper` server will work with it unchanged.
+
+#### 11.4.6 What is going on? The status service
+
+A person is never left watching a silent screen. Everything that takes time
+(the chat, a call to Google, a tool, the local model, the database) opens a
+**job** (`src/aichat/jobs.ts`), says in words what it does and what it waits for,
+and gives a **sign of life** whenever something really happened: an answer
+arrived, a word of the answer was received, a server replied to a poll. Jobs
+nest, so a chat that waits for a tool that waits for the local model shows as a chain:
+
+```
+⚙️ chat: answering “Teach the local model what a variable is” [25 s]
+  ⚙️ tool: teach_local [25 s]
+    ⚙️ local-ai: filing knowledge — the local model decides how to store the material
+      ⏳ local-model: qwen3.6 — the model is in memory and works on the question; no word yet (24 s)
+```
+
+It is not a timer that runs by itself: each line shows how long ago the job last
+showed a sign of life, and one that is quiet for too long is marked
+"⚠ nothing heard for 60 s: it may be stuck". What each service can honestly know:
+
+- *Google* (answers arrive all at once): "question sent, the answer has not arrived
+  yet". No answer within 120 s: it is asked again (3 tries), then the chat says so.
+- *The local model* (answers arrive word by word): every word is a sign of life.
+  Before the first word the page asks Ollama whether the model is in memory:
+  "not in memory yet: most likely still loading" (allowed for up to 20 minutes) or
+  "in memory and working on it".
+- *The librarian's claims are checked*: a small model sometimes says it stored
+  something without doing it. After `teach` the counts of notes and records are
+  compared, it is asked once more to really use a tool, and if nothing was written the
+  answer is a failure, not a story.
+
+The same list is an MCP server named `status`: **🔎 Status** in the chat asks it, a
+cell can (`mcp.call('status', 'tools/call', { name: 'jobs' })`), and so can an outside
+AI (`mms.mcp('status', 'tools/call', { name: 'jobs' })`). **Stop** cancels the whole chain.
 
 ## 12 Rows
 

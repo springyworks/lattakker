@@ -1,5 +1,7 @@
 import { ERR, McpError, type Json, type McpServer } from '../mcp/router';
 import { getKey, getSettings } from './config';
+import { jobs } from './jobs';
+import { memoryInfo } from './memory';
 import { OpenAiCompatProvider, friendly, type ChatMsg, type ModelProvider, type ToolDecl } from './providers';
 import { DB_DECLS, LIBRARIAN_TOOLS, runTool, TOOL_DECLS, type ToolHost } from './tools';
 
@@ -79,6 +81,8 @@ export const localAssistantReady = (): boolean => getSettings().provider !== 'lo
 
 async function runSubAgent(opts: { provider: ModelProvider; system: string; task: string; tools: ToolDecl[]; exec: (name: string, args: Record<string, unknown>) => Promise<string>; log: (text: string) => void; maxRounds?: number }): Promise<string> {
   const abort = new AbortController();
+  // "Stop" in the chat reaches this too.
+  const unhook = jobs.onCancel(() => abort.abort());
   // A big model that was idle must first be loaded into memory, which can take minutes: be patient.
   const timer = window.setTimeout(() => abort.abort(), 15 * 60000);
   const messages: ChatMsg[] = [{ role: 'user', text: opts.task }];
@@ -97,6 +101,7 @@ async function runSubAgent(opts: { provider: ModelProvider; system: string; task
     }
   } finally {
     window.clearTimeout(timer);
+    unhook();
   }
   return last || '(the local model gave no text)';
 }
@@ -165,24 +170,44 @@ export class LocalAiServer implements McpServer {
     const allowed = name === 'consult' ? new Set(['recall', 'db_query', 'db_get', 'db_collections']) : LIBRARIAN_TOOLS;
     const tools = [...TOOL_DECLS, ...DB_DECLS].filter((t) => allowed.has(t.name));
     this.busy = true;
+    const job = jobs.start('local-ai', name === 'consult' ? 'consulted' : name === 'teach' ? 'filing knowledge' : 'database admin', { stallAfterSeconds: 3600 });
+    job.say(name === 'consult' ? 'the local model thinks about the question' : name === 'teach' ? 'the local model decides how to store the material' : 'the local model works on the task', false);
     const steps: string[] = [];
     const started = performance.now();
     if ((await isLoaded()) === false) this.announce(`🧠 ${localState.model} is not in memory yet. Loading it can take a few minutes the first time (and again after it was idle). Please wait; it is not stuck.`);
     this.announce(`🧠 The local model (${localState.model}) ${name === 'consult' ? 'is thinking about a question from the main helper' : name === 'teach' ? 'is filing new knowledge' : 'is tidying the database'}…`);
     try {
-      const answer = await runSubAgent({
+      const before = memoryInfo();
+      const run = (jobTask: string): Promise<string> =>
+        runSubAgent({
         provider,
         system: name === 'consult' ? CONSULT : LIBRARIAN,
-        task,
+        task: jobTask,
         tools,
         exec: (tool, a) => (allowed.has(tool) ? runTool(this.host(), tool, a, this.name) : Promise.resolve(JSON.stringify({ error: `you may not use ${tool} here` }))),
-        log: (t) => steps.push(t),
+        log: (t) => {
+          steps.push(t);
+          job.say(`step ${steps.length}: ${t.slice(0, 70)}`, false);
+        },
       });
+      const touched = (): number => Math.abs(memoryInfo().count - before.count) + Math.abs(memoryInfo().records - before.records) + steps.filter((s) => /^(remember|db_put|db_delete|tidy_memory)/.test(s)).length;
+      let answer = await run(task);
+      // A small model sometimes says it stored something and has not: that is checked, never taken on trust.
+      if (name === 'teach' && touched() === 0) {
+        job.say('the local model said it stored the knowledge but wrote nothing; asking it once more to really do it', false);
+        answer = await run(`You answered without using a tool, so NOTHING was stored. Call remember or db_put now to store this, then say what you stored:\n${task}`);
+      }
+      const after = memoryInfo();
+      const changes = { notes: after.count - before.count, records: after.records - before.records };
+      const wrote = name === 'consult' || touched() > 0;
+      job.done(`${steps.length} database step${steps.length === 1 ? '' : 's'}`);
       const secs = ((performance.now() - started) / 1000).toFixed(1);
       this.announce(`🧠 The local model answered after ${secs} s${steps.length ? ` (${steps.length} database step${steps.length === 1 ? '' : 's'}: ${steps.map((s) => s.split(' ')[0]).join(', ')})` : ''}.`);
-      return reply({ answer, by: `local · ${localState.model}`, steps, seconds: Number(secs) });
+      if (!wrote) return failure(`The local model did not store anything (it only talked). Its words were: ${answer.slice(0, 300)}`);
+      return reply({ answer, by: `local · ${localState.model}`, steps, changes, verified: name === 'consult' ? undefined : true, seconds: Number(secs) });
     } catch (err) {
       this.announce(`🧠 The local model had a problem: ${friendly(err)}`);
+      job.fail(friendly(err));
       return failure(friendly(err));
     } finally {
       this.busy = false;

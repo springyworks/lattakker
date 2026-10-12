@@ -92,7 +92,7 @@ export const TOOL_DECLS: ToolDecl[] = [
   {
     name: 'mcp_call',
     description:
-      'Talk MCP to the app directly, like any MCP client. Every tab is an MCP server (its id is the server name: "board", "lab", "examples"). Methods: "resources/list" (the cells), "resources/read" with {"uri":"lattakker:///board/A12"}, "tools/list", "tools/call" with {"name":"get_cell"|"list_cells"|"run_cell"|"click"|"flash"|"signal","arguments":{...}}. Changing a cell\'s code is not allowed here: use suggest_code, so the person decides.',
+      'Talk MCP to the app directly, like any MCP client. Every tab is an MCP server (its id is the server name: "board", "lab", "examples"), and so are "memory" (notes and the little database), "local-ai" (the local model, if there is one) and "status" (what is going on right now). Methods: "resources/list" (the cells), "resources/read" with {"uri":"lattakker:///board/A12"}, "tools/list", "tools/call" with {"name":"get_cell"|"list_cells"|"run_cell"|"click"|"flash"|"signal","arguments":{...}}. Changing a cell\'s code is not allowed here: use suggest_code, so the person decides.',
     parameters: {
       type: 'object',
       properties: {
@@ -240,7 +240,7 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
       case 'mcp_call': {
         const server = String(args.server ?? '');
         const method = String(args.method ?? '');
-        if (!workspace.get(server)) return asText({ error: `There is no MCP server "${server}". Servers: ${workspace.list().map((t) => t.id).join(', ')}.` });
+        if (!router.names().includes(server)) return asText({ error: `There is no MCP server "${server}". Servers: ${router.names().join(', ')}.` });
         if (!['resources/list', 'resources/read', 'tools/list', 'tools/call', 'ping'].includes(method)) return asText({ error: `Method "${method}" is not available to you. Use resources/list, resources/read, tools/list or tools/call.` });
         let params: Record<string, unknown> = {};
         const raw = typeof args.params_json === 'string' ? args.params_json.trim() : '';

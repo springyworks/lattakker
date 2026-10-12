@@ -1270,3 +1270,17 @@ body.ai-open #examples-panel {
   font-style: normal;
   color: #52606d;
 }
+.ai-job {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.ai-job.stalled {
+  color: #9a5b00;
+  font-weight: 600;
+}
+.ai-job.finished {
+  opacity: 0.6;
+}
+.ai-note {
+  white-space: pre-wrap;
+}

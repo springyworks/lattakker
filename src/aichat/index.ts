@@ -7,6 +7,7 @@ import { Conversation } from './agent';
 import { aiBridge, type AskOptions } from './bridge';
 import { loadSettings, onSettingsChange } from './config';
 import { HelperServer } from './helperServer';
+import { StatusServer } from './jobs';
 import { MemoryServer } from './memoryServer';
 import { loadMemory } from './memory';
 import { LocalAiServer, probeLocal } from './localAi';
@@ -81,6 +82,7 @@ export function installAiChat(deps: { surface: Surface; strip: TabStrip; say: (t
 
   // The memory and the helper are MCP servers too: outside AIs reach them through the page's router (mms.mcp).
   router.register(new MemoryServer());
+  router.register(new StatusServer());
   router.register(new HelperServer(convo, contextNow));
   router.register(new LocalAiServer(() => convo.toolHost(), (text) => convo.note(text), 'ai-chat'));
   void loadMemory();

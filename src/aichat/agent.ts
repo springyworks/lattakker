@@ -2,6 +2,7 @@ import { friendly, makeProvider, type ChatMsg, type ToolCall } from './providers
 import { localAssistantReady, probeLocal } from './localAi';
 import { LOCAL_DECLS, runTool, TOOL_DECLS, type AiContext, type ToolHost } from './tools';
 import { workspace } from '../workspace';
+import { jobs } from './jobs';
 import { describeModel } from './modelInfo';
 import { memoryInfo } from './memory';
 
@@ -46,23 +47,8 @@ export class Conversation {
   private active: AiContext = { tab: 'board', address: null };
   /** Whether a question is being answered right now. */
   busy = false;
-  /** Shown while the helper waits for the model or runs a tool. */
-  status = '';
-  /** A few lines about what is going on and what is being waited for, newest last. */
-  progress: string[] = [];
-  private started = 0;
+  /** The seconds shown next to a job are re-drawn once a second while something runs. */
   private ticker = 0;
-
-  /** Seconds since the question was sent. */
-  get elapsed(): number {
-    return this.busy ? Math.round((performance.now() - this.started) / 1000) : 0;
-  }
-
-  private log(text: string): void {
-    this.progress.push(text);
-    if (this.progress.length > 8) this.progress.shift();
-    this.changed();
-  }
 
   constructor(private readonly host: Omit<ToolHost, 'context' | 'suggest'>) {}
 
@@ -83,6 +69,8 @@ export class Conversation {
 
   cancel(): void {
     this.abort?.abort();
+    // Also whatever the chat is waiting for further down the chain (a tool, the local model).
+    jobs.cancelAll();
   }
 
   /** The tools' view of the app, for the local librarian (it works for the person who asked last). */
@@ -135,41 +123,45 @@ export class Conversation {
     this.messages.push({ role: 'user', text: `[Asked from ${ctx.address ? `${workspace.pathOf(ctx.tab, ctx.address)}${ctx.line ? `, line ${ctx.line} of its code` : ''}` : `the ${ctx.tab} tab`}]\n${question}${ctx.selection ? `\n[The person selected this text in the cell]\n${ctx.selection.slice(0, 800)}` : ''}` });
     this.trim();
     this.busy = true;
-    this.status = 'thinking…';
     this.abort = new AbortController();
-    this.progress = [];
-    this.started = performance.now();
-    // The clock in the status line moves while waiting.
+    // The seconds of "last sign of life" are re-drawn once a second; they are measured, not invented (see jobs.ts).
     this.ticker = window.setInterval(() => this.changed(), 1000);
-    provider.onNote = (text) => this.log(text);
     const info = describeModel();
-    this.log(`Asking ${info.company} (${info.model}), ${this.messages.length} message${this.messages.length === 1 ? '' : 's'} in the conversation…`);
+    const chat = jobs.start('chat', `answering “${question.slice(0, 40)}${question.length > 40 ? '…' : ''}”`, { stallAfterSeconds: 3600 });
+    const stopWatching = jobs.onCancel(() => this.abort?.abort());
     this.changed();
 
     let answer = '';
     try {
       for (let round = 0; round <= MAX_ROUNDS; round++) {
         // On the last round the model gets no tools, so it has to answer with what it has learned.
-        const sentAt = performance.now();
+        chat.say(round === 0 ? `asking ${info.company} (${info.model}) with ${this.messages.length} message${this.messages.length === 1 ? '' : 's'}` : `asking ${info.company} again with what the tools returned (round ${round + 1})`, false);
         const reply = await provider.complete(`${SYSTEM_PROMPT}${second ? LOCAL_PROMPT : ''}\n(Your memory holds ${memoryInfo().count} notes.)`, this.messages, round < MAX_ROUNDS ? (second ? [...TOOL_DECLS, ...LOCAL_DECLS] : TOOL_DECLS) : [], this.abort.signal);
-        const took = ((performance.now() - sentAt) / 1000).toFixed(1);
-        this.log(reply.toolCalls.length ? `Answer after ${took} s: it wants to use ${reply.toolCalls.map((c) => c.name).join(', ')}.` : `Answer after ${took} s.`);
         this.messages.push({ role: 'assistant', text: reply.text, toolCalls: reply.toolCalls, raw: reply.raw });
         if (reply.text.trim()) answer = reply.text.trim();
         if (!reply.toolCalls.length) break;
         for (const call of reply.toolCalls) {
-          this.status = toolStatus(call);
-          this.changed();
-          const result = await runTool(host, call.name, call.args);
-          this.log(`${call.name} ran: ${result.length} characters back. Waiting for the model to read them…`);
+          chat.say(`running the tool ${call.name}`, false);
+          const tool = jobs.start('tool', call.name, { stallAfterSeconds: 3600 });
+          tool.say(toolStatus(call), false);
+          let result: string;
+          try {
+            result = await runTool(host, call.name, call.args);
+            tool.done(`${result.length} characters back`);
+          } catch (err) {
+            tool.fail(err instanceof Error ? err.message : String(err));
+            throw err;
+          }
           this.messages.push({ role: 'tool', toolCallId: call.id, toolName: call.name, text: result });
         }
       }
       if (!answer) answer = 'I do not have an answer for that one. Could you ask it in another way?';
       this.entries.push({ kind: 'ai', text: answer, via: info.short });
+      chat.done('answered');
       return { ok: true, text: answer };
     } catch (err) {
       if (this.abort?.signal.aborted) {
+        chat.cancel();
         this.entries.push({ kind: 'note', text: 'Stopped.' });
         // Remove the unanswered tail so the next question starts clean.
         const last = this.messages.map((m) => m.role).lastIndexOf('user');
@@ -177,15 +169,15 @@ export class Conversation {
         return { ok: false, text: 'Stopped.' };
       }
       const text = friendly(err);
+      chat.fail(text);
       this.entries.push({ kind: 'error', text });
       const last = this.messages.map((m) => m.role).lastIndexOf('user');
       if (last >= 0) this.messages.length = last;
       return { ok: false, text };
     } finally {
       window.clearInterval(this.ticker);
+      stopWatching();
       this.busy = false;
-      this.status = '';
-      this.progress = [];
       this.abort = null;
       this.changed();
     }

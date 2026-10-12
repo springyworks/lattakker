@@ -1,4 +1,6 @@
 import { workspace } from '../workspace';
+import { router } from '../mcp/router';
+import { jobs, onJobsChange, type JobNode } from './jobs';
 import { installPopupMenu } from '../editor/EditorContextMenu';
 import type { Conversation, Entry } from './agent';
 import { destination, forgetAll, getKey, getSettings, isConfigured, setKey, updateSettings } from './config';
@@ -79,6 +81,7 @@ export class AiChatUi {
       });
     }
     convo.onChange(() => this.render());
+    onJobsChange(() => this.convo.busy && this.render());
     onLocalChange(() => this.render());
     onMemoryChange(() => this.settingsOpen && this.render());
     void isKeptSafe().then((v) => (this.kept = v));
@@ -268,11 +271,36 @@ export class AiChatUi {
     if (this.convo.busy) {
       const stop = el('button', { className: 'ai-stop', textContent: 'Stop' });
       stop.onclick = () => this.convo.cancel();
-      const lines = el('div', { className: 'ai-progress' });
-      for (const l of this.convo.progress) lines.append(el('div', { textContent: `› ${l}` }));
-      log.append(el('div', { className: 'ai-status' }, `🤖 ${this.convo.status} ${this.convo.elapsed} s `, stop, lines));
+      const ask = el('button', { className: 'ai-stop', textContent: '🔎 Status' });
+      ask.title = 'Ask the status service (an MCP server, like the others) what is going on right now';
+      ask.onclick = () => void this.askStatus();
+      const tree = el('div', { className: 'ai-progress' });
+      this.drawJobs(tree, jobs.tree(), 0);
+      log.append(el('div', { className: 'ai-status' }, '🤖 working… ', stop, ' ', ask, tree));
     }
     if (stick) log.scrollTop = log.scrollHeight;
+  }
+
+  /** The jobs as a tree, one line each: what it does, what it waits for, how long ago it last showed a sign of life. */
+  private drawJobs(into: HTMLElement, nodes: JobNode[], depth: number): void {
+    const icon: Record<string, string> = { waiting: '⏳', running: '⚙️', done: '✓', failed: '✗', cancelled: '■' };
+    for (const n of nodes) {
+      const open = n.state === 'waiting' || n.state === 'running';
+      const quiet = !open ? '' : n.stalled ? ` ⚠ nothing heard for ${n.quietSeconds} s: it may be stuck` : n.quietSeconds >= 3 ? ` · last sign of life ${n.quietSeconds} s ago` : '';
+      const line = el('div', { className: `ai-job${n.stalled ? ' stalled' : ''}${open ? '' : ' finished'}`, textContent: `${'\u00a0\u00a0'.repeat(depth)}${depth ? '└ ' : ''}${icon[n.state]} ${n.service}: ${n.title}${n.detail ? ` — ${n.detail}` : ''} [${n.ageSeconds.toFixed(0)} s]${quiet}` });
+      into.append(line);
+      this.drawJobs(into, n.children, depth + 1);
+    }
+  }
+
+  /** "What is going on?": asked of the status service over the router, the way anyone else would ask. */
+  private async askStatus(): Promise<void> {
+    try {
+      const answer = (await router.request('you', 'status', 'tools/call', { name: 'jobs', arguments: {} })) as { structuredContent?: { text?: string } };
+      this.convo.note(`Status:\n${answer.structuredContent?.text ?? 'no answer'}`);
+    } catch (err) {
+      this.convo.note(`The status service did not answer: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   private setupCard(): HTMLElement {

@@ -1,3 +1,4 @@
+import { jobs } from './jobs';
 import { ERR, McpError, type Json, type McpServer } from '../mcp/router';
 import { allNotes, dbCollections, dbDelete, dbGet, dbPut, dbQuery, duplicates, forget, getNote, loadMemory, memoryInfo, remember, search, update, type Note } from './memory';
 
@@ -64,6 +65,15 @@ export class MemoryServer implements McpServer {
   }
 
   private async call(name: string, args: Record<string, unknown>, from: string): Promise<Json> {
+    const job = jobs.start('memory', name, { stallAfterSeconds: 20 });
+    try {
+      return await this.run(name, args, from);
+    } finally {
+      job.done();
+    }
+  }
+
+  private async run(name: string, args: Record<string, unknown>, from: string): Promise<Json> {
     const reply = (value: Record<string, unknown>) => ({ content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: value });
     const failure = (message: string) => ({ content: [{ type: 'text', text: message }], isError: true });
     switch (name) {
