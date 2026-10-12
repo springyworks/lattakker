@@ -55,6 +55,11 @@ Live demo: https://springyworks.github.io/lattakker/
     - [11.3.2 Talking to the AI from a cell](#1132-talking-to-the-ai-from-a-cell)
     - [11.3.3 What to tell the AI](#1133-what-to-tell-the-ai)
     - [11.3.4 Safety and limits](#1134-safety-and-limits)
+  - [11.4 The built-in AI helper (optional)](#114-the-built-in-ai-helper-optional)
+    - [11.4.1 Choosing a helper](#1141-choosing-a-helper)
+    - [11.4.2 Asking: the 🤖 button, Alt+I, right-click](#1142-asking-the--button-alti-right-click)
+    - [11.4.3 A “// AI:” line pops the helper up](#1143-a--ai--line-pops-the-helper-up)
+    - [11.4.4 What the helper can and cannot do](#1144-what-the-helper-can-and-cannot-do)
 - [12 Rows](#12-rows)
 - [13 Project layout](#13-project-layout)
 - [14 Licence and artwork](#14-licence-and-artwork)
@@ -100,7 +105,8 @@ and play, or double-click a cell below the board and write some TypeScript.
 - *It is the same page you get from `npm run dev`.* There is no server behind
   it: the browser downloads a set of static files and everything runs inside
   your tab. Nothing you type or play is sent anywhere, unless you start a
-  **Share** session yourself ([6.4](#64-working-together-share)).
+  **Share** session yourself ([6.4](#64-working-together-share)) or choose an
+  AI helper in its settings ([11.4](#114-the-built-in-ai-helper-optional)).
 - *The first load is a few megabytes,* because the Monaco editor and the
   TypeScript compiler come with the page. Later visits are usually faster,
   because the browser can keep those files.
@@ -940,9 +946,11 @@ Good to know:
 
 [↑ Contents](#contents)
 
-There is **no chat or AI service built into the page**. By design the page
-makes no network calls on its own (the only exception is the Share
-session of [6.4](#64-working-together-share), which you start yourself) and needs no API key. Instead the page is made easy
+The page contains **no AI service**. By design it makes no network calls on
+its own: the only exceptions are the Share session of
+[6.4](#64-working-together-share) and the optional helper of
+[11.4](#114-the-built-in-ai-helper-optional), and both start only when you
+choose them. Out of the box it needs no API key. The page is made easy
 to *read and drive* by an AI assistant that you run yourself, for example
 one that can use your browser or a coding assistant next to your editor:
 
@@ -1304,6 +1312,92 @@ pass on resources or prompts; nothing here depends on that.
   a scripted AI: reads state, writes and clears one scratch cell (`Z43`, or set
   `SCRATCH=...`), plays and undoes a move, and checks the error cases.
 
+### 11.4 The built-in AI helper (optional)
+
+[↑ Contents](#contents)
+
+The **🤖 AI** button in the tab strip opens a chat on the right (like the chat
+of a code editor). The same conversation is also available as a **tiny pop-up
+next to any cell**. The helper knows which cell you are pointing at, and it
+looks at your cells the same way an outside assistant would: through the
+page's own MCP router ([8.10](#810-talking-to-tabs-over-mcp-the-mcp-global)),
+so everything it reads shows up in the MCP monitor cell (U42) as traffic from
+`ai-chat`.
+
+Nothing is sent anywhere until a grown-up has chosen a helper in its settings (⚙).
+
+#### 11.4.1 Choosing a helper
+
+- **A model on this computer (recommended, and the default).** Any server that
+  speaks the OpenAI chat format on your own machine, for example
+  [Ollama](https://ollama.com) or LM Studio. It is free and private: nothing
+  leaves the computer. Best for children. Set it up once:
+  1. Install Ollama and get a model that can use tools, for example
+     `ollama pull qwen2.5-coder:7b`.
+  2. Let the page talk to it: start Ollama with
+     `OLLAMA_ORIGINS=http://localhost:5173` (or the address of the page; the
+     live demo needs `https://springyworks.github.io`).
+  3. Open ⚙ in the helper, press **Find models**, pick one.
+  Ollama starts with a small memory (4096 tokens): if answers get cut off, start
+  it with `OLLAMA_CONTEXT_LENGTH=8192`. Models that think out loud are told not
+  to (`reasoning_effort: none`), so answers come in seconds, not minutes.
+  On the live (https) page your browser may ask whether the site may reach
+  devices on your own network: allow it.
+- **Google Gemini (adults only, off by default).** Called straight from the page
+  with your own API key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+  Google's terms (https://ai.google.dev/gemini-api/terms, checked March 2026)
+  say the API is for people of **18 or older**, must **not be used in an app
+  directed at, or likely to be used by, people under 18**, and that in the
+  EEA, Switzerland and the UK a **paid** service is required when an app is
+  offered to others. On the free tier Google may use what is sent to improve
+  its products and people may read it. That is why it is not the default for a
+  children's app, and why the settings make you tick *"I am 18 or older"*
+  before a key can be entered. The helper was written against Google's API
+  description and tested with a stand-in server, not with a real Gemini key.
+- **Microsoft Copilot** is not available: it has no free way to be called from
+  a web page.
+
+The key is kept **in memory only** (gone when the page closes) unless you tick
+*Remember the key on this computer*. Code in a cell can read the browser's
+storage, so a remembered key is a choice with a cost: do it only on your own
+computer. It is never put on `window`, and "Forget all helper settings and
+keys" wipes everything. The line under the input always says where your
+question goes.
+
+#### 11.4.2 Asking: the 🤖 button, Alt+I, right-click
+
+- **🤖 AI** in the strip, or **Alt+I** anywhere (also inside an editor): the side
+  chat. Its 📍 chip shows the cell the question will be about; click another
+  cell and it follows. **Alt+Shift+I** opens the little pop-up at that cell.
+- Right-click a cell, the ⋮ menu, a code editor, the title bar or output strip
+  of the floating editor: **🤖 Ask the AI about this…** (a pop-up next to it).
+- Every Examples block has a **🤖 Ask** button.
+- Press **⇥** in the pop-up to move the conversation to the side chat; both show
+  the same story.
+
+#### 11.4.3 A “// AI:” line pops the helper up
+
+Write a line such as `// AI: why is this red?` in a cell and leave it alone.
+After **22 seconds** (change it in ⚙, 3 to 600) the pop-up opens by itself,
+asks the question and writes the answer back under your line as `// ↳ AI: …`,
+exactly as an outside assistant would. If an outside assistant is already
+listening on MCP (`wait_for_request`), the built-in helper stays quiet so
+nobody answers twice. Without a helper set up you only get a one-time hint.
+
+#### 11.4.4 What the helper can and cannot do
+
+It can: look at the cell you are in, list and read cells in any tab, read the
+game, read the guide, make a cell blink, and **suggest** code. A suggestion
+is a card with the code and the button *✍ Type it into A13*: only if you press
+it, the code is typed slowly into the cell where you watch, and you keep it
+with Esc or **Restart & close**.
+
+It cannot: change a cell by itself, move pieces, start or end games, or run
+arbitrary MCP calls. Text inside cells is treated as data, never as orders,
+and what the model writes is shown as plain text (no markup is ever
+executed). The code is in `src/aichat/` (providers, tools, the agent loop,
+the chat window, the watcher).
+
 ## 12 Rows
 
 [↑ Contents](#contents)
@@ -1329,6 +1423,7 @@ src/share/        Sharing: link.ts (the WebRTC link and its copy-paste codes), s
 src/lab.ts        The Lab tab: a second sheet, its toolbar and saving; labDemos.ts holds its demo cells
 src/storage.ts    Saves and restores the game and cells in localStorage
 src/ai/           window.mms, WebMCP tools, the text copy for AI helpers, and bridge.ts (the page end of /mcp)
+src/aichat/       The built-in helper: providers.ts (local OpenAI-compatible server, Gemini), tools.ts (what it may do, over the page's MCP), agent.ts, ui.ts (side chat + pop-up + settings), watcher.ts (the // AI: lines), config.ts (settings; keys stay in memory)
 src/theme.ts      The colour palette
 src/examples.ts   The code cells shown on first load. Like labDemos.ts and recipes.ts, every line is explained by a // comment above it in plain words for beginners: keep it that way when you add or change a cell
 public/llms.txt   Plain-words guide for AI helpers

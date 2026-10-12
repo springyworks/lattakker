@@ -1,6 +1,6 @@
 # Lattakker Sheet
 
-> A Lattakker board that is also a spreadsheet. Cells below the board hold TypeScript that runs live, reads the game, paints the board and can make moves. Built with maxGraph, TypeScript and Monaco. It runs entirely in the browser: free, local, no API keys, no network calls of its own (only an optional Share session the player starts), no tracking, no analytics. The person playing may be a child learning to program, so explain things in plain words.
+> A Lattakker board that is also a spreadsheet. Cells below the board hold TypeScript that runs live, reads the game, paints the board and can make moves. Built with maxGraph, TypeScript and Monaco. It runs entirely in the browser: free, local, no API keys, no network calls of its own (only an optional Share session or an optional built-in AI helper, both started by a person), no tracking, no analytics. The person playing may be a child learning to program, so explain things in plain words.
 
 Red is the player (bottom of the board, rows 7-10). Blue is the computer (top, rows 1-4), its pieces face down until they fight. Capture the enemy flag to win. The board is squares A1:J10; every cell from row 12 down can hold code.
 
@@ -73,7 +73,7 @@ Pieces move one square up, down, left or right (no diagonals, not into lakes or 
 
 ## Saving
 
-The game (with Undo history) and all code cells are saved automatically in this browser's localStorage (key `lattakker:v1`) and restored on reload. Nothing leaves the page, unless the player starts a Share session (a direct browser-to-browser link to one person they invite).
+The game (with Undo history) and all code cells are saved automatically in this browser's localStorage (key `lattakker:v1`) and restored on reload. Nothing leaves the page, unless the player starts a Share session (a direct browser-to-browser link to one person they invite) or sets up the built-in AI helper (🤖 AI button; a model on the same computer, or Gemini for adults).
 
 ## Starter exercises an AI could propose
 
