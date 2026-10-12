@@ -490,7 +490,7 @@ export function installAiSurface({ sheet, view, hud, editor }: AiSurfaceDeps): v
       hud.say(`The assistant is writing code in ${a.address} ✍`, 'info');
       const finished = await editor.typeCode(code);
       if (!finished) return fail(`The editor on ${a.address} was closed before the code was typed.`, { address: a.address });
-      hud.say(`Code for ${a.address} is ready. Read it, then press Esc (or Save) to keep it and run it.`, 'good');
+      hud.say(`Code for ${a.address} is ready. Read it, then press Esc (or Restart & close) to keep it and run it.`, 'good');
       return ok({ address: a.address, uid: sheet.dataAt(a.address)!.uid || null, typed: code.length, editorOpen: true, next: 'Waiting for the player to close the editor. Poll get_state until editorOpenOn is null, then get_cell to read the output.' });
     },
 
@@ -712,7 +712,7 @@ export function installAiSurface({ sheet, view, hud, editor }: AiSurfaceDeps): v
     {
       name: 'write_code_live',
       description:
-        "Show the player how code is written: opens the floating code editor on a cell and types your TypeScript into it so the player watches it appear. Nothing is saved or run yet; the player reads it and closes the editor (Esc or Save), which keeps and runs the code. Prefer this over set_cell_code when the player is watching or learning. Afterwards poll get_state until editorOpenOn is null, then get_cell for the output.",
+        "Show the player how code is written: opens the floating code editor on a cell and types your TypeScript into it so the player watches it appear. Nothing is saved or run yet; the player reads it and closes the editor (Esc or Restart & close), which keeps and runs the code. Prefer this over set_cell_code when the player is watching or learning. Afterwards poll get_state until editorOpenOn is null, then get_cell for the output.",
       inputSchema: obj({ address: str(ADDR), code: str('TypeScript source to type into the editor') }, ['address', 'code']),
       readOnly: false,
       run: (a) => api.writeCodeLive(a.address, a.code),

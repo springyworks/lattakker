@@ -10,11 +10,11 @@ const FRAME_W = 580;
 const FRAME_H = 360;
 const MIN_W = 320;
 const MIN_H = 200;
-const BTN_W = 76;
+const BTN_W = 100;
 const BTN_GAP = 6;
 const BUTTONS: Array<[string, string, string]> = [
-  ['ed:btn:run', 'Run', THEME.go],
-  ['ed:btn:save', 'Save', THEME.primary],
+  ['ed:btn:run', 'Restart', THEME.go],
+  ['ed:btn:save', 'Restart & close', THEME.primary],
   ['ed:btn:close', 'Close', THEME.neutral],
 ];
 
@@ -193,7 +193,7 @@ export class CellEditor {
     if (!force && key === this.outHtml) return;
     this.outHtml = key;
     cell.style.background = fill;
-    cell.innerHTML = html || '<div class="cell-text out" style="color:#9aa5b1">(no output yet: press Run)</div>';
+    cell.innerHTML = html || '<div class="cell-text out" style="color:#9aa5b1">(no output yet: press Restart)</div>';
     cell.dataset.size = `${geo.width}x${geo.height}`;
   }
 
@@ -319,7 +319,8 @@ export class CellEditor {
     host.className = 'cell-editor-host';
     const titleBar = document.createElement('div');
     titleBar.className = 'cell-editor-title hud-text';
-    titleBar.innerHTML = `${escapeHtml(address)} · TypeScript &nbsp;<span style="font-weight:400;color:${THEME.inkSoft}">Ctrl+Enter runs · Esc saves &amp; closes · drag this bar to move · double-click it to fill the screen</span>`;
+    titleBar.innerHTML = `${escapeHtml(address)} · TypeScript`;
+    titleBar.title = 'Ctrl+Enter restarts the cell · Esc restarts it and closes · drag this bar to move · double-click it to fill the screen';
     this.installTitleDrag(titleBar);
     const body = document.createElement('div');
     body.className = 'cell-editor-body';
@@ -377,9 +378,9 @@ export class CellEditor {
   /** Right-click on the title bar or the output strip gets the popup menu too, not the browser's. */
   private installWindowMenus(titleBar: HTMLElement, out: HTMLElement, outCell: HTMLElement, tag: HTMLElement): void {
     installPopupMenu(titleBar, () => [
-      { label: 'Run', hint: 'Ctrl+Enter', onSelect: () => this.run() },
-      { label: 'Save & close', hint: 'Esc', onSelect: () => this.close(true) },
-      { label: 'Close without saving', danger: true, onSelect: () => this.close(false) },
+      { label: 'Restart', hint: 'Ctrl+Enter', onSelect: () => this.run() },
+      { label: 'Restart & close', hint: 'Esc', onSelect: () => this.close(true) },
+      { label: 'Close, keep the old code', danger: true, onSelect: () => this.close(false) },
     ]);
     installPopupMenu(out, () => {
       const picked = window.getSelection()?.toString() ?? '';
@@ -391,7 +392,7 @@ export class CellEditor {
           onSelect: () => void navigator.clipboard?.writeText(text).catch(() => {}),
         },
         { label: this.outOpen ? 'Shrink output' : 'Enlarge output', onSelect: () => tag.click() },
-        { label: 'Run', hint: 'Ctrl+Enter', onSelect: () => this.run() },
+        { label: 'Restart', hint: 'Ctrl+Enter', onSelect: () => this.run() },
       ];
     });
   }

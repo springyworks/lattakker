@@ -23,7 +23,7 @@ All methods return plain JSON: `{ ok: true, ... }` or `{ ok: false, error: "..."
 - `move('B7', 'B6')` (async) Red moves, waits for Blue's reply, returns the new state
 - `cells()` all code cells `{uid, address, code, output, error, mode}`; `getCell('A12')`; `resolve(uidOrAddress)` gives `{address, uid, hasCode}`
 - `setCode('A12', code, { run: true })` (async) write TypeScript into a cell and run it; `runCell('A12')` (async) returns `{output}` or `{error}`; `clearCell('A12')`
-- `writeCodeLive('A12', code)` (async) opens the cell's editor and types the code in slowly; the player presses Esc or Save to keep and run it, Close to discard
+- `writeCodeLive('A12', code)` (async) opens the cell's editor and types the code in slowly; the player presses Esc or Restart & close to keep and run it, Close to discard
 - `requests()` questions the player wrote as `// AI: ...` comments; `waitForRequest(15)` (async, up to 20 s); `replyToRequest('A12', line, 'text')` writes the answer as `// ↳ AI: ...` below the question
 - `setMode('run' | 'view')` show output or code in cells; `say('text')` message bubble for the player
 - `exportSvg()` SVG snapshot; `exportModelXml()` maxGraph model XML

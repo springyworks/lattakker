@@ -181,8 +181,9 @@ code (red for an error), with a window showing what is on screen. Click or
 drag the strip to scroll. A row you insert scrolls into view and glows green
 for half a second.
 
-Inside the popup editor: Ctrl+Enter runs the code once without closing the
-editor, Escape saves and closes. The strip at the bottom shows the cell's
+Inside the popup editor, cells are always live: **Restart** (Ctrl+Enter) stops the
+cell's timers and runs its code again from the top, and **Restart & close**
+(Escape) does the same and closes the editor. **Close** throws the edit away. The strip at the bottom shows the cell's
 latest output. A click on that strip counts as a click on the cell (so code
 that waits with `on(cell, 'click', ...)` reacts); the small **enlarge / shrink**
 button in its corner makes the strip bigger.
@@ -726,7 +727,7 @@ Reading, no risk:
 - *What the player is doing:* `mms.state().editorOpenOn` names the cell whose
   editor is open right now, so "fix this" can mean the cell in front of the
   child. Note that `cells()` shows the saved code, not text typed in the open
-  editor that is not saved yet (Esc saves, Ctrl+Enter saves and runs).
+  editor that is not saved yet (Esc and Ctrl+Enter both restart the cell with the new code).
 
 #### 11.1.2 Suggesting
 
@@ -745,7 +746,7 @@ What exists today:
   and say what it did with `mms.say('I changed the 1s to 500ms')`.
 - `mms.writeCodeLive('E24', newCode)` (async) is the visible version: it opens
   the cell's editor and types the code in over a few seconds, then waits. The
-  child reads it and presses Esc (or Save) to keep and run it, or Close to
+  child reads it and presses Esc (or Restart & close) to keep and run it, or Close to
   throw it away. Nothing runs until they decide.
 - Do not put suggestions into a cell you have not looked at. The child's own
   code is the point of the exercise. Ask first, or use an empty spare cell

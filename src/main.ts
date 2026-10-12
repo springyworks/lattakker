@@ -23,7 +23,7 @@ const HELP = `How to play Lattakker
 • Bombs (B) beat everyone except Miners (3). The Spy (S) beats the Marshal (10) only when the Spy attacks.
 • Capture Blue's flag to win. "Undo my move" takes back your last move.
 Sheet tricks
-• Double-click any cell to write TypeScript. Ctrl+Enter runs it, Esc saves and closes.
+• Double-click any cell to write TypeScript. Ctrl+Enter restarts it, Esc restarts it and closes the editor.
 • Cells can print, change colour, read other cells (at('A12')), paint ranges (range('A1:J10')) and even move pieces.
 • Move a cell or insert a row and the addresses in your code follow along.
 • Type a cell like Q120 in the Go to box (right edge) to jump around a long sheet.

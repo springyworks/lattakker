@@ -65,11 +65,11 @@ export class SheetPane {
     this.editor = new CellEditor(sheet, {
       onSave: (address, code) => {
         sheet.setCode(address, code);
-        hooks.say(`Saved ${address} ✓ ${code.trim() ? 'It runs now and after every move.' : 'The cell is empty again.'}`, 'good');
+        hooks.say(`Restarted ${address} ✓ ${code.trim() ? 'It runs from the top now, and again after every move.' : 'The cell is empty again.'}`, 'good');
       },
       onRun: (address, code) => {
         sheet.setCode(address, code);
-        hooks.say(`Running ${address} ▶`, 'info');
+        hooks.say(`Restarted ${address} ▶ Its timers stopped and the code runs from the top.`, 'info');
       },
       onOpen: (address) => hooks.onEditorOpen?.(address),
       onClose: () => hooks.onEditorClose?.(),
