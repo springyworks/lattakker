@@ -18,6 +18,8 @@ const ICON_H = 18;
  */
 export class CellMenu {
   private readonly icon = document.createElement('div');
+  /** A strip across the top of the cell while the pointer rests on the ⋮: the first // line of its code, a title for the block. */
+  private readonly subheader = document.createElement('div');
   private readonly menu: HoverMenu;
   private address: string | null = null;
   private overIcon = false;
@@ -33,7 +35,11 @@ export class CellMenu {
     this.menu = new HoverMenu(() => {
       this.syncTooltips();
       this.scheduleHide();
+      if (!this.overIcon) this.hideSubheader();
     });
+    this.subheader.className = 'cell-subheader';
+    this.subheader.hidden = true;
+    sheet.container.append(this.subheader);
     this.icon.className = 'cell-menu-icon';
     this.icon.textContent = '⋮';
     this.icon.title = 'Hover for the cell menu · drag to move this cell';
@@ -44,12 +50,14 @@ export class CellMenu {
 
     this.icon.addEventListener('pointerenter', () => {
       this.overIcon = true;
+      this.showSubheader();
       this.syncTooltips();
       window.clearTimeout(this.hideTimer);
       if (this.address) this.menu.hoverAnchor(this.icon, () => this.items());
     });
     this.icon.addEventListener('pointerleave', () => {
       this.overIcon = false;
+      if (!this.menu.isOpen) this.hideSubheader();
       this.syncTooltips();
       this.menu.leaveAnchor();
       this.scheduleHide();
@@ -143,6 +151,32 @@ export class CellMenu {
   private hide(): void {
     this.address = null;
     this.icon.hidden = true;
+    this.hideSubheader();
+  }
+
+  /** The first comment line of a cell's code, without the slashes ('' when the code does not start with a comment). */
+  private titleOf(address: string): string {
+    const line = (this.sheet.dataAt(address)?.code ?? '').split('\n').find((l) => l.trim()) ?? '';
+    return line.trim().startsWith('//') ? line.trim().replace(/^\/\/+\s*/, '') : '';
+  }
+
+  /** Only a cell that shows its output has anything to add: a cell that shows its code already shows that line. */
+  private showSubheader(): void {
+    if (!this.address || this.sheet.mode !== 'run') return;
+    const title = this.titleOf(this.address);
+    const box = this.boxOf(this.address);
+    if (!title || !box) return;
+    const c = this.sheet.container;
+    const scale = this.sheet.graph.getView().getScale();
+    this.subheader.textContent = title;
+    this.subheader.style.left = `${Math.round(box.x)}px`;
+    this.subheader.style.top = `${Math.round(Math.max(box.y, c.scrollTop + HDR_H * scale))}px`;
+    this.subheader.style.width = `${Math.round(box.width)}px`;
+    this.subheader.hidden = false;
+  }
+
+  private hideSubheader(): void {
+    this.subheader.hidden = true;
   }
 
   private queuePlace(): void {

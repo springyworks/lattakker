@@ -246,6 +246,24 @@ body.grab-armed .sheet-pane {
   background: #ffffff;
   border-color: #2f4b66;
 }
+.cell-subheader {
+  position: absolute;
+  z-index: 29;
+  box-sizing: border-box;
+  padding: 3px 24px 3px 7px;
+  background: rgba(31, 41, 51, 0.9);
+  color: #ffffff;
+  font: 600 11px/1.3 system-ui, sans-serif;
+  border-radius: 0 0 5px 5px;
+  pointer-events: none;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.cell-subheader[hidden] {
+  display: none;
+}
 .cell-id-badge {
   position: absolute;
   z-index: 25;
