@@ -9,7 +9,7 @@ Red is the player (bottom of the board, rows 7-10). Blue is the computer (top, r
 - `window.mms.help()` returns the full guide as text. Start there.
 - `mms.state()` gives phase (`setup`, `play`, `over`), turn, winner, moveCount, lastMove and the message the player sees.
 - `mms.board()` gives 10 strings (row 1 first), a legend and a text grid. Tokens: `R10` visible Red piece rank 10 (`RS` spy, `RB` bomb, `RF` flag), `B?` hidden Blue piece, `b5` revealed Blue piece, `~~` lake, `..` empty. Hidden Blue pieces are never revealed to you.
-- The accessibility tree has a region "Game state as text" (`#mms-text`) with the same information: phase, message, board grid, captured pieces, last move, and every code cell with its output and error. It updates after each move and cell run.
+- The accessibility tree has a region "Game state as text" (`#mms-text`) with the same information: phase, message, board grid, captured pieces, last move, and every code cell with its output and error. It updates after each move and cell run. Each code cell is one list item shaped `A12: code: <first 3 lines joined with " / ", at most 200 characters> | output: <lines joined with " / ", or (none)> | error: <message, or none>`, so the code there can be cut short; only `getCell` / `get_cell` returns the whole code.
 - If the browser supports WebMCP (`document.modelContext`, older drafts `navigator.modelContext`), tools are registered: `get_state`, `get_board`, `legal_moves`, `make_move`, `shuffle_army`, `start_battle`, `pause_battle`, `resume_battle`, `undo_move`, `new_game`, `list_cells`, `get_cell`, `resolve_cell`, `set_cell_code`, `write_code_live`, `get_requests`, `wait_for_request`, `reply_to_request`, `run_cell`, `set_mode`, `say_to_player`, `export_svg`. `mms.webmcp` shows what was registered.
 - Chat by comments: a player asks you something by writing `// AI: question` in a cell (a plain `//` line under one of your `// ↳` answers also counts). Read it with `get_requests` or `wait_for_request`, answer with `reply_to_request`; the answer appears as `// ↳ AI: ...` lines with a fresh `// ` line below for the next question. Changing code stays a separate step (`write_code_live`).
 - The editor has a coach: a line with a TypeScript error gets friendly `💡` hint lines above it (spelling guesses like `piecies` -> `pieces`). Do not repeat those; add what the hints cannot say.
@@ -27,6 +27,12 @@ All methods return plain JSON: `{ ok: true, ... }` or `{ ok: false, error: "..."
 - `requests()` questions the player wrote as `// AI: ...` comments; `waitForRequest(15)` (async, up to 20 s); `replyToRequest('A12', line, 'text')` writes the answer as `// ↳ AI: ...` below the question
 - `setMode('run' | 'view')` show output or code in cells; `say('text')` message bubble for the player
 - `exportSvg()` SVG snapshot; `exportModelXml()` maxGraph model XML
+
+What comes back (all plain JSON):
+- `setCode` / `runCell` succeed with `{ ok: true, address, uid, output, text }` (`output` is what the cell printed, joined by newlines; `text` is what the sheet shows).
+- They fail with `{ ok: false, error, address, uid, output }`: `output` is whatever the cell printed before it failed.
+- `error` is always a plain string, never an object. A syntax error reads `line 6: '}' expected.` (the line is counted from 1 in the cell's code; only the first syntax error is reported). A runtime error is just the message, for example `Cannot read properties of undefined (reading 'x')`, with no line number. There are no error codes. Type errors do not stop a cell from running, so a cell can run and still carry squiggles in the editor.
+- Calls that do not touch a cell fail the same way with a short message, for example `"Z99" is not a cell address (try something like A12 ...)`.
 
 ## Stable cell identity (uid)
 
@@ -79,5 +85,5 @@ The game (with Undo history) and all code cells are saved automatically in this 
 ## Tips for helpers
 
 - Call `mms.state()` after each action; moves take about a second because Blue answers.
-- When code fails, the error text is in `getCell(address).error` and shown in red on the sheet. Explain it simply, then fix it with `setCode`.
+- When code fails, the error text (a plain string) is in `getCell(address).error` and shown in red on the sheet. Explain it simply, then fix it with `setCode`.
 - Prefer small steps and celebrate what works. `mms.say('Great job!')` shows a friendly message to the player.

@@ -61,11 +61,12 @@ ACT
   mms.newGame()              back to setup with new armies
   mms.undo()                 take back Red's last move and Blue's answer
   mms.setCode('A12', code, { run: true }) (async)   put TypeScript in a cell; run:false returns immediately (it still runs in the background)
-  mms.runCell('A12') (async) re-run a cell, wait, return { output, error }
+  mms.runCell('A12') (async) re-run a cell, wait. Success { ok: true, address, uid, output, text }; failure { ok: false, error, address, uid, output }.
+                             error is a plain string: "line 6: '}' expected." for the first syntax error, just the message for a runtime error, never an object or code.
   mms.clearCell('A12')       empty a cell
   mms.setMode('run'|'view')  cells show output (run) or their code (view)
   mms.say('Nice move!')      show a message to the player in the speech bubble
-  mms.writeCodeLive('A12', code) (async)   open the cell's editor and type the code in slowly; the player presses Esc/Save to keep and run it
+  mms.writeCodeLive('A12', code) (async)   open the cell's editor and type the code in slowly; the player presses Esc or Restart & close to keep and run it
   mms.requests()             questions the player wrote as "// AI: ..." comment lines: { requests: [{address, uid, line, text, answered, unsaved}] }
   mms.waitForRequest(15) (async)   wait up to 20 s for a new question, then return like requests()
   mms.replyToRequest('A12', line, 'text')   write your answer as "// ↳ AI: ..." right below the question (a fresh "// " line follows for the next one)
@@ -74,7 +75,7 @@ IDENTITY: every code cell has a uid such as c-1a2b3c4d. The uid stays with its c
 
 WebMCP: if the browser supports it, the same actions are registered as tools: get_state, get_board, legal_moves, make_move, shuffle_army, start_battle, pause_battle, resume_battle, undo_move, new_game, list_cells, get_cell, resolve_cell, set_cell_code, write_code_live, get_requests, wait_for_request, reply_to_request, run_cell, set_mode, say_to_player, export_svg. mms.webmcp tells you what was registered.
 An outside AI chat can use the same tools over MCP: run the dev server, open this page with ?mcp added to the URL, and connect to http://localhost:5178/mcp (see the README, section 11.3).
-The page also keeps an accessible text mirror in #mms-text (board grid, captured pieces, last move, code cells with output and errors).
+The page also keeps an accessible text mirror in #mms-text (board grid, captured pieces, last move, code cells with output and errors). Each code cell is one list item: "A12: code: <first 3 lines, max 200 chars> | output: ... | error: ..."; use getCell for the whole code.
 
 CELL CODE (TypeScript, async allowed, re-runs when things it reads change)
   print(...values)   add a line of output           view(text)      text shown in view mode

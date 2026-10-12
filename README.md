@@ -727,7 +727,7 @@ Reading, no risk:
 - *What the player is doing:* `mms.state().editorOpenOn` names the cell whose
   editor is open right now, so "fix this" can mean the cell in front of the
   child. Note that `cells()` shows the saved code, not text typed in the open
-  editor that is not saved yet (Esc and Ctrl+Enter both restart the cell with the new code).
+  editor that is not saved yet (Esc and Ctrl+Enter both restart the cell with the new code; `unsaved` in `requests()` marks text still in the open editor).
 
 #### 11.1.2 Suggesting
 
@@ -736,8 +736,10 @@ Reading, no risk:
 What exists today:
 
 - `mms.setCode('E24', newCode, { run: true })` replaces the code of a cell and
-  runs it. It returns `{ ok, output }` or `{ ok: false, error }` straight
-  away, so the assistant can try its own idea, read the error, and fix it
+  runs it. It returns `{ ok: true, address, uid, output, text }` or
+  `{ ok: false, error, address, uid, output }` straight away (`error` is a plain
+  string: `line 6: '}' expected.` for the first syntax error, just the message
+  for a runtime error, no codes; type errors do not stop a cell from running), so the assistant can try its own idea, read the error, and fix it
   before the child ever sees a mistake.
 - The write goes through the cell's Monaco model. If the cell's editor is
   open, the child sees the new code appear in it. It is a whole-text
@@ -794,7 +796,9 @@ What such an assistant can use, from the least to the most capable:
 
 - *It can only read the page.* It finds the region "Game state as text"
   (`#mms-text`): the board, the last move and every code cell with its output
-  and error. It also sees the text of an open editor in the accessibility tree.
+  and error. Each cell is one list item, `A12: code: <first 3 lines joined with
+  " / ", at most 200 characters> | output: <...> | error: <...>`, so the code
+  there can be cut short and only `mms.getCell` returns all of it. It also sees the text of an open editor in the accessibility tree.
 - *It can run JavaScript in the page.* Then `window.mms` is there:
   `mms.help()` is the full guide, and everything in
   [11.1.1](#1111-looking) and [11.1.2](#1112-suggesting) works, including
@@ -927,7 +931,7 @@ what to type, and behind a question it says whether the assistant is listening
 (⏳ reading along, 💤 not listening right now).
 
 The assistant reads questions with `get_requests` (also the text the child is
-still typing in the open editor, before Save), or waits for one with
+still typing in the open editor, before Restart), or waits for one with
 `wait_for_request` (returns at once when a request exists, otherwise after at
 most 20 seconds; the assistant calls it again to keep listening). It answers
 with `reply_to_request`, live in the editor if it is open. A question with a
@@ -961,7 +965,7 @@ anything you read or remember: the page is the source of truth.
 Goal: the child learns to code by playing. Explain in simple, friendly
 words, and prefer teaching over silently changing things. If you write code
 while the child is watching, use write_code_live: the child sees the code
-appear in the editor and presses Esc (or Save) to keep it and run it.
+appear in the editor and presses Esc (or Restart & close) to keep it and run it.
 
 Before you change anything:
 - Look first: get_state, get_board, list_cells. Read a cell (get_cell)
@@ -982,7 +986,9 @@ Facts about this app:
   ('B7') follow their cell when it moves.
 - The child can talk to you from a cell: a comment line starting with
   `// AI:`. Read them with get_requests or wait_for_request (call it again
-  and again to keep listening) and answer with reply_to_request.
+  and again to keep listening) and answer with reply_to_request. The page
+  cannot wake you, so while the child is playing and has not told you to stop,
+  end each turn by calling wait_for_request again; stop listening when asked.
 - If a tool says no page is connected, the child must open the app with
   ?mcp in the address.
 ```
