@@ -121,7 +121,7 @@ export class CellEditor {
       let hint = '';
       if (n === cursorLine && /^\s*\/\/\s*$/.test(text) && !(lines[i - 1] ?? '').trimStart().startsWith('// ↳')) hint = 'type "ai" or "help" here and the helper pops up';
       else if (n === cursorLine && /^\s*\/\/\s*$/.test(text)) hint = 'ask the AI something';
-      else if (requestAt(lines, i) && !isAnswered(lines, i)) hint = listening || helperAnswers() ? '⏳ the AI is reading along…' : '💤 the AI is not listening right now';
+      else if (requestAt(lines, i) && !isAnswered(lines, i)) hint = listening ? '⏳ the AI is reading along…' : helperAnswers() ? (aiBridge.isBusy() ? '⏳ the helper is thinking… (see the chat)' : '⏳ the helper will look at this in a moment') : '💤 the AI is not listening right now';
       if (!hint) return;
       decorations.push({
         range: new monaco.Range(n, model.getLineMaxColumn(n), n, model.getLineMaxColumn(n)),

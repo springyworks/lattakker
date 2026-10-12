@@ -1,7 +1,9 @@
 import { workspace } from '../workspace';
+import { installPopupMenu } from '../editor/EditorContextMenu';
 import type { Conversation, Entry } from './agent';
 import { destination, forgetAll, getKey, getSettings, isConfigured, setKey, updateSettings } from './config';
 import { renderMarkdown } from './markdown';
+import { describeModel } from './modelInfo';
 import { GeminiProvider, OpenAiCompatProvider, friendly, type ModelProvider } from './providers';
 import type { AiContext } from './tools';
 
@@ -32,6 +34,13 @@ function link(href: string, text: string): HTMLAnchorElement {
   return el('a', { href, textContent: text, target: '_blank', rel: 'noopener noreferrer' });
 }
 
+/** The tiny line under the header: who answers (company, model, where it runs) and a guess how well it codes. */
+function modelLine(): HTMLElement {
+  const line = el('div', { className: 'ai-model' });
+  line.dataset.role = 'model';
+  return line;
+}
+
 export class AiChatUi {
   private readonly side = el('aside', { className: 'ai-side', hidden: true });
   private readonly sideLog = el('div', { className: 'ai-log' });
@@ -53,6 +62,18 @@ export class AiChatUi {
     document.body.append(this.side, this.mini);
     this.buildSide();
     this.buildMini();
+    // The conversation gets the app's own right-click menu too (the question box keeps the browser's, for spelling help).
+    for (const log of [this.sideLog, this.miniLog]) {
+      installPopupMenu(log, () => {
+        const picked = window.getSelection()?.toString() ?? '';
+        const all = this.convo.entries.map((e) => ('text' in e ? e.text : '')).filter(Boolean).join('\n\n');
+        return [
+          { label: picked ? 'Copy selection' : 'Copy the conversation', disabled: !picked && !all, onSelect: () => void navigator.clipboard?.writeText(picked || all).catch(() => {}) },
+          { label: 'New conversation', onSelect: () => this.convo.clear() },
+          { label: 'Settings ⚙', onSelect: () => this.showSettings(true) },
+        ];
+      });
+    }
     convo.onChange(() => this.render());
     workspace.onFocusChange(() => this.paintChip());
     workspace.onCurrentChange(() => this.paintChip());
@@ -96,7 +117,7 @@ export class AiChatUi {
     sent.dataset.role = 'sent';
     const form = el('div', { className: 'ai-form' }, this.sideInput, send);
     this.sideBody.append(this.sideLog);
-    this.side.append(head, this.sideBody, sent, form);
+    this.side.append(head, modelLine(), this.sideBody, sent, form);
   }
 
   openSide(focusInput = true): void {
@@ -155,7 +176,7 @@ export class AiChatUi {
     send.onclick = () => this.submit(this.miniInput, () => this.miniCtx);
     const sent = el('div', { className: 'ai-sent' });
     sent.dataset.role = 'sent';
-    this.mini.append(head, this.miniLog, sent, el('div', { className: 'ai-form' }, this.miniInput, send));
+    this.mini.append(head, modelLine(), this.miniLog, sent, el('div', { className: 'ai-form' }, this.miniInput, send));
   }
 
   /** Opens the little chat near `anchor` (a point on screen) about `ctx`. */
@@ -201,9 +222,15 @@ export class AiChatUi {
   private render(): void {
     const configured = isConfigured();
     const sent = `Your question and the cells the helper reads are sent to ${destination()}.`;
+    const info = describeModel();
     for (const node of [this.side, this.mini]) {
       const line = node.querySelector<HTMLElement>('[data-role=sent]');
       if (line) line.textContent = configured ? sent : '';
+      const model = node.querySelector<HTMLElement>('[data-role=model]');
+      if (model) {
+        model.textContent = configured ? info.line : '';
+        model.title = 'Who answers, and how well it probably writes code. This is a guess from the model\'s name: how smart a model feels depends on the task and on who asks.';
+      }
     }
     const busy = this.convo.busy;
     for (const input of [this.sideInput, this.miniInput]) input.disabled = busy;
@@ -234,7 +261,9 @@ export class AiChatUi {
     if (this.convo.busy) {
       const stop = el('button', { className: 'ai-stop', textContent: 'Stop' });
       stop.onclick = () => this.convo.cancel();
-      log.append(el('div', { className: 'ai-status' }, `🤖 ${this.convo.status} `, stop));
+      const lines = el('div', { className: 'ai-progress' });
+      for (const l of this.convo.progress) lines.append(el('div', { textContent: `› ${l}` }));
+      log.append(el('div', { className: 'ai-status' }, `🤖 ${this.convo.status} ${this.convo.elapsed} s `, stop, lines));
     }
     if (stick) log.scrollTop = log.scrollHeight;
   }
@@ -258,7 +287,7 @@ export class AiChatUi {
       case 'ai': {
         const body = el('div', { className: 'ai-text' });
         body.append(renderMarkdown(entry.text));
-        return el('div', { className: 'ai-msg bot' }, el('div', { className: 'ai-who', textContent: '🤖 Helper' }), body);
+        return el('div', { className: 'ai-msg bot' }, el('div', { className: 'ai-who', textContent: '🤖 Helper' }), body, el('div', { className: 'ai-via', textContent: `via ${entry.via}` }));
       }
       case 'note':
         return el('div', { className: 'ai-note', textContent: entry.text });
@@ -364,7 +393,9 @@ export class AiChatUi {
     };
     const load = (): void => {
       say('asking for the list of models…');
-      make()
+      const provider = make();
+      provider.onNote = say;
+      provider
         .listModels()
         .then(
           (models) => {
@@ -395,8 +426,10 @@ export class AiChatUi {
     test.title = 'Sends one tiny question to the model and shows exactly what came back';
     test.onclick = () => {
       const started = performance.now();
-      say(`asking ${current || 'the model'}…`);
-      make()
+      say(`asking ${current || 'the model'}… (the answer to “Say OK.”)`);
+      const provider = make();
+      provider.onNote = say;
+      provider
         .complete('Answer with one short word.', [{ role: 'user', text: 'Say OK.' }], [], new AbortController().signal)
         .then(
           (r) => say(`✓ ${current} answered in ${((performance.now() - started) / 1000).toFixed(1)} s: “${r.text.trim().slice(0, 40)}”`),

@@ -1364,6 +1364,16 @@ computer. It is never put on `window`, and "Forget all helper settings and
 keys" wipes everything. The line under the input always says where your
 question goes.
 
+Under the header a tiny line says **who answers**: the company, the model, where
+it runs and a rough guess how well it writes code (for example "Google ·
+gemini-flash-lite-latest · Google (online) · fastest and simplest: short, easy
+code"). It is a guess made from the model's name only; how smart a model feels
+depends on the task and on who is asking. Each answer ends with a small "via …".
+While the helper waits, the chat shows a clock and a few lines of what is going
+on and what it waits for ("Google answered HTTP 503 (busy). Trying again in 4 s…").
+Every output pane next to an editor (floating editor, Examples blocks, hover
+previews) and the chat itself have the app's own right-click menu.
+
 #### 11.4.2 Asking: the 🤖 button, Alt+I, right-click
 
 - **🤖 AI** in the strip, or **Alt+I** anywhere (also inside an editor): the side
@@ -1393,13 +1403,15 @@ nobody answers twice. Without a helper set up you only get a one-time hint.
 #### 11.4.4 What the helper can and cannot do
 
 It can: look at the cell you are in, list and read cells in any tab, read the
-game, read the guide, make a cell blink, and **suggest** code. A suggestion
+game, read the guide, make a cell blink, speak **raw MCP** to any tab
+(`mcp_call`: `resources/list`, `resources/read`, `tools/list`, `tools/call` for
+`get_cell`, `list_cells`, `run_cell`, `click`, `flash`, `signal`), and **suggest** code. A suggestion
 is a card with the code and the button *✍ Type it into A13*: only if you press
 it, the code is typed slowly into the cell where you watch, and you keep it
 with Esc or **Restart & close**.
 
-It cannot: change a cell by itself, move pieces, start or end games, or run
-arbitrary MCP calls. Text inside cells is treated as data, never as orders,
+It cannot: change a cell by itself (`set_code` is refused for it), move pieces,
+or start or end games. Text inside cells is treated as data, never as orders,
 and what the model writes is shown as plain text (no markup is ever
 executed). The code is in `src/aichat/` (providers, tools, the agent loop,
 the chat window, the watcher).

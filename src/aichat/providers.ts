@@ -51,6 +51,8 @@ export class AiError extends Error {
 export interface ModelProvider {
   /** Who answers, in words. */
   readonly label: string;
+  /** Told what happens while waiting (a busy server, a retry), so the chat can show it. */
+  onNote?: (text: string) => void;
   complete(system: string, messages: ChatMsg[], tools: ToolDecl[], signal: AbortSignal): Promise<ModelReply>;
   listModels(signal?: AbortSignal): Promise<string[]>;
 }
@@ -68,12 +70,12 @@ const wait = (ms: number, signal?: AbortSignal): Promise<void> =>
   });
 
 /** A busy server (503/500/504, or 429) often answers a moment later: try a few times before giving up. */
-async function fetchWithRetry(url: string, init: RequestInit, signal: AbortSignal, onWait?: (seconds: number) => void): Promise<Response> {
+async function fetchWithRetry(url: string, init: RequestInit, signal: AbortSignal, onWait?: (seconds: number, status: number, attempt: number, of: number) => void): Promise<Response> {
   const pauses = [1500, 4000, 8000];
   for (let i = 0; ; i++) {
     const res = await fetch(url, init);
     if (![429, 500, 502, 503, 504].includes(res.status) || i >= pauses.length) return res;
-    onWait?.(Math.round(pauses[i] / 1000));
+    onWait?.(Math.round(pauses[i] / 1000), res.status, i + 1, pauses.length);
     await wait(pauses[i], signal);
   }
 }
@@ -109,6 +111,7 @@ const parseArgs = (text: unknown): Record<string, unknown> => {
 
 export class OpenAiCompatProvider implements ModelProvider {
   readonly label: string;
+  onNote?: (text: string) => void;
   private toolsOk = true;
   private thinkingOff = true;
 
@@ -231,6 +234,7 @@ export function geminiSchema(schema: unknown): Record<string, unknown> {
 
 export class GeminiProvider implements ModelProvider {
   readonly label: string;
+  onNote?: (text: string) => void;
 
   constructor(
     private readonly model: string,
@@ -269,12 +273,20 @@ export class GeminiProvider implements ModelProvider {
       generationConfig: { temperature: 0.4, maxOutputTokens: MAX_OUTPUT_TOKENS },
     };
     if (tools.length) {
-      body.tools = [{ functionDeclarations: tools.map((t) => ({ name: t.name, description: t.description, parameters: geminiSchema(t.parameters) })) }];
+      // A function without arguments is declared without `parameters`: Gemini refuses an object with no properties.
+      body.tools = [
+        {
+          functionDeclarations: tools.map((t) => {
+            const params = geminiSchema(t.parameters);
+            return params.properties && Object.keys(params.properties as object).length ? { name: t.name, description: t.description, parameters: params } : { name: t.name, description: t.description };
+          }),
+        },
+      ];
       body.toolConfig = { functionCallingConfig: { mode: 'AUTO' } };
     }
     let res: Response;
     try {
-      res = await fetchWithRetry(`${GEMINI}/models/${encodeURIComponent(this.model)}:generateContent`, { method: 'POST', headers: this.headers(), body: JSON.stringify(body), signal }, signal);
+      res = await fetchWithRetry(`${GEMINI}/models/${encodeURIComponent(this.model)}:generateContent`, { method: 'POST', headers: this.headers(), body: JSON.stringify(body), signal }, signal, (s, status, n, of) => this.onNote?.(`Google answered HTTP ${status} (busy). Trying again in ${s} s (retry ${n} of ${of})…`));
     } catch (err) {
       if (signal.aborted) throw err;
       throw new AiError('network', `Could not reach Google. Is the internet working? ${err instanceof Error ? err.message : ''}`.trim());

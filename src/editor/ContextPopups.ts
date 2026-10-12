@@ -1,6 +1,8 @@
 import type { Cell, InternalMouseEvent, TooltipHandler } from '@maxgraph/core';
 import type { Sheet } from '../sheet/Sheet';
 import { THEME } from '../theme';
+import { aiBridge } from '../aichat/bridge';
+import { installPopupMenu } from './EditorContextMenu';
 import { createCellViewEditor, modelFor, monaco, parseCellUri, typescriptWorker } from './monaco';
 
 /**
@@ -438,6 +440,15 @@ export class ContextPopups {
       mount.addEventListener(type, (e) => e.stopPropagation(), { passive: type === 'wheel' || type === 'touchstart' });
     }
     host.addEventListener('pointermove', () => this.alive());
+    // The output pane of this little editor gets the app's popup menu as well (not the browser's).
+    installPopupMenu(out, () => {
+      const picked = window.getSelection()?.toString() ?? '';
+      const text = picked || out.innerText.trim();
+      return [
+        { label: picked ? 'Copy selection' : 'Copy output', disabled: !text, onSelect: () => void navigator.clipboard?.writeText(text).catch(() => {}) },
+        { label: '🤖 Ask the AI about this…', hint: 'Alt+I', onSelect: () => aiBridge.ask({ tab: this.sheet.id, address }) },
+      ];
+    });
     this.sheet.setNodeLabel(`ctx:live:${depth}`, host);
 
     const editor = createCellViewEditor(mount, modelFor(address, d.code, this.sheet.id));

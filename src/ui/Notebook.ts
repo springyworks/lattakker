@@ -1,4 +1,5 @@
 import { aiBridge } from '../aichat/bridge';
+import { installPopupMenu } from '../editor/EditorContextMenu';
 import { CH, Sheet } from '../sheet/Sheet';
 import { formatAddress } from '../sheet/address';
 import { clickNode } from '../sheet/reactivity';
@@ -326,6 +327,31 @@ export function createNotebook(view: GameView, board: NotebookBoard, examples: R
     const outCell = el('div', 'nb-out-cell');
     out.append(outCell);
     host.append(head, codeBox, out);
+
+    // Right-click on a block's header or output pane gets the app's own popup menu, like the editors do.
+    const copyText = (text: string): void => void navigator.clipboard?.writeText(text).catch(() => {});
+    const askHere = (): void => {
+      const r = host.getBoundingClientRect();
+      aiBridge.ask(e.bound ? { tab: 'board', address: home } : { tab: 'examples', address }, { at: { x: r.left + 40, y: r.top + 40 } });
+    };
+    installPopupMenu(head, () => [
+      { label: 'Restart', onSelect: () => primary.click() },
+      { label: 'On the board', onSelect: () => onBoard.click() },
+      { label: 'Back to the original', onSelect: () => reset.click() },
+      { label: 'Copy the code', onSelect: () => copyText(e.editor?.getValue() ?? e.example.code) },
+      { separator: true },
+      { label: '🤖 Ask the AI about this…', hint: 'Alt+I', onSelect: askHere },
+    ]);
+    installPopupMenu(out, () => {
+      const picked = window.getSelection()?.toString() ?? '';
+      const text = picked || outCell.innerText.trim();
+      return [
+        { label: picked ? 'Copy selection' : 'Copy output', disabled: !text, onSelect: () => copyText(text) },
+        { label: 'Restart', onSelect: () => primary.click() },
+        { separator: true },
+        { label: '🤖 Ask the AI about this…', hint: 'Alt+I', onSelect: askHere },
+      ];
+    });
 
     for (const type of STOP_TYPES) {
       host.addEventListener(type, (ev) => ev.stopPropagation(), { passive: type === 'wheel' || type === 'touchstart' });

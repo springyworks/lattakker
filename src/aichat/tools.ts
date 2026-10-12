@@ -69,6 +69,20 @@ export const TOOL_DECLS: ToolDecl[] = [
     parameters: { type: 'object', properties: {} },
   },
   {
+    name: 'mcp_call',
+    description:
+      'Talk MCP to the app directly, like any MCP client. Every tab is an MCP server (its id is the server name: "board", "lab", "examples"). Methods: "resources/list" (the cells), "resources/read" with {"uri":"lattakker:///board/A12"}, "tools/list", "tools/call" with {"name":"get_cell"|"list_cells"|"run_cell"|"click"|"flash"|"signal","arguments":{...}}. Changing a cell\'s code is not allowed here: use suggest_code, so the person decides.',
+    parameters: {
+      type: 'object',
+      properties: {
+        server: { type: 'string', description: 'The tab id, e.g. "board" or "lab".' },
+        method: { type: 'string', description: 'resources/list, resources/read, tools/list or tools/call' },
+        params_json: { type: 'string', description: 'The params as JSON text, e.g. {"name":"get_cell","arguments":{"address":"A12"}}. Empty when the method needs none.' },
+      },
+      required: ['server', 'method'],
+    },
+  },
+  {
     name: 'flash_cell',
     description: 'Make a cell blink so the person sees which cell you mean.',
     parameters: { type: 'object', properties: { path: cellPath }, required: ['path'] },
@@ -141,6 +155,25 @@ export async function runTool(host: ToolHost, name: string, args: Args): Promise
         return limit(host.boardText());
       case 'read_guide':
         return limit(host.help());
+      case 'mcp_call': {
+        const server = String(args.server ?? '');
+        const method = String(args.method ?? '');
+        if (!workspace.get(server)) return asText({ error: `There is no MCP server "${server}". Servers: ${workspace.list().map((t) => t.id).join(', ')}.` });
+        if (!['resources/list', 'resources/read', 'tools/list', 'tools/call', 'ping'].includes(method)) return asText({ error: `Method "${method}" is not available to you. Use resources/list, resources/read, tools/list or tools/call.` });
+        let params: Record<string, unknown> = {};
+        const raw = typeof args.params_json === 'string' ? args.params_json.trim() : '';
+        if (raw) {
+          try {
+            const v = JSON.parse(raw) as unknown;
+            if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new Error('not an object');
+            params = v as Record<string, unknown>;
+          } catch {
+            return asText({ error: 'params_json must be JSON text for an object, e.g. {"uri":"lattakker:///board/A12"}' });
+          }
+        }
+        if (method === 'tools/call' && String(params.name ?? '') === 'set_code') return asText({ error: 'set_code is not allowed for you. Use suggest_code: the person looks at the code and decides.' });
+        return limit(asText(await router.request(CLIENT, server, method, params)));
+      }
       case 'flash_cell': {
         const hit = workspace.resolve(String(args.path ?? ''), host.context().tab);
         if ('error' in hit) return asText({ error: hit.error });
