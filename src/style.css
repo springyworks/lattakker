@@ -241,6 +241,20 @@ body.grab-armed .sheet-pane {
   border-radius: 2px;
 }
 
+/* Note shown after "Browser menu…" in the editor right-click menu */
+.rcc-note {
+  position: fixed;
+  z-index: 100060;
+  max-width: 280px;
+  padding: 6px 10px;
+  background: #1f2933;
+  color: #ffffff;
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+  font: 12px/1.35 system-ui, sans-serif;
+  pointer-events: none;
+}
+
 /* Hover menus (plain DOM on <body>) */
 .hover-menu {
   position: fixed;

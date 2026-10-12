@@ -32,6 +32,8 @@ export class HoverMenu {
   private closeTimer = 0;
   private anchor: HTMLElement | null = null;
   private build: (() => MenuItem[]) | null = null;
+  /** A right-click menu stays until a choice, a click elsewhere or Esc — leaving it with the pointer does not close it. */
+  private sticky = false;
 
   constructor(private readonly onClose: () => void = () => {}) {
     document.addEventListener('keydown', (e) => {
@@ -52,6 +54,20 @@ export class HoverMenu {
     if (this.root && this.anchor === anchor) return;
     window.clearTimeout(this.openTimer);
     this.openTimer = window.setTimeout(() => this.open(anchor, build), OPEN_DELAY_MS);
+  }
+
+  /** Opens a menu at a screen point (a right-click), kept open until a choice, a click elsewhere or Esc. */
+  openAt(x: number, y: number, items: MenuItem[]): void {
+    this.close();
+    this.sticky = true;
+    const menu = this.render(items, 0);
+    menu.classList.add('hover-menu-root', 'fresh');
+    document.body.append(menu);
+    this.root = menu;
+    const left = Math.max(6, Math.min(x, window.innerWidth - menu.offsetWidth - 6));
+    const top = Math.max(6, Math.min(y, window.innerHeight - menu.offsetHeight - 6));
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
   }
 
   /** Call when the pointer leaves the anchor. */
@@ -75,12 +91,14 @@ export class HoverMenu {
       this.root = null;
       this.anchor = null;
       this.build = null;
+      this.sticky = false;
       this.onClose();
     }
   }
 
   private scheduleClose(): void {
     this.cancelClose();
+    if (this.sticky) return;
     this.closeTimer = window.setTimeout(() => this.close(), CLOSE_DELAY_MS);
   }
 

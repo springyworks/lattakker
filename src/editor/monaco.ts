@@ -7,6 +7,7 @@ import { EXAMPLES } from '../examples';
 import { RECIPES, exampleRecipes } from '../recipes';
 import { coachFor } from './coachHints';
 import { THEME } from '../theme';
+import { installEditorContextMenu } from './EditorContextMenu';
 
 declare global {
   interface Window {
@@ -352,5 +353,7 @@ export function createCellViewEditor(host: HTMLElement, model: monaco.editor.ITe
     scrollbar: { horizontal: 'hidden', vertical: 'hidden' },
   });
 }
+
+installEditorContextMenu();
 
 export { monaco };
