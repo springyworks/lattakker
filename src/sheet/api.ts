@@ -5,6 +5,8 @@ import { isLake } from '../game/model';
 import { GAME_NODE, MODE_NODE, describeNode, ROWS_NODE, clickNode, codeNode, sizeNode } from './reactivity';
 import { parseTilePath } from './address';
 import { workspace } from '../workspace';
+import { router, type Traffic } from '../mcp/router';
+import { SIGNAL } from '../mcp/tabServer';
 import { CancelError, parseInterval, type RunContext } from './tasks';
 import { makePlot, type PlotOptions } from './plot';
 
@@ -89,6 +91,9 @@ export function buildApi(
       address,
       tab: owner.id,
       path,
+      get uid() {
+        return d.uid || null;
+      },
       col: d.col,
       row: d.row,
       get text() {
@@ -143,6 +148,10 @@ export function buildApi(
       /** Which tab this cell is in and its absolute path, like '/lab/J24'. */
       tab: sheet.id,
       path: workspace.pathOf(sheet.id, address),
+      /** The identity of the code in this cell: it stays when the cell moves. at('@' + uid) finds it again. */
+      get uid() {
+        return d.uid || null;
+      },
       col: d.col,
       row: d.row,
       get text() {
@@ -661,6 +670,157 @@ export function buildApi(
     return stop;
   };
 
+
+  // ------------------------------------------------------------------ talking to tabs over MCP
+
+  const caller = `${sheet.id}:${data.address}`;
+
+  /** What a path or a tab name points at: the server to ask, and for a cell its resource uri. */
+  const aim = (text: unknown): { server: string; uri: string | null; address: string | null } => {
+    const t = String(text).trim();
+    if (/^[a-z][a-z0-9-]*$/.test(t) && router.names().includes(t)) return { server: t, uri: null, address: null };
+    const found = workspace.resolve(t, sheet.id);
+    if ('error' in found) throw new Error(found.error);
+    return { server: found.tab.id, uri: `lattakker:///${found.tab.id}/${found.address}`, address: found.address };
+  };
+
+  /** More than this many wake-ups in a second means a loop between tabs: the watcher is stopped. */
+  const rateGuard = (label: string, stop: () => void): (() => boolean) => {
+    const stamps: number[] = [];
+    return () => {
+      const now = Date.now();
+      while (stamps.length && now - stamps[0] > 1000) stamps.shift();
+      stamps.push(now);
+      if (stamps.length <= MAX_FIRES_PER_SECOND) return true;
+      data.error = `${label} woke up over ${MAX_FIRES_PER_SECOND} times in a second, so it was stopped. Do two tabs keep changing each other?`;
+      stop();
+      sheet.notifyChanged(data.address);
+      return false;
+    };
+  };
+
+  const mcpRead = async (path: string): Promise<Record<string, unknown>> => {
+    const t = aim(path);
+    if (!t.uri) throw new Error(`mcp.read needs a cell path like '/lab/J24', not a tab`);
+    const result = (await router.request(caller, t.server, 'resources/read', { uri: t.uri })) as { contents: Array<{ text: string }> };
+    return JSON.parse(result.contents[0].text) as Record<string, unknown>;
+  };
+
+  const mcpTool = async (target: string, name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> => {
+    const t = aim(target);
+    const result = (await router.request(caller, t.server, 'tools/call', { name, arguments: args })) as { isError?: boolean; content: Array<{ text: string }>; structuredContent?: Record<string, unknown> };
+    if (result.isError) throw new Error(result.content[0]?.text ?? `${name} failed`);
+    return result.structuredContent ?? {};
+  };
+
+  const mcp = {
+    /** The MCP servers of the page: one per tab. */
+    servers: (): string[] => router.names(),
+    /** Any MCP request: mcp.call('lab', 'resources/list'). The answer arrives later, so await it. */
+    call: async (target: string, method: string, params: Record<string, unknown> = {}): Promise<unknown> => {
+      ctx.guard();
+      return router.request(caller, aim(target).server, method, params);
+    },
+    /** One cell of any tab as a plain object (code, text, output, error, size ...). Not a dependency: use watch() to follow it. */
+    read: async (path: string) => {
+      ctx.guard();
+      return mcpRead(path);
+    },
+    /** The cells of a tab that hold code. */
+    list: async (tab: string) => {
+      ctx.guard();
+      const result = (await router.request(caller, aim(tab).server, 'resources/list')) as { resources: unknown[] };
+      return result.resources;
+    },
+    /** Ask a tab to do something: mcp.tool('lab', 'flash', { address: 'J24' }). Returns the tool's answer. */
+    tool: async (target: string, name: string, args: Record<string, unknown> = {}) => {
+      ctx.guard();
+      return mcpTool(target, name, args);
+    },
+    /** Trigger a cell's click event from anywhere, as if somebody had clicked it. */
+    click: async (path: string) => {
+      ctx.guard();
+      const t = aim(path);
+      if (!t.address) throw new Error(`mcp.click needs a cell path like '/lab/J24'`);
+      return mcpTool(t.server, 'click', { address: t.address });
+    },
+    /**
+     * Follow a cell of any tab: fn(cell) runs once now and again every time that cell changes. The updates
+     * arrive as MCP notifications (resources/updated), so they are a little later than at() would be.
+     */
+    watch: (path: string, fn: (cell: Record<string, unknown>) => unknown): (() => void) => {
+      ctx.guard();
+      const t = aim(path);
+      if (!t.uri) throw new Error(`mcp.watch needs a cell path like '/lab/J24', not a tab`);
+      const uri = t.uri;
+      let stopped = false;
+      let stopListening = () => {};
+      let forget = () => {};
+      const stop = (): void => {
+        if (stopped) return;
+        stopped = true;
+        stopListening();
+        forget();
+        void router.request(caller, t.server, 'resources/unsubscribe', { uri }).catch(() => {});
+      };
+      const allowed = rateGuard(`mcp.watch('${path}')`, stop);
+      const run = callback(fn as (...args: unknown[]) => unknown, stop);
+      const refresh = (): void => {
+        if (stopped || ctx.cancelled) return;
+        void mcpRead(path).then((cell) => {
+          if (!stopped && !ctx.cancelled) void run(cell);
+        }, () => {});
+      };
+      stopListening = router.listen(caller, (_from, method, params) => {
+        if (method === 'notifications/resources/updated' && params.uri === uri && allowed()) refresh();
+      });
+      void router.request(caller, t.server, 'resources/subscribe', { uri }).then(refresh, (err) => {
+        data.error = err instanceof Error ? err.message : String(err);
+        stop();
+      });
+      forget = ctx.addTask(stop);
+      return stop;
+    },
+    /** Tell every cell in every tab that listens: mcp.emit('wave', 3). */
+    emit: (name: string, payload?: unknown): void => {
+      ctx.guard();
+      router.broadcast(caller, SIGNAL, { name: String(name), data: payload ?? null, from: caller });
+    },
+    /** Listen for what mcp.emit() sends (from any tab): fn(data, from). */
+    on: (name: string, fn: (payload: unknown, from: string) => unknown): (() => void) => {
+      ctx.guard();
+      let forget = () => {};
+      let stopListening = () => {};
+      const stop = (): void => {
+        stopListening();
+        forget();
+      };
+      const allowed = rateGuard(`mcp.on('${name}')`, stop);
+      const run = callback(fn as (...args: unknown[]) => unknown, stop);
+      stopListening = router.listen(caller, (_from, method, params) => {
+        if (method === SIGNAL && params.name === name && allowed()) void run(params.data, String(params.from ?? ''));
+      });
+      forget = ctx.addTask(stop);
+      return stop;
+    },
+    /** The last n messages that crossed the router (who asked whom, and what). */
+    recent: (n = 10): Traffic[] => router.recent(n),
+    /** Watch every message as it happens: fn(message). */
+    tap: (fn: (message: Traffic) => unknown): (() => void) => {
+      ctx.guard();
+      let forget = () => {};
+      const stop = router.tap((message) => {
+        if (!ctx.cancelled) void fn(message);
+      });
+      const stopAll = (): void => {
+        stop();
+        forget();
+      };
+      forget = ctx.addTask(stopAll);
+      return stopAll;
+    },
+  };
+
   const runInfo = Object.freeze({ reason: data.runReason, count: data.runCount });
 
   return {
@@ -673,6 +833,7 @@ export function buildApi(
     show: (...values: unknown[]) => void self.show(...values),
     span: (cols?: number, rows?: number) => self.span(cols, rows),
     grid,
+    mcp,
     every,
     after,
     on,

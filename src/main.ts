@@ -16,6 +16,8 @@ import { createLab } from './lab';
 import { installAiSurface } from './ai/surface';
 import { loadSaved, startAutoSave } from './storage';
 import { workspace } from './workspace';
+import { router } from './mcp/router';
+import { TabServer } from './mcp/tabServer';
 import { ShareDialog } from './ui/ShareDialog';
 
 const HELP = `How to play Lattakker
@@ -80,6 +82,8 @@ const lab = createLab(view, smallScreen);
 // Both sheets join the workspace, so a cell can be named from anywhere: /board/A12, /lab/J24, @c-1a2b3c4d.
 workspace.register({ id: 'board', title: 'Game board', sheet, editor, select: () => tabs.select('board') });
 workspace.register({ id: 'lab', title: 'Lab', sheet: lab.sheet, editor: lab.pane.editor, select: () => tabs.select('lab') });
+// Every tab runs an MCP server; cells, AI helpers and tools reach them through the page's router (see mcp/router.ts).
+for (const tab of workspace.list()) new TabServer(tab, router);
 
 function toggleMode(): void {
   const next = sheet.mode === 'run' ? 'view' : 'run';
@@ -247,5 +251,5 @@ if (restored && saved) {
 scheduleSave = startAutoSave(view.game, sheet);
 
 // Expose a few handles for tinkering from the browser console / AI chats.
-Object.assign(window as unknown as Record<string, unknown>, { sheet, game: view.game, view, hud, loadExamples, tabs, lab: lab.sheet, labPane: lab.pane, workspace, share });
+Object.assign(window as unknown as Record<string, unknown>, { sheet, game: view.game, view, hud, loadExamples, tabs, lab: lab.sheet, labPane: lab.pane, workspace, share, mcpRouter: router });
 installAiSurface({ sheet, view, hud, editor });

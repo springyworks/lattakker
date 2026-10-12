@@ -8,6 +8,7 @@ import { isAnswered, replyBlock, requestAt } from './requests';
 import { BOARD_COLS, BOARD_ROWS, isLake, rankGlyph, type Piece } from '../game/model';
 import { installMcpBridge } from './bridge';
 import { workspace, type WorkspaceTab } from '../workspace';
+import { McpError, router } from '../mcp/router';
 
 /**
  * Makes the page usable by external AI agents: a visually-hidden text mirror of the game, window.mms,
@@ -53,6 +54,7 @@ CELL PATHS (tabs: board, lab). Cells are named like files, with / meaning "insid
 
 READ
   mms.help()                 this guide
+  mms.mcp('lab', 'resources/list' | 'tools/call' ..., params) (async)   send an MCP request to a tab's server through the page's router; mms.mcpLog(20) shows the last messages that crossed it
   mms.tabs()                 { current, tabs: [{ id, title, path, mode, codeCells, rows, columns }], paths } the tabs that hold code cells and which one the player sees
   mms.state()                { phase: 'setup'|'play'|'over', turn, winner, moveCount, lastMove, message, busy, redPieces, bluePieces }
   mms.board()                { rows: [10 strings, row 1 first], legend, text }. Hidden Blue pieces stay hidden (B?).
@@ -83,7 +85,7 @@ ACT
 
 IDENTITY: every code cell has a uid such as c-1a2b3c4d. The uid stays with its content when cells move, swap or rows are inserted; the address changes. Keep the uid to find code again later; mms.resolve(uid) gives the current address.
 
-WebMCP: if the browser supports it, the same actions are registered as tools: get_state, get_board, legal_moves, make_move, shuffle_army, start_battle, pause_battle, resume_battle, undo_move, new_game, list_cells, get_cell, resolve_cell, set_cell_code, write_code_live, get_requests, wait_for_request, reply_to_request, run_cell, set_mode, say_to_player, export_svg. mms.webmcp tells you what was registered.
+WebMCP: if the browser supports it, the same actions are registered as tools: get_state, get_board, legal_moves, make_move, shuffle_army, start_battle, pause_battle, resume_battle, undo_move, new_game, list_tabs, list_cells, get_cell, resolve_cell, set_cell_code, write_code_live, get_requests, wait_for_request, reply_to_request, run_cell, set_mode, say_to_player, mcp_request, mcp_log, export_svg. mms.webmcp tells you what was registered.
 An outside AI chat can use the same tools over MCP: run the dev server, open this page with ?mcp added to the URL, and connect to http://localhost:5178/mcp (see the README, section 11.3).
 The page also keeps an accessible text mirror in #mms-text (board grid, captured pieces, last move, code cells with output and errors). Each code cell is one list item: "A12: code: <first 3 lines, max 200 chars> | output: ... | error: ..."; use getCell for the whole code.
 
@@ -627,6 +629,22 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps): void {
       return ok({ mode: sheet.mode });
     },
 
+    /** Talk to a tab's MCP server through the page's router, the way a cell's mcp global does. */
+    async mcp(server: unknown, method: unknown, params?: unknown): Promise<Result> {
+      if (typeof server !== 'string' || typeof method !== 'string') return fail("mcp(server, method, params) needs two strings, for example mcp('lab', 'resources/list')");
+      const args = typeof params === 'object' && params !== null && !Array.isArray(params) ? (params as Record<string, unknown>) : {};
+      try {
+        return ok({ server, method, result: await router.request('ai', server, method, args) });
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err), { code: err instanceof McpError ? err.code : undefined });
+      }
+    },
+
+    /** The last messages that crossed the page's MCP router: who asked whom, and what. */
+    mcpLog(count?: unknown): Result {
+      return ok({ servers: router.names(), messages: router.recent(typeof count === 'number' && isFinite(count) ? count : 20) });
+    },
+
     say(text: unknown): Result {
       if (typeof text !== 'string' || !text.trim()) return fail('say(text) needs a non-empty string');
       hud.say(text.slice(0, 500), 'info');
@@ -841,6 +859,21 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps): void {
       inputSchema: obj({ text: str('The message to show') }, ['text']),
       readOnly: false,
       run: (a) => api.say(a.text),
+    },
+    {
+      name: 'mcp_request',
+      description:
+        "Send an MCP request to one of the page's tab servers (they are named like the tabs: 'board', 'lab') through the page's router. Methods: initialize, resources/list, resources/read {uri}, resources/subscribe, tools/list, tools/call {name, arguments}. Tools of a tab: list_cells, get_cell, run_cell, set_code, click (triggers a cell's click event), flash, signal. Example: server 'lab', method 'tools/call', params { name: 'click', arguments: { address: 'J24' } }.",
+      inputSchema: obj({ server: str("'board' or 'lab'"), method: str('The MCP method, for example resources/read or tools/call'), params: { type: 'object', description: 'The parameters of the method', additionalProperties: true } }, ['server', 'method']),
+      readOnly: false,
+      run: (a) => api.mcp(a.server, a.method, a.params),
+    },
+    {
+      name: 'mcp_log',
+      description: "The last messages that crossed the page's MCP router (who asked whom, what the answer was, how long it took). Use it to see what the cells and tabs are saying to each other.",
+      inputSchema: obj({ count: { type: 'number', description: 'How many messages, newest last (default 20, at most 400)' } }),
+      readOnly: true,
+      run: (a) => api.mcpLog(a.count),
     },
     {
       name: 'export_svg',

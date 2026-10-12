@@ -42,6 +42,8 @@ interface CellRef {
   readonly tab: string;
   /** The cell's absolute path, e.g. '/lab/J24'. Works from every tab. */
   readonly path: string;
+  /** The identity of the code in this cell (null when empty). It stays when the cell moves: at('@' + uid) finds it again. */
+  readonly uid: string | null;
   readonly col: number;
   readonly row: number;
   /** Text currently shown in the cell (output, or code in view mode). */
@@ -155,6 +157,64 @@ interface Grid {
   clear(): Grid;
 }
 
+/** One message that crossed the page's MCP router. */
+interface McpMessage {
+  n: number;
+  /** Milliseconds since the page started. */
+  time: number;
+  /** Who sent it: a cell like 'board:A15', a tab like 'lab', or 'ai'. */
+  from: string;
+  to: string;
+  kind: 'request' | 'response' | 'error' | 'notification';
+  method: string;
+  /** The parameters or the answer, shortened to one line. */
+  detail: string;
+}
+
+/** A cell of any tab as a plain object, read over MCP. */
+interface McpCell {
+  tab: string;
+  address: string;
+  path: string;
+  uid: string | null;
+  code: string;
+  text: string;
+  output: string[];
+  error: string | null;
+  cols: number;
+  rows: number;
+  tiles: { cols: number; rows: number; painted: number } | null;
+}
+
+/**
+ * Talk to the tabs of the page the way an outside AI helper would: over MCP, a small message protocol.
+ * Everything here is asynchronous (use await). Every tab ('board', 'lab') is an MCP server.
+ */
+interface Mcp {
+  /** The names of the servers: one per tab. */
+  servers(): string[];
+  /** Any MCP request, for example mcp.call('lab', 'resources/list'). */
+  call(tab: string, method: string, params?: object): Promise<unknown>;
+  /** One cell of any tab as a plain object. Reading is not a dependency: use watch() to follow changes. */
+  read(path: string): Promise<McpCell>;
+  /** The cells of a tab that hold code. */
+  list(tab: string): Promise<object[]>;
+  /** Ask a tab to do something. Tools: list_cells, get_cell, run_cell, set_code, click, flash, signal. */
+  tool(tab: string, name: string, args?: object): Promise<Record<string, unknown>>;
+  /** Trigger a cell's click event from anywhere, as if it had been clicked: mcp.click('/lab/J24'). */
+  click(path: string): Promise<Record<string, unknown>>;
+  /** fn(cell) runs now and every time that cell of any tab changes (the news arrives as an MCP notification). Returns a stop function. */
+  watch(path: string, fn: (cell: McpCell) => unknown): () => void;
+  /** Tell every listening cell in every tab something: mcp.emit('wave', 3). */
+  emit(name: string, data?: unknown): void;
+  /** Hear what mcp.emit() sends from any tab: fn(data, from). Returns a stop function. */
+  on(name: string, fn: (data: any, from: string) => unknown): () => void;
+  /** The last n messages that crossed the router (who asked whom, and what). */
+  recent(n?: number): McpMessage[];
+  /** fn(message) runs for every message as it happens. Returns a stop function. */
+  tap(fn: (message: McpMessage) => unknown): () => void;
+}
+
 interface SheetApi {
   /** 'run' or 'view'. Reading it makes the cell re-run when the mode changes. */
   readonly mode: 'run' | 'view';
@@ -220,6 +280,8 @@ declare function on(target: string | CellRef, event: CellEventName, fn: (changed
 declare function on(target: Grid, event: 'click', fn: (tile: Tile) => unknown): () => void;
 declare function on(target: 'game', fn: (game: GameApi) => unknown): () => void;
 declare function on(target: 'sheet', event: 'rows' | 'mode', fn: (sheet: SheetApi) => unknown): () => void;
+/** Talk to other tabs over MCP (asynchronous): read their cells, watch them, click them, send them signals. */
+declare const mcp: Mcp;
 /** This cell's notebook: survives re-runs and moves with the cell's code. Use it for counters and "what did I see last time". */
 declare const memory: Record<string, any>;
 /** Why this run started. reason: 'edit' (code was written or Run pressed), 'moved' (block or row moved) or 'update' (something this cell reads changed). count: runs since the code was written. */
