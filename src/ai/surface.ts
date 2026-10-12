@@ -7,6 +7,7 @@ import { modelFor } from '../editor/monaco';
 import { isAnswered, replyBlock, requestAt } from './requests';
 import { BOARD_COLS, BOARD_ROWS, isLake, rankGlyph, type Piece } from '../game/model';
 import { installMcpBridge } from './bridge';
+import { workspace, type WorkspaceTab } from '../workspace';
 
 /**
  * Makes the page usable by external AI agents: a visually-hidden text mirror of the game, window.mms,
@@ -42,14 +43,23 @@ The page is a Lattakker board that is also a spreadsheet. Red is the child/playe
 Every mms method returns plain JSON. Errors never throw: you get { ok: false, error: "..." }. Success is { ok: true, ... }.
 Methods marked (async) return a Promise: await them.
 
+CELL PATHS (tabs: board, lab). Cells are named like files, with / meaning "inside":
+  J24            a cell of the board tab (or of the tab you pass as a second argument/option: { tab: 'lab' })
+  /lab/J24       absolute: tab first, so it works from anywhere (/board/A12 for the board)
+  /lab/J24/3,4   tile x=3, y=4 of the grid inside block J24
+  @c-1a2b3c4d    a cell by its identity (uid); it follows the code when cells move, from any tab
+  lattakker:///lab/J24   the same absolute path written as a URI
+  Every result that names a cell carries { tab, address, path, uid }. Write it back the same way: the path field is always safe to pass in.
+
 READ
   mms.help()                 this guide
+  mms.tabs()                 { current, tabs: [{ id, title, path, mode, codeCells, rows, columns }], paths } the tabs that hold code cells and which one the player sees
   mms.state()                { phase: 'setup'|'play'|'over', turn, winner, moveCount, lastMove, message, busy, redPieces, bluePieces }
   mms.board()                { rows: [10 strings, row 1 first], legend, text }. Hidden Blue pieces stay hidden (B?).
   mms.legalMoves(x)          x = 'red' or a Red square like 'B7' -> [{from,to}]. Only Red is shown (Blue stays secret).
-  mms.cells()                all cells holding code: [{uid, address, code, output, error, mode}]
-  mms.getCell('A12')         one cell: { uid, address, code, output, error, text, mode, ... }. Also accepts a uid.
-  mms.resolve('c-1a2b3c4d')  where a cell is now: { address, uid, hasCode }. Takes an address or a uid.
+  mms.cells('board'|'lab'|'all')  cells holding code: [{uid, tab, address, path, code, output, error, mode}]; board by default
+  mms.getCell('A12')         one cell: { uid, tab, address, path, code, output, error, text, mode, ... }. Also accepts a path ('/lab/J24'), a uid, or a tab: mms.getCell('J24', 'lab').
+  mms.resolve('@c-1a2b3c4d') where a cell is now: { tab, address, path, uid, hasCode }. Takes an address, a path or a uid.
   mms.exportSvg()            SVG string snapshot of the maxGraph canvas
   mms.exportModelXml()       maxGraph model as XML (large)
 
@@ -60,8 +70,8 @@ ACT
   mms.pause() / mms.resume() pause or continue the battle (nobody moves while paused)
   mms.newGame()              back to setup with new armies
   mms.undo()                 take back Red's last move and Blue's answer
-  mms.setCode('A12', code, { run: true }) (async)   put TypeScript in a cell; run:false returns immediately (it still runs in the background)
-  mms.runCell('A12') (async) re-run a cell, wait. Success { ok: true, address, uid, output, text }; failure { ok: false, error, address, uid, output }.
+  mms.setCode('A12', code, { run: true, tab: 'board' }) (async)   put TypeScript in a cell (a path like '/lab/J24' works too); run:false returns immediately (it still runs in the background)
+  mms.runCell('A12' | '/lab/J24') (async) re-run a cell, wait. Success { ok: true, address, uid, output, text }; failure { ok: false, error, address, uid, output }.
                              error is a plain string: "line 6: '}' expected." for the first syntax error, just the message for a runtime error, never an object or code.
   mms.clearCell('A12')       empty a cell
   mms.setMode('run'|'view')  cells show output (run) or their code (view)
@@ -120,10 +130,10 @@ interface ToolDef {
 const str = (description: string): Json => ({ type: 'string', description });
 const obj = (properties: Json, required: string[] = []): Json => ({ type: 'object', properties, required, additionalProperties: false });
 const ADDR =
-  'A cell address like A12 (code cells live below the board, row 12 or lower), a board square like B7, or a cell uid like c-1a2b3c4d (the uid follows the content when cells move).';
-const UID = /^c-[0-9a-f]{8}$/;
+  'A cell address like A12 (in the board tab unless `tab` says otherwise; code cells live below the board, row 12 or lower), a path starting with the tab like /lab/J24, or a cell identity like @c-1a2b3c4d (it follows the content when cells move and works from every tab).';
+const TAB_PROP = { type: 'string', description: "Which tab a plain address like J24 belongs to: 'board' (default) or 'lab'. Not needed when the address is a path like /lab/J24 or an identity." };
 
-export function installAiSurface({ sheet, view, hud, editor }: AiSurfaceDeps): void {
+export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps): void {
   // ------------------------------------------------------------ helpers
 
   const game = () => view.game;
@@ -169,6 +179,7 @@ export function installAiSurface({ sheet, view, hud, editor }: AiSurfaceDeps): v
 
   function stateData(): Json {
     const g = game();
+    const openEditor = workspace.list().find((t) => t.editor.isOpen);
     return {
       phase: g.phase,
       turn: g.turn,
@@ -180,32 +191,44 @@ export function installAiSurface({ sheet, view, hud, editor }: AiSurfaceDeps): v
       paused: view.isPaused(),
       redPieces: g.pieces('red').length,
       bluePieces: g.pieces('blue').length,
-      editorOpenOn: editor.isOpen ? editor.address : null,
-      editorChars: editor.isOpen ? editor.valueLength : null,
+      tab: workspace.current,
+      editorOpenOn: openEditor ? (openEditor.id === 'board' ? openEditor.editor.address : workspace.pathOf(openEditor.id, openEditor.editor.address!)) : null,
+      editorChars: openEditor ? openEditor.editor.valueLength : null,
       sheetMode: sheet.mode,
     };
   }
 
-  function validCodeAddress(raw: unknown): { address: string } | { error: string } {
-    if (typeof raw !== 'string' || !raw.trim()) return { error: 'address must be a string like "A12" or a cell uid like "c-1a2b3c4d"' };
-    const text = raw.trim();
-    if (UID.test(text.toLowerCase())) {
-      const found = sheet.addressOfUid(text.toLowerCase());
-      return found ? { address: found } : { error: `No cell has uid "${text}" any more (its code was cleared or replaced).` };
-    }
-    const address = sheet.resolve(text.toUpperCase());
-    if (!address) return { error: `"${raw}" is not a cell address (try something like A12; columns A-Z, rows 1-${sheet.rowCount})` };
-    return { address };
+  /** The cell a request names: a plain address (in `tabId`, 'board' when not given), an absolute path like /lab/J24 or an identity. */
+  interface Target {
+    address: string;
+    tab: WorkspaceTab;
+    sheet: Sheet;
+    editor: CellEditor;
+    path: string;
   }
 
-  function cellData(d: SheetCellData): Json {
+  function validCodeAddress(raw: unknown, tabId?: unknown): Target | { error: string } {
+    if (typeof raw !== 'string' || !raw.trim()) return { error: 'address must be a string like "A12", a path like "/lab/J24" or a cell identity like "@c-1a2b3c4d"' };
+    const from = typeof tabId === 'string' && tabId.trim() ? tabId.trim().toLowerCase() : 'board';
+    const found = workspace.resolve(raw, from);
+    if ('error' in found) return { error: found.error };
+    const path = workspace.pathOf(found.tab.id, found.address);
+    if (found.tile) return { error: `"${raw}" names a tile inside a block. Use the block's own path, ${path}.` };
+    return { address: found.address, tab: found.tab, sheet: found.tab.sheet, editor: found.tab.editor, path };
+  }
+
+  const boardTab = (): WorkspaceTab => workspace.get('board')!;
+
+  function cellData(d: SheetCellData, tab: WorkspaceTab = boardTab()): Json {
     return {
       uid: d.uid || null,
+      tab: tab.id,
       address: d.address,
+      path: workspace.pathOf(tab.id, d.address),
       code: d.code,
       output: d.output.join('\n'),
       error: d.error,
-      mode: sheet.mode,
+      mode: tab.sheet.mode,
     };
   }
 
@@ -259,6 +282,25 @@ export function installAiSurface({ sheet, view, hud, editor }: AiSurfaceDeps): v
       }
       if (!cells.length) list.textContent = 'No code cells yet.';
     }
+    // Other tabs (the Lab, ...): the same list, each cell named by its absolute path.
+    for (const tab of workspace.list()) {
+      if (tab.id === 'board') continue;
+      setText(`cells-title-${tab.id}`, 'h3', `Code cells in the ${tab.id} tab (${tab.title}; cell paths start with /${tab.id}/, mode: ${tab.sheet.mode === 'run' ? 'showing output' : 'showing code'})`);
+      const tabList = part(`cells-${tab.id}`, 'ul');
+      const tabCells = tab.sheet.codeCells();
+      const tabSig = JSON.stringify(tabCells.map((d) => [d.address, d.code, d.output, d.error]));
+      if (tabList.dataset.sig !== tabSig) {
+        tabList.dataset.sig = tabSig;
+        tabList.textContent = '';
+        for (const d of tabCells) {
+          const li = document.createElement('li');
+          const head = d.code.split('\n').slice(0, 3).join(' / ').slice(0, 200);
+          li.textContent = `${workspace.pathOf(tab.id, d.address)}: code: ${head}${d.code.split('\n').length > 3 ? ' ...' : ''} | output: ${d.output.join(' / ') || '(none)'} | error: ${d.error ?? 'none'}`;
+          tabList.appendChild(li);
+        }
+        if (!tabCells.length) tabList.textContent = 'No code cells yet.';
+      }
+    }
     setText('footer', 'p', 'AI helpers: window.mms.help() describes every method. Cell code is TypeScript.');
   }
 
@@ -281,9 +323,11 @@ export function installAiSurface({ sheet, view, hud, editor }: AiSurfaceDeps): v
     prevOnChange?.();
     schedule();
   };
-  sheet.onAfterRun(schedule);
-  sheet.onCodeChanged(schedule);
-  sheet.onModeChange(schedule);
+  for (const tab of workspace.list()) {
+    tab.sheet.onAfterRun(schedule);
+    tab.sheet.onCodeChanged(schedule);
+    tab.sheet.onModeChange(schedule);
+  }
   hud.onSay(schedule);
 
   document.body.appendChild(region);
@@ -296,18 +340,18 @@ export function installAiSurface({ sheet, view, hud, editor }: AiSurfaceDeps): v
 
   // ----------------------------------------------------- run / settle
 
-  const idle = (): boolean => {
-    const s = sheet as unknown as { running?: boolean; runPending?: boolean; runTimer?: number | null };
+  const idle = (target: Sheet): boolean => {
+    const s = target as unknown as { running?: boolean; runPending?: boolean; runTimer?: number | null };
     return !s.running && !s.runPending && !s.runTimer;
   };
 
-  async function settle(): Promise<boolean> {
+  async function settle(target: Sheet = sheet): Promise<boolean> {
     const deadline = Date.now() + WAIT_MS;
     while (Date.now() < deadline) {
       await sleep(30);
-      if (idle()) {
+      if (idle(target)) {
         await sleep(30);
-        if (idle()) return true;
+        if (idle(target)) return true;
       }
     }
     return false;
@@ -323,24 +367,26 @@ export function installAiSurface({ sheet, view, hud, editor }: AiSurfaceDeps): v
   // ------------------------------------------------------------- API
 
   let listeningUntil = 0;
-  editor.aiListening = () => performance.now() < listeningUntil;
+  for (const tab of workspace.list()) tab.editor.aiListening = () => performance.now() < listeningUntil;
 
   const collectRequests = (includeAnswered: boolean) => {
-    const found: Array<{ address: string; uid: string | null; line: number; text: string; answered: boolean; unsaved: boolean }> = [];
-    const addresses = new Set(sheet.codeCells().map((d) => d.address));
-    if (editor.isOpen && editor.address) addresses.add(editor.address);
-    for (const address of addresses) {
-      const d = sheet.dataAt(address);
-      if (!d) continue;
-      const live = editor.isOpen && editor.address === address;
-      const lines = (live ? editor.valueText ?? '' : d.code).split('\n');
-      lines.forEach((_l, i) => {
-        const text = requestAt(lines, i);
-        if (!text) return;
-        const answered = isAnswered(lines, i);
-        if (answered && !includeAnswered) return;
-        found.push({ address, uid: d.uid || null, line: i + 1, text, answered, unsaved: live });
-      });
+    const found: Array<{ tab: string; address: string; path: string; uid: string | null; line: number; text: string; answered: boolean; unsaved: boolean }> = [];
+    for (const tab of workspace.list()) {
+      const addresses = new Set(tab.sheet.codeCells().map((d) => d.address));
+      if (tab.editor.isOpen && tab.editor.address) addresses.add(tab.editor.address);
+      for (const address of addresses) {
+        const d = tab.sheet.dataAt(address);
+        if (!d) continue;
+        const live = tab.editor.isOpen && tab.editor.address === address;
+        const lines = (live ? tab.editor.valueText ?? '' : d.code).split('\n');
+        lines.forEach((_l, i) => {
+          const text = requestAt(lines, i);
+          if (!text) return;
+          const answered = isAnswered(lines, i);
+          if (answered && !includeAnswered) return;
+          found.push({ tab: tab.id, address, path: workspace.pathOf(tab.id, address), uid: d.uid || null, line: i + 1, text, answered, unsaved: live });
+        });
+      }
     }
     return found;
   };
@@ -420,79 +466,104 @@ export function installAiSurface({ sheet, view, hud, editor }: AiSurfaceDeps): v
       return ok({ state: stateData() });
     },
 
-    cells: (): Result => ok({ cells: sheet.codeCells().map(cellData) }),
-
-    resolve(addressOrUid: unknown): Result {
-      const a = validCodeAddress(addressOrUid);
-      if ('error' in a) return fail(a.error);
-      const d = sheet.dataAt(a.address)!;
-      return ok({ address: a.address, uid: d.uid || null, hasCode: d.code.trim() !== '' });
+    /** Code cells of the board (default), of one tab, or of every tab with tab 'all'. Each cell carries its tab and absolute path. */
+    cells(tab?: unknown): Result {
+      const want = typeof tab === 'string' && tab.trim() ? tab.trim().toLowerCase() : 'board';
+      const chosen = want === 'all' ? workspace.list() : [workspace.get(want)].filter((t): t is WorkspaceTab => !!t);
+      if (!chosen.length) return fail(`There is no tab "${want}". Tabs: ${workspace.list().map((t) => t.id).join(', ')} (or 'all').`);
+      return ok({ cells: chosen.flatMap((t) => t.sheet.codeCells().map((d) => cellData(d, t))) });
     },
 
-    getCell(address: unknown): Result {
-      const a = validCodeAddress(address);
+    /** The tabs that hold a sheet, which one the player is looking at, and how to write a cell path. */
+    tabs: (): Result =>
+      ok({
+        current: workspace.current,
+        tabs: workspace.list().map((t) => ({
+          id: t.id,
+          title: t.title,
+          path: `/${t.id}`,
+          mode: t.sheet.mode,
+          codeCells: t.sheet.codeCells().length,
+          rows: t.sheet.rowCount,
+          columns: t.sheet.colCount,
+        })),
+        paths: "A cell is named /tab/ADDRESS, e.g. /lab/J24, or /tab/ADDRESS/x,y for tile x,y of the grid inside that cell. @c-1a2b3c4d names a cell by its identity from any tab. A plain address like J24 means the board tab unless a `tab` argument says otherwise.",
+      }),
+
+    resolve(addressOrUid: unknown, tab?: unknown): Result {
+      const a = validCodeAddress(addressOrUid, tab);
       if ('error' in a) return fail(a.error);
-      const d = sheet.dataAt(a.address)!;
-      const isBoard = sheet.isBoardAddress(a.address);
+      const d = a.sheet.dataAt(a.address)!;
+      return ok({ tab: a.tab.id, address: a.address, path: a.path, uid: d.uid || null, hasCode: d.code.trim() !== '' });
+    },
+
+    getCell(address: unknown, tab?: unknown): Result {
+      const a = validCodeAddress(address, tab);
+      if ('error' in a) return fail(a.error);
+      const d = a.sheet.dataAt(a.address)!;
+      const isBoard = a.sheet.isBoardAddress(a.address);
       return ok({
-        ...cellData(d),
-        text: sheet.displayText(d),
+        ...cellData(d, a.tab),
+        text: a.sheet.displayText(d),
         isBoard,
         piece: isBoard ? view.pieceInfoAt(a.address) : null,
         token: isBoard ? tokenFor(d.row, d.col) : null,
       });
     },
 
-    async setCode(address: unknown, code: unknown, options?: { run?: boolean }): Promise<Result> {
-      const a = validCodeAddress(address);
+    async setCode(address: unknown, code: unknown, options?: { run?: boolean; tab?: string }): Promise<Result> {
+      const a = validCodeAddress(address, options?.tab);
       if ('error' in a) return fail(a.error);
       if (typeof code !== 'string') return fail('code must be a string of TypeScript');
       if (code.length > MAX_CODE_CHARS) return fail(`code is too long (max ${MAX_CODE_CHARS} characters)`);
-      if (sheet.isBoardAddress(a.address)) return fail(`${a.address} is a board square. Put code in row 12 or lower, e.g. A12.`);
-      modelFor(a.address, code);
-      sheet.setCode(a.address, code);
+      if (a.sheet.isBoardAddress(a.address)) return fail(`${a.address} is a board square. Put code in row 12 or lower, e.g. A12.`);
+      modelFor(a.address, code, a.sheet.id);
+      a.sheet.setCode(a.address, code);
       if (!code.trim()) {
         flush();
-        return ok({ address: a.address, cleared: true });
+        return ok({ tab: a.tab.id, address: a.address, path: a.path, cleared: true });
       }
       if (options?.run === false) {
         flush();
-        return ok({ address: a.address, uid: sheet.dataAt(a.address)!.uid, started: true });
+        return ok({ tab: a.tab.id, address: a.address, path: a.path, uid: a.sheet.dataAt(a.address)!.uid, started: true });
       }
-      return api.runCell(a.address);
+      return api.runCell(a.path);
     },
 
-    async runCell(address: unknown): Promise<Result> {
-      const a = validCodeAddress(address);
+    async runCell(address: unknown, tab?: unknown): Promise<Result> {
+      const a = validCodeAddress(address, tab);
       if ('error' in a) return fail(a.error);
-      const d = sheet.dataAt(a.address)!;
-      if (!d.code.trim()) return fail(`${a.address} has no code to run. Use setCode first.`);
-      sheet.markDirty([a.address]);
-      sheet.requestRun();
-      const finished = await settle();
+      const d = a.sheet.dataAt(a.address)!;
+      if (!d.code.trim()) return fail(`${a.path} has no code to run. Use setCode first.`);
+      a.sheet.markDirty([a.address]);
+      a.sheet.requestRun();
+      const finished = await settle(a.sheet);
       flush();
       const output = d.output.join('\n');
-      if (!finished) return fail('Timed out waiting for the cell to finish (is it waiting on sleep() or looping?)', { address: a.address, uid: d.uid, output });
-      if (d.error) return fail(d.error, { address: a.address, uid: d.uid, output });
-      return ok({ address: a.address, uid: d.uid, output, text: sheet.displayText(d) });
+      const where = { tab: a.tab.id, address: a.address, path: a.path, uid: d.uid };
+      if (!finished) return fail('Timed out waiting for the cell to finish (is it waiting on sleep() or looping?)', { ...where, output });
+      if (d.error) return fail(d.error, { ...where, output });
+      return ok({ ...where, output, text: a.sheet.displayText(d) });
     },
 
-    async writeCodeLive(address: unknown, code: unknown): Promise<Result> {
-      const a = validCodeAddress(address);
+    async writeCodeLive(address: unknown, code: unknown, tab?: unknown): Promise<Result> {
+      const a = validCodeAddress(address, tab);
       if ('error' in a) return fail(a.error);
       if (typeof code !== 'string' || !code.trim()) return fail('code must be a non-empty string of TypeScript');
       if (code.length > MAX_CODE_CHARS) return fail(`code is too long (max ${MAX_CODE_CHARS} characters)`);
-      if (sheet.isBoardAddress(a.address)) return fail(`${a.address} is a board square. Put code in row 12 or lower, e.g. A12.`);
-      const geo = sheet.geometryOf(a.address);
-      if (!geo) return fail(`${a.address} is not on the sheet`);
-      const target = sheet.dataAt(a.address)!;
-      sheet.reveal(target.row, target.col, false);
-      editor.open(a.address);
-      hud.say(`The assistant is writing code in ${a.address} ✍`, 'info');
-      const finished = await editor.typeCode(code);
-      if (!finished) return fail(`The editor on ${a.address} was closed before the code was typed.`, { address: a.address });
-      hud.say(`Code for ${a.address} is ready. Read it, then press Esc (or Restart & close) to keep it and run it.`, 'good');
-      return ok({ address: a.address, uid: sheet.dataAt(a.address)!.uid || null, typed: code.length, editorOpen: true, next: 'Waiting for the player to close the editor. Poll get_state until editorOpenOn is null, then get_cell to read the output.' });
+      if (a.sheet.isBoardAddress(a.address)) return fail(`${a.address} is a board square. Put code in row 12 or lower, e.g. A12.`);
+      const geo = a.sheet.geometryOf(a.address);
+      if (!geo) return fail(`${a.path} is not on the sheet`);
+      const target = a.sheet.dataAt(a.address)!;
+      // The player must see it happen, so bring that tab to the front first.
+      a.tab.select();
+      a.sheet.reveal(target.row, target.col, false);
+      a.editor.open(a.address);
+      hud.say(`The assistant is writing code in ${a.path} ✍`, 'info');
+      const finished = await a.editor.typeCode(code);
+      if (!finished) return fail(`The editor on ${a.path} was closed before the code was typed.`, { address: a.address, path: a.path });
+      hud.say(`Code for ${a.path} is ready. Read it, then press Esc (or Restart & close) to keep it and run it.`, 'good');
+      return ok({ tab: a.tab.id, address: a.address, path: a.path, uid: a.sheet.dataAt(a.address)!.uid || null, typed: code.length, editorOpen: true, next: 'Waiting for the player to close the editor. Poll get_state until editorOpenOn is null, then get_cell to read the output.' });
     },
 
     requests(includeAnswered = false): Result {
@@ -512,37 +583,37 @@ export function installAiSurface({ sheet, view, hud, editor }: AiSurfaceDeps): v
       }
     },
 
-    replyToRequest(address: unknown, line: unknown, reply: unknown): Result {
-      const a = validCodeAddress(address);
+    replyToRequest(address: unknown, line: unknown, reply: unknown, tab?: unknown): Result {
+      const a = validCodeAddress(address, tab);
       if ('error' in a) return fail(a.error);
       if (typeof line !== 'number' || !Number.isInteger(line) || line < 1) return fail('line must be a positive whole number (use the line from get_requests)');
       if (typeof reply !== 'string' || !reply.trim()) return fail('reply must be a non-empty string');
       if (reply.length > 600) return fail('reply is too long (max 600 characters). Keep it short and friendly.');
-      const live = editor.isOpen && editor.address === a.address;
-      const code = live ? editor.valueText! : sheet.dataAt(a.address)!.code;
+      const live = a.editor.isOpen && a.editor.address === a.address;
+      const code = live ? a.editor.valueText! : a.sheet.dataAt(a.address)!.code;
       const lines = code.split('\n');
-      if (!requestAt(lines, line - 1)) return fail(`Line ${line} of ${a.address} is not an AI request any more (the text may have moved). Call get_requests again.`, { address: a.address });
-      if (isAnswered(lines, line - 1)) return fail(`The request on line ${line} of ${a.address} already has an answer.`, { address: a.address });
+      if (!requestAt(lines, line - 1)) return fail(`Line ${line} of ${a.path} is not an AI request any more (the text may have moved). Call get_requests again.`, { address: a.address, path: a.path });
+      if (isAnswered(lines, line - 1)) return fail(`The request on line ${line} of ${a.path} already has an answer.`, { address: a.address, path: a.path });
       const block = replyBlock(reply.trim());
       if (live) {
-        if (!editor.insertAfterLine(line, block)) return fail('The editor closed while answering. Call get_requests again.');
+        if (!a.editor.insertAfterLine(line, block)) return fail('The editor closed while answering. Call get_requests again.');
       } else {
         lines.splice(line, 0, ...block.split('\n'));
-        sheet.setCode(a.address, lines.join('\n'));
+        a.sheet.setCode(a.address, lines.join('\n'));
         flush();
       }
-      hud.say(`The assistant answered in ${a.address} ✍`, 'info');
-      return ok({ address: a.address, line, answeredInEditor: live });
+      hud.say(`The assistant answered in ${a.path} ✍`, 'info');
+      return ok({ tab: a.tab.id, address: a.address, path: a.path, line, answeredInEditor: live });
     },
 
-    clearCell(address: unknown): Result {
-      const a = validCodeAddress(address);
+    clearCell(address: unknown, tab?: unknown): Result {
+      const a = validCodeAddress(address, tab);
       if ('error' in a) return fail(a.error);
-      if (sheet.isBoardAddress(a.address)) return fail(`${a.address} is a board square, not a code cell.`);
-      modelFor(a.address, '');
-      sheet.setCode(a.address, '');
+      if (a.sheet.isBoardAddress(a.address)) return fail(`${a.address} is a board square, not a code cell.`);
+      modelFor(a.address, '', a.sheet.id);
+      a.sheet.setCode(a.address, '');
       flush();
-      return ok({ address: a.address });
+      return ok({ tab: a.tab.id, address: a.address, path: a.path });
     },
 
     setMode(mode: unknown): Result {
@@ -678,45 +749,53 @@ export function installAiSurface({ sheet, view, hud, editor }: AiSurfaceDeps): v
       run: () => api.newGame(),
     },
     {
-      name: 'list_cells',
+      name: 'list_tabs',
       description:
-        'List every spreadsheet cell that contains TypeScript code, with its address, code, printed output and error message (if any). Use this to see what the child has written and why it may be failing.',
+        "List the tabs that hold a sheet of code cells (the game board's, and the Lab's), which one the player is looking at, and how cell paths are written (/lab/J24). Call this once to learn where cells can live.",
       inputSchema: obj({}),
       readOnly: true,
-      run: () => api.cells(),
+      run: () => api.tabs(),
+    },
+    {
+      name: 'list_cells',
+      description:
+        "List the spreadsheet cells that contain TypeScript code, with tab, address, absolute path, uid, code, printed output and error message (if any). Use this to see what the child has written and why it may be failing. By default only the board tab is listed; pass tab 'lab' for the Lab's demos or 'all' for every tab.",
+      inputSchema: obj({ tab: { type: 'string', description: "'board' (default), 'lab' or 'all'" } }),
+      readOnly: true,
+      run: (a) => api.cells(a.tab),
     },
     {
       name: 'get_cell',
       description: `Read one cell: its code, output, error and shown text. ${ADDR}`,
-      inputSchema: obj({ address: str(ADDR) }, ['address']),
+      inputSchema: obj({ address: str(ADDR), tab: TAB_PROP }, ['address']),
       readOnly: true,
-      run: (a) => api.getCell(a.address),
+      run: (a) => api.getCell(a.address, a.tab),
     },
     {
       name: 'resolve_cell',
-      description: `Find where a cell is now. Pass an address or a uid (c-xxxxxxxx); returns { address, uid, hasCode }. A uid stays with its code when cells move, swap or rows are inserted, so store uids, not addresses. ${ADDR}`,
-      inputSchema: obj({ address_or_uid: str(ADDR) }, ['address_or_uid']),
+      description: `Find where a cell is now. Pass an address, a path or a uid (c-xxxxxxxx); returns { tab, address, path, uid, hasCode }. A uid stays with its code when cells move, swap or rows are inserted, so store uids, not addresses. ${ADDR}`,
+      inputSchema: obj({ address_or_uid: str(ADDR), tab: TAB_PROP }, ['address_or_uid']),
       readOnly: true,
-      run: (a) => api.resolve(a.address_or_uid),
+      run: (a) => api.resolve(a.address_or_uid, a.tab),
     },
     {
       name: 'set_cell_code',
       description:
         "Write TypeScript into a cell (replacing what was there) and run it. Use row 12 or lower, e.g. A12; board squares A1:J10 cannot hold code. Cell code can use print('text'), color('#ecdcd8'), game.pieces('red'), at('B7'), range('A1:J10'), game.move('B7','B6'); call mms.help() or read llms.txt for the full list. Returns the printed output or the error message so you can explain it in plain words. Empty code clears the cell.",
       inputSchema: obj(
-        { address: str(ADDR), code: str('TypeScript source for the cell'), run: { type: 'boolean', description: 'Wait for the result (default true).' } },
+        { address: str(ADDR), tab: TAB_PROP, code: str('TypeScript source for the cell'), run: { type: 'boolean', description: 'Wait for the result (default true).' } },
         ['address', 'code'],
       ),
       readOnly: false,
-      run: (a) => api.setCode(a.address, a.code, { run: a.run !== false }),
+      run: (a) => api.setCode(a.address, a.code, { run: a.run !== false, tab: typeof a.tab === 'string' ? a.tab : undefined }),
     },
     {
       name: 'write_code_live',
       description:
         "Show the player how code is written: opens the floating code editor on a cell and types your TypeScript into it so the player watches it appear. Nothing is saved or run yet; the player reads it and closes the editor (Esc or Restart & close), which keeps and runs the code. Prefer this over set_cell_code when the player is watching or learning. Afterwards poll get_state until editorOpenOn is null, then get_cell for the output.",
-      inputSchema: obj({ address: str(ADDR), code: str('TypeScript source to type into the editor') }, ['address', 'code']),
+      inputSchema: obj({ address: str(ADDR), tab: TAB_PROP, code: str('TypeScript source to type into the editor') }, ['address', 'code']),
       readOnly: false,
-      run: (a) => api.writeCodeLive(a.address, a.code),
+      run: (a) => api.writeCodeLive(a.address, a.code, a.tab),
     },
     {
       name: 'get_requests',
@@ -738,16 +817,16 @@ export function installAiSurface({ sheet, view, hud, editor }: AiSurfaceDeps): v
       name: 'reply_to_request',
       description:
         "Answer a request from get_requests: writes your reply as a short comment (`// ↳ AI: ...`) right below the player's `// AI:` line. If the editor is open on that cell the reply appears there while the player watches. Use the line number from get_requests. Keep it short and friendly; to change code, use write_code_live.",
-      inputSchema: obj({ address: str(ADDR), line: { type: 'number', description: 'Line number of the request, from get_requests.' }, reply: str('Your answer, a few friendly sentences at most.') }, ['address', 'line', 'reply']),
+      inputSchema: obj({ address: str(ADDR), tab: TAB_PROP, line: { type: 'number', description: 'Line number of the request, from get_requests.' }, reply: str('Your answer, a few friendly sentences at most.') }, ['address', 'line', 'reply']),
       readOnly: false,
-      run: (a) => api.replyToRequest(a.address, a.line, a.reply),
+      run: (a) => api.replyToRequest(a.address, a.line, a.reply, a.tab),
     },
     {
       name: 'run_cell',
       description: 'Run a code cell again and return its printed output, or its error message if the code is wrong.',
-      inputSchema: obj({ address: str(ADDR) }, ['address']),
+      inputSchema: obj({ address: str(ADDR), tab: TAB_PROP }, ['address']),
       readOnly: false,
-      run: (a) => api.runCell(a.address),
+      run: (a) => api.runCell(a.address, a.tab),
     },
     {
       name: 'set_mode',
