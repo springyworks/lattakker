@@ -124,6 +124,37 @@ export const TOOL_DECLS: ToolDecl[] = [
   },
 ];
 
+/** The little database, for the local librarian. */
+export const DB_DECLS: ToolDecl[] = [
+  { name: 'db_put', description: 'Store a small JSON record in a named collection (lowercase name). With an id it replaces that record.', parameters: { type: 'object', properties: { collection: { type: 'string' }, id: { type: 'string' }, data_json: { type: 'string', description: 'The record as JSON text for an object.' } }, required: ['collection', 'data_json'] } },
+  { name: 'db_get', description: 'Read one record.', parameters: { type: 'object', properties: { collection: { type: 'string' }, id: { type: 'string' } }, required: ['collection', 'id'] } },
+  { name: 'db_query', description: 'Find records in a collection: fields equal to where_json and/or JSON containing some text.', parameters: { type: 'object', properties: { collection: { type: 'string' }, where_json: { type: 'string' }, contains: { type: 'string' } }, required: ['collection'] } },
+  { name: 'db_delete', description: 'Delete one record.', parameters: { type: 'object', properties: { collection: { type: 'string' }, id: { type: 'string' } }, required: ['collection', 'id'] } },
+  { name: 'db_collections', description: 'The collections, how many records each holds, and an example.', parameters: { type: 'object', properties: {} } },
+];
+
+/** What the local librarian may use to store and tidy. */
+export const LIBRARIAN_TOOLS = new Set(['recall', 'remember', 'tidy_memory', 'read_cell', 'list_cells', ...DB_DECLS.map((t) => t.name)]);
+
+/** Offered to the main helper when a second, local model is there. */
+export const LOCAL_DECLS: ToolDecl[] = [
+  {
+    name: 'consult_local',
+    description: 'Ask the small local model on this computer (the second brain, which keeps the memory and the database) a question: a lookup, a summary, a draft, a second opinion. It is private and free but not as clever as you.',
+    parameters: { type: 'object', properties: { question: { type: 'string' } }, required: ['question'] },
+  },
+  {
+    name: 'teach_local',
+    description: 'Hand the local model knowledge to keep: facts, a lesson, a list. It decides whether it becomes notes or database records, and avoids duplicates. Use it so lasting knowledge is stored on this computer instead of staying in this chat. Tell it what to keep, in your own words.',
+    parameters: { type: 'object', properties: { material: { type: 'string' }, how: { type: 'string', description: 'Optional wishes, e.g. "as a table of words learned".' } }, required: ['material'] },
+  },
+  {
+    name: 'manage_local',
+    description: 'Database administration done by the local model: "merge duplicate notes", "list the collections", "forget everything about X", "how much is stored?".',
+    parameters: { type: 'object', properties: { task: { type: 'string' } }, required: ['task'] },
+  },
+];
+
 function limit(text: string): string {
   return text.length > MAX_RESULT ? `${text.slice(0, MAX_RESULT)}\n… (cut: ${text.length - MAX_RESULT} more characters)` : text;
 }
@@ -152,7 +183,7 @@ async function readCell(host: ToolHost, path: string): Promise<unknown> {
 }
 
 /** Runs one tool the model asked for. The answer is always text; a problem is reported in it, never thrown at the model. */
-export async function runTool(host: ToolHost, name: string, args: Args): Promise<string> {
+export async function runTool(host: ToolHost, name: string, args: Args, client: string = CLIENT): Promise<string> {
   try {
     switch (name) {
       case 'look_around': {
@@ -187,8 +218,23 @@ export async function runTool(host: ToolHost, name: string, args: Args): Promise
           tool = { duplicates: 'find_duplicates', update: 'update_note', forget: 'forget', stats: 'stats' }[action] ?? '';
           if (!tool) return asText({ error: 'action must be duplicates, update, forget or stats' });
         }
-        const answer = await router.request(CLIENT, 'memory', 'tools/call', { name: tool, arguments: a });
+        const answer = await router.request(client, 'memory', 'tools/call', { name: tool, arguments: a });
         const r = inner(answer);
+        return limit(asText(r.ok ? r.value : { error: r.value }));
+      }
+      case 'db_put':
+      case 'db_get':
+      case 'db_query':
+      case 'db_delete':
+      case 'db_collections': {
+        const r = inner(await router.request(client, 'memory', 'tools/call', { name, arguments: args }));
+        return limit(asText(r.ok ? r.value : { error: r.value }));
+      }
+      case 'consult_local':
+      case 'teach_local':
+      case 'manage_local': {
+        const tool = { consult_local: 'consult', teach_local: 'teach', manage_local: 'manage' }[name]!;
+        const r = inner(await router.request(client, 'local-ai', 'tools/call', { name: tool, arguments: args }));
         return limit(asText(r.ok ? r.value : { error: r.value }));
       }
       case 'mcp_call': {

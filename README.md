@@ -1438,6 +1438,26 @@ puts a question to the built-in helper, but only after a person ticks **Let an
 outside AI ask the helper** in ⚙ (off by default, because it spends your own key
 or computer). The question appears in the chat marked as coming from an outside AI.
 
+**The second brain.** When the main helper is Gemini and a model on your own
+computer is also set up (⚙, "Second brain"; Ollama or LM Studio) and answering, the
+chat header says "🧠 second brain: …" and Gemini gets three more tools:
+`consult_local` (ask the local model something: it can look in the memory and the
+database first), `teach_local` (hand it knowledge: it decides whether that
+becomes notes or **database records**, and avoids duplicates) and `manage_local`
+(database administration: merge duplicates, list collections, forget things). The
+local model is the **librarian**: it has the memory tools and a small database
+(`db_put`, `db_get`, `db_query`, `db_delete`, `db_collections`: named collections
+of JSON records, kept in IndexedDB next to the notes, included in the backup file).
+Everything goes over the router as the server `local-ai` (you can watch it in the
+MCP monitor); an outside AI may use `local-ai` and `memory` too, but only when
+**Let an outside AI ask the helper** is ticked. If the local model is not there, the
+tools are simply not offered. The chat tells you what the local model is doing
+("filing new knowledge… answered after 52 s (3 database steps)").
+A big model that has been idle must be loaded into memory first, which can take
+**minutes** (a 22 GB model did here); the chat says so, and the page waits up to
+15 minutes instead of giving up. For a snappier librarian choose a small model
+(a 3 to 7 billion parameter one).
+
 *A model that runs inside the page itself* (WebGPU) is not built in: it needs a
 download of hundreds of megabytes and a browser with WebGPU. The helper's providers
 are one small interface (`providers.ts`), so such a model can be added there later and

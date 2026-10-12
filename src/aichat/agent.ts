@@ -1,5 +1,6 @@
 import { friendly, makeProvider, type ChatMsg, type ToolCall } from './providers';
-import { runTool, TOOL_DECLS, type AiContext, type ToolHost } from './tools';
+import { localAssistantReady, probeLocal } from './localAi';
+import { LOCAL_DECLS, runTool, TOOL_DECLS, type AiContext, type ToolHost } from './tools';
 import { workspace } from '../workspace';
 import { describeModel } from './modelInfo';
 import { memoryInfo } from './memory';
@@ -20,6 +21,9 @@ How to answer:
 - Cells are called by path: A12 (in this tab), /lab/J24 (in another tab), A16/3,4 (a tile inside a grid).
 - Never ask for, or repeat, personal information (names, addresses, school, passwords, keys). If someone shares some, say it is better to keep that private.
 - If you are not sure, say so, and suggest a small experiment they can try in a cell.`;
+
+const LOCAL_PROMPT = `
+- A second, smaller model lives on this computer and keeps the memory and the database (consult_local, teach_local, manage_local). Use consult_local for cheap lookups, summaries and drafts, and teach_local to hand it lasting knowledge to store, so it is kept on this computer and not only in this chat. It is less clever than you: give it clear, self-contained text.`;
 
 export type Entry =
   | { kind: 'user'; text: string; where: string }
@@ -81,6 +85,11 @@ export class Conversation {
     this.abort?.abort();
   }
 
+  /** The tools' view of the app, for the local librarian (it works for the person who asked last). */
+  toolHost(): ToolHost {
+    return { ...this.host, context: () => this.active, suggest: () => {} };
+  }
+
   /** A note in the conversation that the model never sees (for example "the answer was written into A12"). */
   note(text: string): void {
     this.entries.push({ kind: 'note', text });
@@ -111,6 +120,9 @@ export class Conversation {
     if (this.busy) return { ok: false, text: 'The helper is still busy with the last question.' };
 
     this.active = ctx;
+    // Is the second brain (a local model) there? Looked up at most every 15 s.
+    await probeLocal();
+    const second = localAssistantReady();
     const host: ToolHost = {
       ...this.host,
       context: () => this.active,
@@ -139,7 +151,7 @@ export class Conversation {
       for (let round = 0; round <= MAX_ROUNDS; round++) {
         // On the last round the model gets no tools, so it has to answer with what it has learned.
         const sentAt = performance.now();
-        const reply = await provider.complete(`${SYSTEM_PROMPT}\n(Your memory holds ${memoryInfo().count} notes.)`, this.messages, round < MAX_ROUNDS ? TOOL_DECLS : [], this.abort.signal);
+        const reply = await provider.complete(`${SYSTEM_PROMPT}${second ? LOCAL_PROMPT : ''}\n(Your memory holds ${memoryInfo().count} notes.)`, this.messages, round < MAX_ROUNDS ? (second ? [...TOOL_DECLS, ...LOCAL_DECLS] : TOOL_DECLS) : [], this.abort.signal);
         const took = ((performance.now() - sentAt) / 1000).toFixed(1);
         this.log(reply.toolCalls.length ? `Answer after ${took} s: it wants to use ${reply.toolCalls.map((c) => c.name).join(', ')}.` : `Answer after ${took} s.`);
         this.messages.push({ role: 'assistant', text: reply.text, toolCalls: reply.toolCalls, raw: reply.raw });

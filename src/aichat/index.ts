@@ -5,10 +5,11 @@ import { parseCellUri } from '../editor/monaco';
 import { workspace } from '../workspace';
 import { Conversation } from './agent';
 import { aiBridge, type AskOptions } from './bridge';
-import { loadSettings } from './config';
+import { loadSettings, onSettingsChange } from './config';
 import { HelperServer } from './helperServer';
 import { MemoryServer } from './memoryServer';
 import { loadMemory } from './memory';
+import { LocalAiServer, probeLocal } from './localAi';
 import { router } from '../mcp/router';
 import { AiChatUi } from './ui';
 import { startWatcher } from './watcher';
@@ -81,7 +82,11 @@ export function installAiChat(deps: { surface: Surface; strip: TabStrip; say: (t
   // The memory and the helper are MCP servers too: outside AIs reach them through the page's router (mms.mcp).
   router.register(new MemoryServer());
   router.register(new HelperServer(convo, contextNow));
+  router.register(new LocalAiServer(() => convo.toolHost(), (text) => convo.note(text), 'ai-chat'));
   void loadMemory();
+  // Is there a local model next to the main helper? Looked up now and whenever the settings change.
+  void probeLocal(true);
+  onSettingsChange(() => void probeLocal(true));
 
   const ui = new AiChatUi(convo, {
     contextNow,
