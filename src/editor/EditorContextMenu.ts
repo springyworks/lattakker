@@ -2,16 +2,17 @@ import * as monaco from 'monaco-editor';
 import { HoverMenu, type MenuItem } from '../ui/HoverMenu';
 
 /**
- * Right-click inside any Monaco editor opens the app's own popup menu (the same look as the
- * sheet's) instead of the browser's. The browser's native menu cannot be opened by a script, so
- * the "Browser menu…" item arms the editor: the very next right-click inside it is left alone and
- * the browser shows its own menu (spelling, Inspect, translate, …). The arming lapses by itself.
+ * Right-click inside any Monaco editor (or any other part of an editor window, via installPopupMenu)
+ * opens the app's own popup menu (the same look as the sheet's) instead of the browser's. The
+ * browser's native menu cannot be opened by a script, so the "Browser menu…" item arms the element:
+ * the very next right-click inside it is left alone and the browser shows its own menu (spelling,
+ * Inspect, translate, …). The arming lapses by itself.
  */
 
 const ARM_MS = 15000;
 
 let menu: HoverMenu | null = null;
-let armed: { editor: monaco.editor.ICodeEditor; until: number } | null = null;
+let armed: { el: HTMLElement; until: number } | null = null;
 let note: HTMLDivElement | null = null;
 let noteTimer = 0;
 
@@ -76,7 +77,7 @@ function showNote(text: string, x = window.innerWidth / 2, y = 60): void {
   }, 4000);
 }
 
-function itemsFor(editor: monaco.editor.ICodeEditor, x: number, y: number): MenuItem[] {
+function editorItems(editor: monaco.editor.ICodeEditor): MenuItem[] {
   return [
     clipboard(editor, 'editor.action.clipboardCutAction', 'cut', 'Cut', 'Ctrl+X'),
     clipboard(editor, 'editor.action.clipboardCopyAction', 'copy', 'Copy', 'Ctrl+C'),
@@ -96,43 +97,52 @@ function itemsFor(editor: monaco.editor.ICodeEditor, x: number, y: number): Menu
     action(editor, 'editor.action.quickFix', 'Quick fix', 'Ctrl+.'),
     action(editor, 'editor.action.formatDocument', 'Format code', 'Shift+Alt+F'),
     action(editor, 'editor.action.quickCommand', 'All commands', 'F1'),
-    { separator: true },
-    {
-      label: 'Browser menu…',
-      hint: 'right-click again',
-      title: "Go one level deeper: the next right-click in this editor shows the browser's own menu",
-      onSelect: () => {
-        armed = { editor, until: performance.now() + ARM_MS };
-        showNote("Now right-click in the editor again to get the browser's own menu.", x, y);
-      },
-    },
   ];
 }
 
-function onContextMenu(editor: monaco.editor.ICodeEditor, e: MouseEvent): void {
-  if (armed && armed.editor === editor && performance.now() < armed.until) {
-    armed = null;
-    note?.remove();
-    menu?.close();
-    return; // not prevented: the browser shows its own menu
-  }
-  armed = null;
-  e.preventDefault();
-  menu ??= new HoverMenu();
-  const { clientX: x, clientY: y } = e;
-  // Monaco moves the cursor to the click in its own (later) handler; build the items after it.
-  window.setTimeout(() => {
-    editor.focus(); // most actions are only "supported" while the editor has focus
-    menu?.openAt(x, y, itemsFor(editor, x, y));
-  }, 0);
+/**
+ * Gives an element the popup right-click menu: `build` lists its own items and "Browser menu…" is
+ * added at the end. `before` runs once the click is known (Monaco needs focus first).
+ */
+export function installPopupMenu(el: HTMLElement, build: () => MenuItem[], before?: () => void): void {
+  // Capture phase: the editor windows stop contextmenu from bubbling, but this must always see it.
+  el.addEventListener(
+    'contextmenu',
+    (e) => {
+      if (armed && armed.el === el && performance.now() < armed.until) {
+        armed = null;
+        note?.remove();
+        menu?.close();
+        return; // not prevented: the browser shows its own menu
+      }
+      armed = null;
+      e.preventDefault();
+      menu ??= new HoverMenu();
+      const { clientX: x, clientY: y } = e;
+      // Monaco moves the cursor to the click in its own (later) handler; build the items after it.
+      window.setTimeout(() => {
+        before?.();
+        const items = build();
+        const browser: MenuItem = {
+          label: 'Browser menu…',
+          hint: 'right-click again',
+          title: "Go one level deeper: the next right-click here shows the browser's own menu",
+          onSelect: () => {
+            armed = { el, until: performance.now() + ARM_MS };
+            showNote("Now right-click here again to get the browser's own menu.", x, y);
+          },
+        };
+        menu?.openAt(x, y, items.length ? [...items, { separator: true }, browser] : [browser]);
+      }, 0);
+    },
+    true,
+  );
 }
 
 /** Gives every Monaco editor created from now on the popup right-click menu. */
 export function installEditorContextMenu(): void {
   monaco.editor.onDidCreateEditor((editor) => {
     // The editor's own DOM node does not exist yet when this event fires; its container does.
-    const dom = editor.getContainerDomNode();
-    // Capture phase: the editor hosts stop contextmenu from bubbling, but this must always see it.
-    dom?.addEventListener('contextmenu', (e) => onContextMenu(editor, e), true);
+    installPopupMenu(editor.getContainerDomNode(), () => editorItems(editor), () => editor.focus());
   });
 }

@@ -4,6 +4,7 @@ import { escapeHtml } from '../sheet/Sheet';
 import { THEME } from '../theme';
 import { isAnswered, requestAt } from '../ai/requests';
 import { createEditor, modelFor, monaco } from './monaco';
+import { installPopupMenu } from './EditorContextMenu';
 
 const FRAME_W = 580;
 const FRAME_H = 360;
@@ -348,6 +349,7 @@ export class CellEditor {
       if (this.address) this.hooks.onOutputClick?.(this.address);
     });
     host.appendChild(out);
+    this.installWindowMenus(titleBar, out, outCell, tag);
     this.outBox = out;
     this.outCell = outCell;
     this.outOpen = false;
@@ -370,6 +372,28 @@ export class CellEditor {
     this.updateHints();
     this.layoutOutput();
     this.outTimer = window.setInterval(() => this.renderOutput(), 400);
+  }
+
+  /** Right-click on the title bar or the output strip gets the popup menu too, not the browser's. */
+  private installWindowMenus(titleBar: HTMLElement, out: HTMLElement, outCell: HTMLElement, tag: HTMLElement): void {
+    installPopupMenu(titleBar, () => [
+      { label: 'Run', hint: 'Ctrl+Enter', onSelect: () => this.run() },
+      { label: 'Save & close', hint: 'Esc', onSelect: () => this.close(true) },
+      { label: 'Close without saving', danger: true, onSelect: () => this.close(false) },
+    ]);
+    installPopupMenu(out, () => {
+      const picked = window.getSelection()?.toString() ?? '';
+      const text = picked || outCell.innerText.trim();
+      return [
+        {
+          label: picked ? 'Copy selection' : 'Copy output',
+          disabled: !text,
+          onSelect: () => void navigator.clipboard?.writeText(text).catch(() => {}),
+        },
+        { label: this.outOpen ? 'Shrink output' : 'Enlarge output', onSelect: () => tag.click() },
+        { label: 'Run', hint: 'Ctrl+Enter', onSelect: () => this.run() },
+      ];
+    });
   }
 
   /** Types code into the open editor over a few seconds so the player watches it grow. Progress follows the clock, so a throttled background tab still finishes on time. */
