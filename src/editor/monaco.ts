@@ -313,27 +313,21 @@ export function createEditor(host: HTMLElement, model: monaco.editor.ITextModel)
   });
 }
 
-/** A card editor for the Examples tab: grows with its code, so the page (not the editor) scrolls. */
-export function createGalleryEditor(host: HTMLElement, model: monaco.editor.ITextModel): monaco.editor.IStandaloneCodeEditor {
-  const editor = monaco.editor.create(host, {
+/** The editor of a notebook block (Examples tab): big enough to read, with line numbers, and it never traps the mouse wheel. */
+export function createNotebookEditor(host: HTMLElement, model: monaco.editor.ITextModel): monaco.editor.IStandaloneCodeEditor {
+  return monaco.editor.create(host, {
     ...KID_FRIENDLY,
     model,
     fontSize: 13,
-    codeLens: true,
+    codeLens: false,
     lineNumbersMinChars: 3,
     glyphMargin: false,
     folding: false,
     overviewRulerLanes: 0,
-    padding: { top: 6, bottom: 6 },
-    scrollbar: { alwaysConsumeMouseWheel: false, vertical: 'hidden', horizontal: 'hidden' },
+    scrollBeyondLastLine: false,
+    padding: { top: 8, bottom: 8 },
+    scrollbar: { alwaysConsumeMouseWheel: false },
   });
-  const fit = (): void => {
-    host.style.height = `${Math.max(60, editor.getContentHeight())}px`;
-    editor.layout();
-  };
-  editor.onDidContentSizeChange(fit);
-  fit();
-  return editor;
 }
 
 /** A small, directly-editable Monaco instance hosted inline on the sheet canvas for a code cell. */

@@ -276,8 +276,9 @@ button in its corner makes the strip bigger.
 [↑ Contents](#contents)
 
 The strip at the top of the page is drawn by maxGraph, like the rest of the
-page: **🎲 Game board**, **🧪 Lab** and **📚 Examples**. Two tabs (the board
-and the Lab) hold a sheet with code cells, and both have cells named `A1`,
+page: **🎲 Game board**, **🧪 Lab** and **📚 Examples**. Each of the three is a
+sheet with code cells (the Examples notebook has big blocks, see below), and all
+have cells named `A1`,
 `J24` and so on. So a bare address only makes sense *inside one tab*. To name a
 cell from anywhere, use a **cell path**, written like a file path, where `/`
 means "inside":
@@ -286,7 +287,7 @@ means "inside":
 |---|---|
 | `J24` | the cell J24 of the tab you are in (what code normally writes) |
 | `J24/3,4` | tile x=3, y=4 of the grid inside block J24 (see `grid()` in [8.1](#81-output-and-looks)) |
-| `/lab/J24` | absolute: tab first, so it works from every tab |
+| `/lab/J24` | absolute: tab first (`board`, `lab`, `examples`), so it works from every tab |
 | `/lab/J24/3,4` | the same tile, absolute |
 | `@c-1a2b3c4d` | a cell by its **identity** (its `uid`), which follows the code when the cell moves |
 | `lattakker:///lab/J24` | an absolute path as a URI (what tools use) |
@@ -415,15 +416,31 @@ Everything you can use inside a cell is listed in [8 Programmer's manual: the ce
   back as written. Addresses mean the Lab's
   own cells there: `at('A1')` in the Lab is the Lab's A1.
   A hidden Lab keeps running but does not redraw until you open it.
-- **Examples** (`/#examples`): every example from `src/examples.ts` as a card with a real Monaco editor. It has
-  the same help as a cell: hover a word for its type and a plain-words
-  explanation (for example `const`, `every`, `span`), completions, and the coach's
-  hints on errors. A search box filters the cards. **Put on the board** sends the
-  code (with your changes) to a cell and switches to the board: an untouched
-  example goes back to its own cell if that is empty, anything else goes to a
-  fresh cell in column A below the last code cell. **Put in the Lab** does the
-  same on the Lab's sheet (always a fresh cell). **Start over** restores the
-  original text and **Copy** copies it.
+- **Examples** (`/#examples`): a **notebook**. It is a real sheet, like the
+  board's and the Lab's (headers, grid lines, the ⋮ menu, popups, the editor),
+  but its blocks are big: one example under the other, each with its code at full
+  size on top and its **live output underneath**, like the strip under the
+  floating editor. The notebook builds the blocks as you scroll, and a search box
+  filters them. The shipped examples were written for the game board (they read
+  `A12`, paint the squares, write to `L12`...), so they run where they live: a
+  notebook block is a large view of the example's own cell on the board. Its code
+  is the very same text (edit it in the notebook and the board's cell changes,
+  and the other way round), and the output pane shows what that cell shows; a
+  click on the pane clicks the cell. The chip in the block's bar says which cell
+  it is (`board A12`, or `· your version` once you changed it). **Restart** runs
+  it again, **On the board** jumps to the cell, **Original** puts the text back as
+  it was written and **Copy** copies it. If you emptied that board cell, the block
+  shows the original and **Put on the board** brings it back. The blocks have the
+  same help as a cell: hover a word for its type and a plain-words explanation,
+  completions, and the coach's hints.
+
+  The empty cells of the notebook are free. **📝 New example** (above the sheet),
+  or **⋮ → Create an example here…** on any empty cell (in any tab), makes a
+  block of your own from a starting text to fill in: a title line, then your idea
+  step by step. It runs right there (`at('/board/A12')` reads the board from it),
+  can use everything in [8](#8-programmers-manual-the-cell-api), and is saved in
+  this browser. **Show code** switches your own blocks between what they print and
+  their TypeScript.
 
 The board keeps its scroll position and its running cells while you browse the other tabs.
 
@@ -450,8 +467,8 @@ the same kind of menu later. The right-click menu still works as before.
 **Hover help.** Resting the pointer on a word in any cell editor shows Monaco's
 own hover (type, docs, and the kid-friendly "💡" line). After half a second, an
 extra panel drawn by maxGraph lists the places where that word is used in the
-cell, and cell addresses expand into a live, editable copy of that cell. (The
-Examples tab uses Monaco's hover only, because the panel is drawn on the sheet.)
+cell, and cell addresses expand into a live, editable copy of that cell. (In a block of the Examples notebook
+the panel is not drawn: Monaco's hover is the help there.)
 
 ## 8 Programmer's manual: the cell API
 
@@ -1284,7 +1301,7 @@ the shift. The rules are the same as for moved cells, see
 src/sheet/        Sheet model: cells, addresses, dependency tracking (reactivity.ts), run contexts and timers (tasks.ts), the cell API (api.ts)
 src/editor/       Monaco integration, popup editor, inline per-cell editor
 src/game/     Game rules, board state, AI move suggestions
-src/ui/           Control panel, phone dock, touch gestures, the tab strip (Tabs.ts, drawn by TabStrip.ts), the Share window (ShareDialog.ts), the Examples tab (ExamplesGallery.ts), SheetPane.ts (everything one sheet needs; used by the board and the Lab) and the ⋮ menu (CellMenu.ts, HoverMenu.ts)
+src/ui/           Control panel, phone dock, touch gestures, the tab strip (Tabs.ts, drawn by TabStrip.ts), the Share window (ShareDialog.ts), the Examples notebook (Notebook.ts), SheetPane.ts (everything one sheet needs; used by the board and the Lab) and the ⋮ menu (CellMenu.ts, HoverMenu.ts)
 src/mcp/          The MCP layer: router.ts (the page's message router and traffic log), tabServer.ts (one MCP server per tab)
 src/workspace.ts  The workspace: every tab, cell paths (/lab/J24, @uid), where you and the other person are
 src/share/        Sharing: link.ts (the WebRTC link and its copy-paste codes), session.ts (what travels, and the checks on it)

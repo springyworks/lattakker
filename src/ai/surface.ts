@@ -44,7 +44,7 @@ The page is a Lattakker board that is also a spreadsheet. Red is the child/playe
 Every mms method returns plain JSON. Errors never throw: you get { ok: false, error: "..." }. Success is { ok: true, ... }.
 Methods marked (async) return a Promise: await them.
 
-CELL PATHS (tabs: board, lab). Cells are named like files, with / meaning "inside":
+CELL PATHS (tabs: board, lab, examples). Cells are named like files, with / meaning "inside":
   J24            a cell of the board tab (or of the tab you pass as a second argument/option: { tab: 'lab' })
   /lab/J24       absolute: tab first, so it works from anywhere (/board/A12 for the board)
   /lab/J24/3,4   tile x=3, y=4 of the grid inside block J24
@@ -133,7 +133,7 @@ const str = (description: string): Json => ({ type: 'string', description });
 const obj = (properties: Json, required: string[] = []): Json => ({ type: 'object', properties, required, additionalProperties: false });
 const ADDR =
   'A cell address like A12 (in the board tab unless `tab` says otherwise; code cells live below the board, row 12 or lower), a path starting with the tab like /lab/J24, or a cell identity like @c-1a2b3c4d (it follows the content when cells move and works from every tab).';
-const TAB_PROP = { type: 'string', description: "Which tab a plain address like J24 belongs to: 'board' (default) or 'lab'. Not needed when the address is a path like /lab/J24 or an identity." };
+const TAB_PROP = { type: 'string', description: "Which tab a plain address like J24 belongs to: 'board' (default), 'lab' or 'examples'. Not needed when the address is a path like /lab/J24 or an identity." };
 
 export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps): void {
   // ------------------------------------------------------------ helpers
@@ -863,8 +863,8 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps): void {
     {
       name: 'mcp_request',
       description:
-        "Send an MCP request to one of the page's tab servers (they are named like the tabs: 'board', 'lab') through the page's router. Methods: initialize, resources/list, resources/read {uri}, resources/subscribe, tools/list, tools/call {name, arguments}. Tools of a tab: list_cells, get_cell, run_cell, set_code, click (triggers a cell's click event), flash, signal. Example: server 'lab', method 'tools/call', params { name: 'click', arguments: { address: 'J24' } }.",
-      inputSchema: obj({ server: str("'board' or 'lab'"), method: str('The MCP method, for example resources/read or tools/call'), params: { type: 'object', description: 'The parameters of the method', additionalProperties: true } }, ['server', 'method']),
+        "Send an MCP request to one of the page's tab servers (they are named like the tabs: 'board', 'lab') through the page's router. Tabs: board, lab and examples. Methods: initialize, resources/list, resources/read {uri}, resources/subscribe, tools/list, tools/call {name, arguments}. Tools of a tab: list_cells, get_cell, run_cell, set_code, click (triggers a cell's click event), flash, signal. Example: server 'lab', method 'tools/call', params { name: 'click', arguments: { address: 'J24' } }.",
+      inputSchema: obj({ server: str("'board', 'lab' or 'examples'"), method: str('The MCP method, for example resources/read or tools/call'), params: { type: 'object', description: 'The parameters of the method', additionalProperties: true } }, ['server', 'method']),
       readOnly: false,
       run: (a) => api.mcp(a.server, a.method, a.params),
     },

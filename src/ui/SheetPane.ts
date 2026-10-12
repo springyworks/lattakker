@@ -14,6 +14,7 @@ import { CellMenu } from './CellMenu';
 import type { MenuItem } from './HoverMenu';
 import { Navigator } from './Navigator';
 import { workspace } from '../workspace';
+import { exampleTemplate } from '../exampleTemplate';
 
 export type Tone = 'info' | 'good' | 'bad';
 export type Say = (text: string, tone?: Tone) => void;
@@ -30,6 +31,8 @@ export interface PaneHooks {
   onBoardClick?(address: string): void;
   /** Return false to ignore a double-click (during the battle it is part of moving a piece). */
   mayEdit?(address: string): boolean;
+  /** Cells that are not ordinary cells (a notebook block that hosts its own editor): no menus, no editing, no selecting. */
+  reserved?(address: string): boolean;
   /** Clicks on anything that is not a plain sheet cell: pieces, buttons, the cockpit. Return true when handled. */
   onOtherClick?(id: string, cell: Cell, evt: MouseEvent): boolean;
   tooltipFor?(id: string): string | null;
@@ -127,6 +130,7 @@ export class SheetPane {
     sheet.setListeners({
       onCellClick: (address) => {
         workspace.setFocus(sheet.id, address, sheet.takeTileClick(address));
+        if (hooks.reserved?.(address)) return;
         sheet.pulse(clickNode(address));
         if (sheet.isBoardAddress(address)) {
           this.lastSheetCell = address;
@@ -234,6 +238,7 @@ export class SheetPane {
     popupMenu.selectOnPopup = false;
     popupMenu.factoryMethod = (menu, cell) => {
       const id = cell?.getId() ?? '';
+      if (id.startsWith('sheet:') && hooks.reserved?.(id.slice(6))) return;
       if (id.startsWith('hdr:r')) {
         const rowIndex = Number(id.slice(5));
         if (rowIndex < (hooks.firstFreeRow ?? 0)) return;
@@ -347,7 +352,7 @@ export class SheetPane {
 
   private menuItemsFor(address: string): MenuItem[] | null {
     const sheet = this.sheet;
-    if (sheet.isBoardAddress(address)) return null;
+    if (sheet.isBoardAddress(address) || this.hooks.reserved?.(address)) return null;
     const d = sheet.dataAt(address);
     if (!d) return null;
     const hasCode = d.code.trim().length > 0;
@@ -363,6 +368,19 @@ export class SheetPane {
       onSelect: hasCode ? () => this.copy(d.uid, 'the id') : undefined,
     });
     items.push({ label: hasCode ? '✏️ Edit code…' : '✏️ Write TypeScript here…', onSelect: () => this.editor.open(address) });
+    if (!hasCode) {
+      items.push({
+        label: '📝 Create an example here…',
+        title: 'A free block of your own with a starting text to fill in: a title, then your idea step by step',
+        onSelect: () => {
+          // A notebook has room for big blocks; elsewhere a smaller one fits between the other cells.
+          const big = sheet.id === 'examples';
+          sheet.setCode(address, exampleTemplate(big ? 10 : 6, big ? 8 : 4));
+          this.editor.open(address);
+          this.hooks.say(`A new example in ${address}. Change the title and write your idea below it.`, 'good');
+        },
+      });
+    }
     if (hasCode) {
       items.push({ label: '▶ Run again', onSelect: () => sheet.setCode(address, d.code) });
       const { cols, rows } = d.span;

@@ -69,6 +69,7 @@ export function startAutoSave(game: Game, sheet: Sheet): () => void {
 }
 
 const LAB_KEY = 'lattakker:lab:v1';
+const EXAMPLES_KEY = 'lattakker:examples:v1';
 
 interface SavedLab {
   rows: number;
@@ -77,10 +78,10 @@ interface SavedLab {
   mode: Mode;
 }
 
-/** What this browser remembered about the Lab's sheet, or null on the first visit. */
-export function loadLabSaved(): SavedLab | null {
+/** What this browser remembered about a plain sheet (the Lab's, the Examples notebook's), or null on the first visit. */
+function loadSheetSaved(key: string): SavedLab | null {
   try {
-    const raw = localStorage.getItem(LAB_KEY);
+    const raw = localStorage.getItem(key);
     if (!raw) return null;
     const d = JSON.parse(raw) as SavedLab;
     return d && Array.isArray(d.cells) ? d : null;
@@ -89,22 +90,22 @@ export function loadLabSaved(): SavedLab | null {
   }
 }
 
-/** Keeps the Lab's code cells in this browser, a moment after any change. */
-export function startLabAutoSave(sheet: Sheet): void {
+/** Keeps a plain sheet's code cells in this browser, a moment after any change. */
+function startSheetAutoSave(key: string, sheet: Sheet): void {
   let timer = 0;
   const write = (): void => {
     timer = 0;
     if (savingPaused) return;
     try {
-      const lab: SavedLab = {
+      const saved: SavedLab = {
         rows: sheet.rowCount,
         cols: sheet.colCount,
         cells: sheet.codeCells().map((d) => [d.address, d.code, d.uid]),
         mode: sheet.mode,
       };
-      localStorage.setItem(LAB_KEY, JSON.stringify(lab));
+      localStorage.setItem(key, JSON.stringify(saved));
     } catch {
-      // storage full or blocked: the Lab still works, it just is not remembered
+      // storage full or blocked: the sheet still works, it just is not remembered
     }
   };
   const schedule = (): void => {
@@ -117,3 +118,8 @@ export function startLabAutoSave(sheet: Sheet): void {
   sheet.onModeChange(schedule);
   window.addEventListener('pagehide', write);
 }
+
+export const loadLabSaved = (): SavedLab | null => loadSheetSaved(LAB_KEY);
+export const startLabAutoSave = (sheet: Sheet): void => startSheetAutoSave(LAB_KEY, sheet);
+export const loadExamplesSaved = (): SavedLab | null => loadSheetSaved(EXAMPLES_KEY);
+export const startExamplesAutoSave = (sheet: Sheet): void => startSheetAutoSave(EXAMPLES_KEY, sheet);

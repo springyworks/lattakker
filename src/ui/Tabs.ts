@@ -11,7 +11,7 @@ interface TabSpec {
 const TABS: TabSpec[] = [
   { id: 'board', label: '🎲 Game board', hint: 'The battle and your cells' },
   { id: 'lab', label: '🧪 Lab', hint: 'A second sheet full of live, animated demos (no battle here)' },
-  { id: 'examples', label: '📚 Examples', hint: 'Every example, ready to play with' },
+  { id: 'examples', label: '📚 Examples', hint: 'A notebook: every example as a big block with its live output' },
 ];
 
 /**

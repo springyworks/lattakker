@@ -10,7 +10,7 @@ import { formatAddress, parseAddress } from './sheet/address';
 import { CW, MAX_COLS, ORIGIN_X } from './sheet/Sheet';
 import { Dock } from './ui/Dock';
 import { Tabs } from './ui/Tabs';
-import { ExamplesGallery, type GalleryExample, type GalleryTarget } from './ui/ExamplesGallery';
+import { createNotebook } from './ui/Notebook';
 import { fitBoardToWidth, installGrabGesture, installPinchZoom } from './ui/touch';
 import { GAME_NODE } from './sheet/reactivity';
 import { SheetPane } from './ui/SheetPane';
@@ -81,11 +81,9 @@ const pane = new SheetPane(
 const { editor, popups } = pane;
 const lab = createLab(view, smallScreen);
 
-// Both sheets join the workspace, so a cell can be named from anywhere: /board/A12, /lab/J24, @c-1a2b3c4d.
+// The sheets join the workspace (the Examples notebook below too), so a cell can be named from anywhere: /board/A12, /lab/J24, @c-1a2b3c4d.
 workspace.register({ id: 'board', title: 'Game board', sheet, editor, select: () => tabs.select('board') });
 workspace.register({ id: 'lab', title: 'Lab', sheet: lab.sheet, editor: lab.pane.editor, select: () => tabs.select('lab') });
-// Every tab runs an MCP server; cells, AI helpers and tools reach them through the page's router (see mcp/router.ts).
-for (const tab of workspace.list()) new TabServer(tab, router);
 
 function toggleMode(): void {
   const next = sheet.mode === 'run' ? 'view' : 'run';
@@ -179,50 +177,26 @@ function loadExamples(): number {
   return added;
 }
 
-/** How many rows a piece of code asks for with span(cols, rows); 1 when it does not. */
-function rowsAskedBy(code: string): number {
-  return Number(/\bspan\(\s*\d+\s*,\s*(\d+)/.exec(code)?.[1] ?? 1);
-}
-
-/** Free room for a new cell: column A, one row below every cell that already holds code (and at least below `firstRow`). */
-function freeAddressBelowCode(target: Sheet, code: string, firstRow: number): string {
-  let bottom = firstRow - 1;
-  for (const d of target.codeCells()) bottom = Math.max(bottom, d.row + Math.max(d.span.rows, rowsAskedBy(d.code)));
-  const row = bottom + 1;
-  const needed = Math.min(500, row + rowsAskedBy(code) + 1);
-  while (target.rowCount < needed) target.insertRow(target.rowCount - 1);
-  return formatAddress(0, row);
-}
-
-/** "Put on the board": an untouched example goes back to its own cell if that is empty; anything else gets a fresh cell. In the Lab it always gets a fresh cell. */
-function placeExample(example: GalleryExample, code: string, target: GalleryTarget): string {
-  if (target === 'lab') {
-    const address = freeAddressBelowCode(lab.sheet, code, 0);
-    lab.sheet.setCode(address, code);
-    tabs.select('lab');
-    const pos = parseAddress(address);
-    if (pos) lab.sheet.reveal(pos.row, pos.col, false);
-    lab.pane.selectCodeCell(address);
-    return address;
-  }
-  const home = sheet.dataAt(example.address);
-  const homeFree = !!home && (!home.code.trim() || home.code === code);
-  const address = homeFree ? example.address : freeAddressBelowCode(sheet, code, 11);
-  sheet.setCode(address, code);
+/** The notebook's "↗ On the board": come back to the game board and point at the cell. */
+function showOnBoard(address: string): void {
   tabs.select('board');
   const pos = parseAddress(address);
   if (pos) sheet.reveal(pos.row, pos.col, false);
   pane.selectCodeCell(address);
-  hud.say(`Your example is running in ${address} ✨ Double-click it to change it.`, 'good');
-  return address;
 }
 
-const gallery = new ExamplesGallery(
+// The Examples tab is a notebook: a sheet of its own with big blocks (see ui/Notebook.ts).
+const notebook = createNotebook(
+  view,
+  { sheet, show: showOnBoard },
   EXAMPLES.map(([address, code]) => ({ address, code })),
-  { onUse: placeExample },
+  smallScreen,
 );
-lab.root.after(gallery.root);
-const tabs = new Tabs({ board: container, lab: lab.root, examples: gallery.root });
+lab.root.after(notebook.root);
+workspace.register({ id: 'examples', title: 'Examples', sheet: notebook.sheet, editor: notebook.pane.editor, select: () => tabs.select('examples') });
+// Every tab runs an MCP server; cells, AI helpers and tools reach them through the page's router (see mcp/router.ts).
+for (const tab of workspace.list()) new TabServer(tab, router);
+const tabs = new Tabs({ board: container, lab: lab.root, examples: notebook.root });
 const share = new ShareDialog(tabs.strip);
 
 // The strip always says where you are, as a cell path: click a cell (or a tile) and it follows.
@@ -236,8 +210,8 @@ tabs.onChange((tab) => {
   pane.navigator.root.hidden = tab !== 'board';
   sheet.setSuspended(tab !== 'board');
   lab.setActive(tab === 'lab');
-  if (tab === 'examples') gallery.relayout();
-  else if (tab === 'board') sheet.container.focus({ preventScroll: true });
+  notebook.setActive(tab === 'examples');
+  if (tab === 'board') sheet.container.focus({ preventScroll: true });
 });
 tabs.select(tabs.fromHash());
 showHere();

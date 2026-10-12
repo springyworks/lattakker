@@ -10,7 +10,7 @@ html, body {
   display: none !important;
 }
 
-#app, #lab {
+#app, #lab, #examples-sheet {
   position: relative;
   width: 100vw;
   height: calc(100vh - var(--dock-h, 0px) - var(--tabs-h, 0px));
@@ -23,7 +23,7 @@ html, body {
 
 /* Never let a press-and-drag on the board or controls select text or drag a picture; that made
    the whole canvas appear to move while a piece was being dragged. Code editors keep selection. */
-#app, #lab, #dock {
+#app, #lab, #examples-sheet, #dock {
   -webkit-user-select: none;
   user-select: none;
   -webkit-user-drag: none;
@@ -38,7 +38,7 @@ body.grab-armed .sheet-pane, body.grab-armed .sheet-pane * {
 body.grab-armed .sheet-pane {
   box-shadow: inset 0 0 0 4px rgba(46, 125, 50, 0.55);
 }
-#app .monaco-editor, #app .monaco-editor *, #lab .monaco-editor, #lab .monaco-editor * {
+#app .monaco-editor, #app .monaco-editor *, #lab .monaco-editor, #lab .monaco-editor *, #examples-sheet .monaco-editor, #examples-sheet .monaco-editor * {
   -webkit-user-select: text;
   user-select: text;
 }
@@ -570,119 +570,8 @@ body.tab-lab #dock {
   display: none;
 }
 
-/* The Examples tab */
-#examples {
-  box-sizing: border-box;
-  width: 100vw;
-  height: calc(100vh - var(--tabs-h, 0px));
-  height: calc(100dvh - var(--tabs-h, 0px));
-  overflow: auto;
-  background: #f1f0ec;
-  padding: 0 20px 40px;
-}
-.gallery-head {
-  max-width: 980px;
-  margin: 0 auto;
-  padding: 18px 0 8px;
-}
-.gallery-head h1 {
-  margin: 0 0 4px;
-  font: 700 24px system-ui, sans-serif;
-  color: #1f2933;
-}
-.gallery-head p {
-  margin: 0 0 12px;
-  font: 14px/1.4 system-ui, sans-serif;
-  color: #52606d;
-}
-.gallery-head input {
-  box-sizing: border-box;
-  width: min(420px, 100%);
-  padding: 8px 10px;
-  font: 14px system-ui, sans-serif;
-  border: 1px solid #b8bfc7;
-  border-radius: 8px;
-  outline: none;
-}
-.gallery-head input:focus {
-  border-color: #2f4b66;
-}
-.gallery-status {
-  margin-top: 6px;
-  font: 12px system-ui, sans-serif;
-  color: #7b8794;
-}
-.gallery-list {
-  max-width: 980px;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-.gallery-card {
-  background: #ffffff;
-  border: 1px solid #cbd2d9;
-  border-radius: 10px;
-  overflow: hidden;
-}
-.gallery-card-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 10px;
-  padding: 8px 12px;
-  background: #e9edf1;
-  border-bottom: 1px solid #cbd2d9;
-}
-.gallery-card-bar h2 {
-  flex: 1 1 260px;
-  margin: 0;
-  font: 600 15px system-ui, sans-serif;
-  color: #1f2933;
-}
-.gallery-tag {
-  font: 12px system-ui, sans-serif;
-  color: #7b8794;
-}
-.gallery-buttons {
-  display: flex;
-  gap: 6px;
-}
-.gallery-buttons button {
-  font: 600 13px system-ui, sans-serif;
-  color: #1f2933;
-  background: #ffffff;
-  border: 1px solid #9aa5b1;
-  border-radius: 6px;
-  padding: 5px 10px;
-  cursor: pointer;
-}
-.gallery-buttons button:hover {
-  background: #f0f4f8;
-}
-.gallery-buttons .gallery-use {
-  color: #ffffff;
-  background: #3b7a57;
-  border-color: #2e6246;
-}
-.gallery-buttons .gallery-use:hover {
-  background: #2e6246;
-}
-.gallery-buttons .gallery-use.lab {
-  background: #3b6ea5;
-  border-color: #2f5a88;
-}
-.gallery-buttons .gallery-use.lab:hover {
-  background: #2f5a88;
-}
-.gallery-editor {
-  width: 100%;
-  -webkit-user-select: text;
-  user-select: text;
-}
-
 /* The Lab tab: a toolbar above its own sheet */
-#lab-panel {
+#lab-panel, #examples-panel {
   display: flex;
   flex-direction: column;
   width: 100vw;
@@ -715,6 +604,11 @@ body.tab-lab #dock {
 .lab-say[data-tone='bad'] {
   color: #a8433e;
 }
+.lab-bar strong,
+.lab-bar button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
 .lab-bar button {
   font: 600 12px system-ui, sans-serif;
   color: #1f2933;
@@ -727,7 +621,7 @@ body.tab-lab #dock {
 .lab-bar button:hover {
   background: #f0f4f8;
 }
-#lab-panel #lab {
+#lab-panel #lab, #examples-panel #examples-sheet {
   flex: 1 1 auto;
   min-height: 0;
   height: auto;
@@ -940,4 +834,98 @@ body.tab-lab #dock {
   color: #ffffff;
   font: 13px/1.3 system-ui, sans-serif;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+}
+
+
+/* The Examples notebook: big blocks, code on top, live output underneath */
+.nb-search {
+  flex: 0 1 220px;
+  min-width: 100px;
+  box-sizing: border-box;
+  padding: 4px 8px;
+  border: 1px solid #9aa5b1;
+  border-radius: 6px;
+  font: 12px system-ui, sans-serif;
+}
+.nb-entry {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  border: 1px solid #7b8794;
+  border-radius: 8px;
+  overflow: hidden;
+  font: 13px system-ui, sans-serif;
+  color: #1f2933;
+  box-shadow: 0 1px 4px rgba(31, 41, 51, 0.18);
+}
+.nb-head {
+  flex: 0 0 38px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  background: #e9edf1;
+  border-bottom: 1px solid #cbd2d9;
+}
+.nb-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.nb-chip {
+  flex: 0 0 auto;
+  padding: 1px 9px;
+  border: 1px solid #cbd2d9;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #52606d;
+  font: 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: nowrap;
+}
+.nb-chip.mine {
+  background: #f2e4bd;
+  border-color: #c9ad63;
+  color: #5a4616;
+}
+.nb-btn {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  border: 1px solid #9aa5b1;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1f2933;
+  font: 600 12px system-ui, sans-serif;
+  cursor: pointer;
+}
+.nb-btn:hover {
+  background: #f0f4f8;
+}
+.nb-btn.primary {
+  background: #3a5a78;
+  border-color: #3a5a78;
+  color: #ffffff;
+}
+.nb-btn.primary:hover {
+  background: #2f4b66;
+}
+.nb-code {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.nb-out {
+  flex: 0 0 auto;
+  overflow: auto;
+  border-top: 2px solid #cbd2d9;
+  background: #f6f7f9;
+  cursor: pointer;
+}
+.nb-out-cell {
+  margin: 5px;
+  transform-origin: top left;
+  overflow: hidden;
+  border-radius: 3px;
 }
