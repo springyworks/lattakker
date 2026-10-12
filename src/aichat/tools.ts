@@ -67,7 +67,7 @@ export const TOOL_DECLS: ToolDecl[] = [
   },
   {
     name: 'read_guide',
-    description: 'The guide to the app: what cells can do (grid, at, on, mcp ...), how paths work. Read it before explaining how the app works or writing code for it.',
+    description: 'The guide to the CODE a cell can contain: print, at, game, grid, on, every, plot ... Read it before writing or fixing cell code or explaining what cells can do. (This is not the window.mms API: that is only for outside AIs.)',
     parameters: { type: 'object', properties: {} },
   },
   {
@@ -155,8 +155,29 @@ export const LOCAL_DECLS: ToolDecl[] = [
   },
 ];
 
-function limit(text: string): string {
-  return text.length > MAX_RESULT ? `${text.slice(0, MAX_RESULT)}\n… (cut: ${text.length - MAX_RESULT} more characters)` : text;
+function limit(text: string, max = MAX_RESULT): string {
+  return text.length > max ? `${text.slice(0, max)}\n… (cut: ${text.length - max} more characters)` : text;
+}
+
+const CELL_RULES = `Rules of cell code (read these first):
+- A cell is a top-level script, not a function: there is no \`return\`. Show results with print(...) (or view(text)).
+- The game is the global \`game\` (use game.phase, game.turn, game.lastMove, game.pieces('red') ...). \`mms\` does NOT exist inside cells (it is for outside AIs); inside cells use \`mcp\` and \`at()\`.
+- Never declare a variable with a name the app already uses (game, sheet, cell, memory, at, on, every, after, print, view, color, span, grid, plot, mcp, run, stop, range). A cell's own helper names must be different, or the cell fails with "Identifier ... has already been declared".
+- game.lastMove and game.history are the moves of the battle; swaps made while arranging the army are not in them.
+`;
+
+/** The cell API guide: the "Cell code API" part of /llms.txt (which is served with the page), with the rules in front. */
+async function cellGuide(): Promise<string> {
+  try {
+    const res = await fetch(`${import.meta.env.BASE_URL}llms.txt`);
+    const text = await res.text();
+    const start = text.indexOf('## Cell code API');
+    const end = text.indexOf('## Game rules');
+    if (start >= 0) return `${CELL_RULES}\n${text.slice(start, end > start ? end : undefined)}`;
+  } catch {
+    // offline copy missing: the short rules and the window.mms guide still help
+  }
+  return CELL_RULES;
 }
 
 const asText = (value: unknown): string => (typeof value === 'string' ? value : JSON.stringify(value));
@@ -206,7 +227,7 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
       case 'board_text':
         return limit(host.boardText());
       case 'read_guide':
-        return limit(host.help());
+        return limit(await cellGuide(), 9500);
       case 'recall':
       case 'remember':
       case 'tidy_memory': {
