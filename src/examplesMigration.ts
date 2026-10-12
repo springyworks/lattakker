@@ -1,0 +1,83 @@
+import type { Sheet } from './sheet/Sheet';
+
+/**
+ * Examples change between versions, but the page only loads them into a sheet that has never been used.
+ * Someone who comes back with saved cells would never see the new ones. This brings them in, carefully:
+ *
+ *  - an example that was ADDED is put into its cell only if that cell is still empty;
+ *  - an example that was CHANGED replaces the old one only if the cell still holds exactly the old
+ *    shipped code (comments aside), which means nobody edited it.
+ *
+ * Anything a person wrote is never touched. It runs once per revision (the number is kept in this browser).
+ */
+
+const KEY = 'lattakker:examples-rev';
+export const EXAMPLES_REV = 2;
+
+/** What each revision added, per tab. */
+const ADDED: Record<number, { board: string[]; lab: string[] }> = {
+  2: { board: ['A42', 'G42', 'M42', 'Q42', 'U42'], lab: ['A31', 'G31'] },
+};
+
+/** The code (without its comments) that an example had before a revision replaced it. */
+const REPLACED: Record<number, { board: Record<string, string[]>; lab: Record<string, string[]> }> = {
+  2: {
+    board: {
+      A15: [
+        "span(4, 2)\nconst first = at('A12').text.split('\\n')[0]\nprint('A12 says: ' + first)\nprint('2 + 3 * 4 = ' + (2 + 3 * 4))\nat('L12').print('Hello from A15 ').color('#f2e4bd')",
+      ],
+    },
+    lab: {},
+  },
+};
+
+const codeOnly = (code: string): string =>
+  code
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('//'))
+    .join('\n');
+
+export interface MigrationInput {
+  /** True when the board's sheet was filled from this browser's saved cells (false: a first visit, which got every example). */
+  restored: boolean;
+  board: Sheet;
+  lab: Sheet;
+  examples: ReadonlyArray<[string, string]>;
+  labDemos: ReadonlyArray<[string, string]>;
+}
+
+/** Returns how many cells were added or updated. */
+export function migrateExamples({ restored, board, lab, examples, labDemos }: MigrationInput): number {
+  let seen = EXAMPLES_REV;
+  try {
+    seen = restored ? Number(localStorage.getItem(KEY) ?? 1) || 1 : EXAMPLES_REV;
+  } catch {
+    return 0;
+  }
+  let changed = 0;
+  for (let rev = seen + 1; rev <= EXAMPLES_REV; rev++) {
+    const apply = (sheet: Sheet, list: ReadonlyArray<[string, string]>, added: string[] = [], replaced: Record<string, string[]> = {}): void => {
+      for (const [address, code] of list) {
+        const d = sheet.dataAt(address);
+        if (!d) continue;
+        const old = replaced[address];
+        if (old && d.code.trim() && old.includes(codeOnly(d.code))) {
+          sheet.setCode(address, code);
+          changed++;
+        } else if (added.includes(address) && !d.code.trim()) {
+          sheet.setCode(address, code);
+          changed++;
+        }
+      }
+    };
+    apply(board, examples, ADDED[rev]?.board, REPLACED[rev]?.board);
+    apply(lab, labDemos, ADDED[rev]?.lab, REPLACED[rev]?.lab);
+  }
+  try {
+    localStorage.setItem(KEY, String(EXAMPLES_REV));
+  } catch {
+    // not remembered: it simply runs again next time, and it only ever fills empty or untouched cells
+  }
+  return changed;
+}

@@ -979,4 +979,56 @@ print('Make the parabola on the left breathe:')
 print('wrap its plot() in every(\'100ms\', (n) => ...)')
 print('and let a change with Math.sin(n / 5).')`,
   ],
+  [
+    'A31',
+    String.raw`// The Lab LISTENS for a signal from the board. In the board tab, the cell
+// Q42 shouts 'wave'; this cell hears it, changes colour and shouts 'echo' back.
+// Click Q42 on the Game board tab and come back here to see it.
+
+// 5 columns wide, 3 rows tall.
+span(5, 3)
+// memory is this cell's notebook: how many waves we heard so far.
+memory.heard = memory.heard ?? 0
+// draw fills this cell. 'last' is the number the latest wave carried.
+const draw = (last, from) => show(
+  'I listen for waves from any tab\n' +
+  'Waves heard: ' + memory.heard + '\n' +
+  (from ? 'Latest: wave ' + last + ' from ' + from : 'Nothing yet. Click Q42 on the board.')
+)
+// mcp.on('wave', recipe) hears every signal named wave, from any tab. The
+// recipe gets the data (here a number) and the name of the sender.
+mcp.on('wave', (n, from) => {
+  // Count it.
+  memory.heard++
+  // Change colour: the hue (position on the colour wheel) depends on n.
+  color('hsl(' + ((n * 47) % 360) + ', 60%, 82%)')
+  // Show what we heard.
+  draw(n, from)
+  // Shout back: every cell that listens for echo (Q42 does) hears this.
+  mcp.emit('echo', n)
+})
+// Draw once now, before the first wave.
+draw()`,
+  ],
+  [
+    'G31',
+    String.raw`// Reading the BOARD from the Lab. A path that starts with /board/ names a
+// cell of the other tab. at() reads it instantly, and this cell runs again
+// whenever that cell changes.
+
+// 7 columns wide, 3 rows tall.
+span(7, 3)
+// A recipe that keeps only the first line of a text.
+const first = (text) => String(text).split('\n')[0]
+// at('/board/A12') is the board's cell A12 (the red/blue piece counter).
+const a12 = at('/board/A12')
+// The board's path-tour cell A15 prints several lines; we want its first.
+const tour = at('/board/A15')
+// Show both, and the paths they came from.
+show(
+  a12.path + ' says: ' + first(a12.text) + '\n' +
+  tour.path + ' says: ' + first(tour.text) + '\n' +
+  'Game phase: ' + game.phase
+)`,
+  ],
 ];

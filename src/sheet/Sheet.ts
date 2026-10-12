@@ -39,7 +39,7 @@ import { plotSvg, tilesSvg, type PlotSpec } from './plot';
 const RUN_SLICE_MS = 150;
 
 export const COLS = 26;
-export const ROWS = 40;
+export const ROWS = 46;
 /** Hard ceilings for auto-grow: addresses stay at most two letters and three digits (ZZ999-style). */
 export const MAX_COLS = 52;
 export const MAX_ROWS = 999;

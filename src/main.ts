@@ -4,6 +4,8 @@ import { Sheet } from './sheet/Sheet';
 import { HUD_W, HUD_X, Hud } from './ui/Hud';
 import { GameView } from './game/GameView';
 import { EXAMPLES } from './examples';
+import { LAB_DEMOS } from './labDemos';
+import { migrateExamples } from './examplesMigration';
 import { formatAddress, parseAddress } from './sheet/address';
 import { CW, MAX_COLS, ORIGIN_X } from './sheet/Sheet';
 import { Dock } from './ui/Dock';
@@ -248,6 +250,9 @@ if (restored && saved) {
 } else {
   loadExamples();
 }
+// Someone returning with saved cells gets the examples that are new since their last visit (never over their own code).
+const brought = migrateExamples({ restored, board: sheet, lab: lab.sheet, examples: EXAMPLES, labDemos: LAB_DEMOS });
+if (brought > 0) hud.say(`${brought} new or updated examples are on your sheet ✨ Look for the cross-tab and MCP cells in row 42 (and A31 in the Lab).`, 'good');
 scheduleSave = startAutoSave(view.game, sheet);
 
 // Expose a few handles for tinkering from the browser console / AI chats.

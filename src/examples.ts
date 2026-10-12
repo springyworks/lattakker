@@ -78,23 +78,42 @@ if (m) print(\`Last: \${m.piece} \${m.from}→\${m.to}\${m.defender ? ' vs ' + m
   ],
   [
     'A15',
-    `// Cells can read other cells, like a spreadsheet.
-// Every cell has an address, like a seat in a theatre: a letter and a number.
-// You can read what is written in any cell, or write into it.
+    `// Cells can read other cells, like a spreadsheet. Here is every way to NAME a cell.
+// A cell name is like the address of a house: add more (street, town, country)
+// and it works from further away. This cell shows ONE cell named in several
+// ways, then cells of ANOTHER tab (the Lab). Follow the numbers in the comments.
 
-// 4 columns wide, 2 rows tall.
+// 4 columns wide, 2 rows tall: the seven lines below fit in that.
 span(4, 2)
-// at('A12') points at the cell with address A12. .text is what it shows.
-// .split('new line') cuts the text into a list of lines. [0] picks the first
-// one (computers start counting at 0, not 1). We keep it in a box called first.
-const first = at('A12').text.split('\\n')[0]
-// print adds a line to this cell. The + glues two pieces of text together.
-print('A12 says: ' + first)
-// The computer can do maths too. It does * before +, just like at school:
-// 3 * 4 is 12, then 2 + 12 is 14. The brackets keep the sum together.
-print('2 + 3 * 4 = ' + (2 + 3 * 4))
-// Now we write into ANOTHER cell, L12: add a line there and paint it yellow.
-// The dots chain actions one after another, left to right.
+// A little recipe (a function) that keeps only the first line of a text.
+// split('new line') cuts a text into a list of lines; [0] picks the first
+// one (computers start counting at 0, not 1).
+const first = (text) => String(text).split('\\n')[0]
+// 1. A plain address names a cell of THIS tab, like a seat in a theatre.
+// at('A12') points at it. We keep it in a box called a12 to use it twice.
+const a12 = at('A12')
+// .text is what the cell shows. print adds a line to this cell.
+print('A12        ' + first(a12.text))
+// 2. The long name, called a path: /board/A12 means "in the board tab, cell
+// A12". It names the very same cell, and it also works from other tabs.
+print('/board/A12  ' + first(at('/board/A12').text))
+// 3. @ names the identity: a code that stays with the cell's CODE, even if
+// you drag the cell somewhere else. a12.uid is that identity (it is empty if
+// A12 has no code, so we check that first with the ? : short if).
+print(a12.uid ? '@id         ' + first(at('@' + a12.uid).text) : '@id         A12 has no code')
+// 4. ANOTHER tab: the path starts with the tab's name. The Lab is full of demos.
+// at() READS the cell, and this cell runs again whenever the Lab cell changes.
+print('/lab/A1     ' + first(at('/lab/A1').text))
+// The Lab's J24 is a rocket countdown: watch this line change when it runs.
+print('/lab/J24    ' + first(at('/lab/J24').text))
+// 5. A path can go INSIDE a cell. The Lab's Game of Life is a block of tiles;
+// /lab/A16/3,4 is the tile 3 across and 4 down. .fill is its colour (empty
+// when the tile is dead), so the ? : picks a word for each case.
+print('tile 3,4    ' + (at('/lab/A16/3,4').fill ? '🟩 alive' : '⬜ empty'))
+// 6. Every cell knows its own name too: cell.path.
+print('me          ' + cell.path)
+// Writing works in YOUR OWN tab: add a line to L12 and paint it yellow.
+// (A cell of another tab can be read, but only that tab's code writes to it.)
 at('L12').print('Hello from A15 ').color('#f2e4bd')`,
   ],
   [
@@ -1157,5 +1176,182 @@ span(4, 2)
 plot({ sin: Math.sin, cos: Math.cos }, { from: 0, to: 6.28, title: 'Waves' })
 // Also write a little caption into the cell as text.
 show('sin and cos')`,
+  ],
+  [
+    'A42',
+    `// Paths, part 2: more spellings, and a cell that WATCHES another tab's cell.
+// This cell counts how often the Lab's rocket cell changes. If you move the
+// rocket, the path in this code is rewritten to follow it.
+
+// 5 columns wide, 3 rows tall.
+span(5, 3)
+// A path can be written like a web address (a URI) that starts with
+// lattakker:/// - it means exactly the same as /lab/J24. Tools use this form.
+const rocket = at('lattakker:///lab/J24')
+// memory is this cell's notebook. If it has no counter yet, start at 0.
+// (?? means: use the right side when the left side is empty.)
+memory.changes = memory.changes ?? 0
+// draw is a recipe that fills this cell: its own path and tab, the rocket's
+// path and size, its latest text, and our counter. \\n starts a new line.
+const draw = () => show(
+  'I am ' + cell.path + ' (tab ' + cell.tab + ')\\n' +
+  'Watching ' + rocket.path + ', size ' + rocket.cols + 'x' + rocket.rows + '\\n' +
+  'Latest: ' + String(rocket.text).split('\\n')[0] + '\\n' +
+  'The rocket cell changed ' + memory.changes + ' times'
+)
+// on(path, recipe) works across tabs: the recipe runs EVERY time that cell of
+// the Lab changes. Click the button next to this cell to make it change.
+on('/lab/J24', () => {
+  // Count the change...
+  memory.changes++
+  // ...and draw again.
+  draw()
+})
+// Draw once right now, so the cell is not empty before the first change.
+draw()`,
+  ],
+  [
+    'G42',
+    `// MCP part 1: ask another tab a question, the way an AI helper would.
+// MCP is a small language of messages. Every tab (board, lab) answers it.
+// at() reads a neighbour instantly; mcp asks by message, so the answer takes
+// a moment and we must wait for it with await.
+
+// 6 columns wide, 3 rows tall.
+span(6, 3)
+// mcp.servers() lists the tabs that answer messages.
+const servers = mcp.servers()
+// mcp.read('/lab/J24') asks the Lab for its cell J24 and gives back a plain
+// object: its path, text, code, size... await = wait here for the answer.
+const rocket = await mcp.read('/lab/J24')
+// mcp.list('lab') asks the Lab for all of its cells that hold code.
+const cells = await mcp.list('lab')
+// Every server also has tools: things it can do for you. Ask which ones.
+const tools = (await mcp.call('lab', 'tools/list')).tools.map((t) => t.name)
+// Show the answers. .join(', ') glues a list into one text with commas.
+show(
+  'MCP servers: ' + servers.join(', ') + '\\n' +
+  rocket.path + ' says: ' + rocket.text.split('\\n')[0] + '\\n' +
+  'its identity: ' + rocket.uid + '\\n' +
+  'The Lab has ' + cells.length + ' cells with code\\n' +
+  'Lab tools: ' + tools.join(', ')
+)`,
+  ],
+  [
+    'M42',
+    `// MCP part 2: a remote control. Click this cell and it clicks the Lab's
+// rocket over MCP: a TRIGGER that crosses from one tab to another.
+
+// 4 columns wide, 3 rows tall, with a purple background like a button.
+span(4, 3)
+color('#e3dcee')
+// memory is this cell's notebook: how often we pressed the remote.
+memory.clicks = memory.clicks ?? 0
+// A box for the rocket's latest words. let = a box that may change later.
+let rocket = '...'
+// draw fills this cell. We call it again whenever something changes.
+const draw = () => show(
+  '🚀 Click me: remote start\\n' +
+  'Rocket says: ' + rocket + '\\n' +
+  'Remote starts: ' + memory.clicks
+)
+// mcp.watch follows a cell of another tab. Its recipe runs now and again
+// every time the rocket changes. The news arrives as an MCP notification.
+mcp.watch('/lab/J24', (c) => {
+  // c is the rocket cell. Keep its first line of text...
+  rocket = c.text.split('\\n')[0]
+  // ...and show it.
+  draw()
+})
+// When THIS cell is clicked, send a click message to the Lab's J24.
+on(cell, 'click', async () => {
+  // The Lab's cell reacts exactly as if a person had clicked it.
+  await mcp.click('/lab/J24')
+  // Count it and show it.
+  memory.clicks++
+  draw()
+})
+// Draw once now, before anything happens.
+draw()`,
+  ],
+  [
+    'Q42',
+    `// MCP part 3: shout across tabs. A click here sends a signal called 'wave'.
+// A cell in the Lab (A31) listens for it and shouts 'echo' back to us.
+
+// 4 columns wide, 3 rows tall, light blue like a button.
+span(4, 3)
+color('#dbe8ec')
+// memory: how many waves we sent. The ?? 0 starts at 0 the first time.
+memory.sent = memory.sent ?? 0
+// A box for the last echo we heard (it changes later, so let).
+let echo = 'nothing yet'
+// draw fills this cell.
+const draw = () => show(
+  'Click me: shout wave ' + (memory.sent + 1) + '\\n' +
+  'Waves sent: ' + memory.sent + '\\n' +
+  'Echo from the Lab: ' + echo
+)
+// mcp.on('echo', recipe) hears signals named echo from ANY tab. The recipe
+// gets the data that was sent and the name of the cell that sent it.
+mcp.on('echo', (data, from) => {
+  // Remember what we heard and who said it...
+  echo = data + ' (from ' + from + ')'
+  // ...and show it.
+  draw()
+})
+// When this cell is clicked, shout a new wave to every listening cell.
+on(cell, 'click', () => {
+  // Count the wave.
+  memory.sent++
+  // mcp.emit(name, data) tells every cell in every tab that is listening.
+  mcp.emit('wave', memory.sent)
+  // Show the new count.
+  draw()
+})
+// Draw once now.
+draw()`,
+  ],
+  [
+    'U42',
+    `// MCP part 4: a window on the traffic. Every message between cells and tabs
+// goes through one router, and mcp.tap lets us watch them go by.
+// Click the other MCP cells and see what they say to each other.
+
+// 6 columns wide, 3 rows tall, a pale paper colour.
+span(6, 3)
+color('#f4f1e8')
+// line(m) turns one message into a short line of text.
+const line = (m) => {
+  // A little picture for each kind of message.
+  const mark = { request: '->', response: '<-', error: 'X ', notification: '(!)' }[m.kind]
+  // Who sent it, who gets it, and what it is about. replace() shortens the name.
+  return mark + ' ' + m.from + ' ' + m.to + ' ' + m.method.replace('notifications/', '')
+}
+// Start with the last 8 messages that already went by (map turns each message
+// into a line of text).
+const lines = mcp.recent(8).map(line)
+// pending: have we already planned a redraw? (true or false)
+let pending = false
+// draw shows the lines, one under the other.
+const draw = () => {
+  // The planned redraw is happening now, so nothing is planned any more.
+  pending = false
+  show(lines.join('\\n'))
+}
+// mcp.tap runs its recipe for EVERY message, the moment it is sent.
+mcp.tap((m) => {
+  // Add the new line at the end...
+  lines.push(line(m))
+  // ...and forget the oldest one when there are more than 8.
+  if (lines.length > 8) lines.shift()
+  // Redraw soon, but not for every single message (that would be too busy).
+  if (!pending) {
+    pending = true
+    after('120ms', draw)
+  }
+})
+// Draw once now.
+draw()`,
   ],
 ];

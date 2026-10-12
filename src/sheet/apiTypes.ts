@@ -194,15 +194,15 @@ interface Mcp {
   /** The names of the servers: one per tab. */
   servers(): string[];
   /** Any MCP request, for example mcp.call('lab', 'resources/list'). */
-  call(tab: string, method: string, params?: object): Promise<unknown>;
+  call(tab: string, method: string, params?: object): Promise<any>;
   /** One cell of any tab as a plain object. Reading is not a dependency: use watch() to follow changes. */
   read(path: string): Promise<McpCell>;
   /** The cells of a tab that hold code. */
-  list(tab: string): Promise<object[]>;
+  list(tab: string): Promise<any[]>;
   /** Ask a tab to do something. Tools: list_cells, get_cell, run_cell, set_code, click, flash, signal. */
-  tool(tab: string, name: string, args?: object): Promise<Record<string, unknown>>;
+  tool(tab: string, name: string, args?: object): Promise<any>;
   /** Trigger a cell's click event from anywhere, as if it had been clicked: mcp.click('/lab/J24'). */
-  click(path: string): Promise<Record<string, unknown>>;
+  click(path: string): Promise<any>;
   /** fn(cell) runs now and every time that cell of any tab changes (the news arrives as an MCP notification). Returns a stop function. */
   watch(path: string, fn: (cell: McpCell) => unknown): () => void;
   /** Tell every listening cell in every tab something: mcp.emit('wave', 3). */

@@ -37,6 +37,7 @@ Live demo: https://springyworks.github.io/lattakker/
   - [8.7 Known limits (what is still missing)](#87-known-limits-what-is-still-missing)
   - [8.8 Examples](#88-examples)
   - [8.9 Cells in other tabs: at('/lab/J24')](#89-cells-in-other-tabs-atlabj24)
+  - [8.10 Talking to tabs over MCP: the mcp global](#810-talking-to-tabs-over-mcp-the-mcp-global)
 - [9 How the cell code is run (internals)](#9-how-the-cell-code-is-run-internals)
   - [9.1 When does a cell run?](#91-when-does-a-cell-run)
   - [9.2 Is this reactive programming?](#92-is-this-reactive-programming)
@@ -710,6 +711,56 @@ show('board A12 says: ' + at('/board/A12').text)
   a tile has the same, plus its own `x` and `y`.
 - `range()` only covers the tab the code is in.
 
+### 8.10 Talking to tabs over MCP: the mcp global
+
+[↑ Contents](#contents)
+
+Every tab is also an **MCP server**, and the page has one **router** that carries
+the messages. MCP is the small JSON message language that AI helpers use, so a
+cell, an outside AI and (one day) another computer all talk to a tab in the same
+words. In a cell, the `mcp` global is the way in. Everything in it is
+asynchronous, so use `await`:
+
+```ts
+const rocket = await mcp.read('/lab/J24')      // the cell as a plain object (text, code, uid, size...)
+const cells = await mcp.list('lab')            // the Lab's cells that hold code
+const tools = (await mcp.call('lab', 'tools/list')).tools
+mcp.watch('/lab/J24', (c) => show(c.text))     // runs now, and again every time that cell changes
+await mcp.click('/lab/J24')                    // a TRIGGER: the Lab's on(cell, 'click') wakes up
+mcp.emit('wave', 3)                            // a SIGNAL for every cell that listens...
+mcp.on('wave', (n, from) => show(n, from))     // ...in any tab
+mcp.recent(8)                                  // the last messages that crossed the router
+mcp.tap((message) => print(message.method))    // every message, the moment it is sent
+```
+
+How it maps to MCP: a cell is a **resource** (`lattakker:///lab/J24`);
+`mcp.watch` is `resources/subscribe` plus the server's
+`notifications/resources/updated`; `mcp.click`, `run_cell`, `set_code`, `flash`
+and `signal` are **tools** (`tools/call`); `mcp.emit` is a notification. The
+messages are copied as JSON when they cross the router and answers always
+arrive a moment later, as they would over a real connection.
+
+**When to use `at()` and when `mcp`.** `at('/lab/J24')` is direct and
+instant, and it makes this cell depend on that one (see [8.9](#89-cells-in-other-tabs-atlabj24)).
+Use it for plain reading. `mcp` is for what a message is good at: triggers
+(`click`), events (`emit` / `on`), following a cell from another tab with
+`watch`, tools, and watching or logging the traffic. Two things to know:
+
+- *Reactivity over MCP is eventually consistent.* The news of a change is a
+  notification that arrives after the change, there is no global order between
+  tabs, and a read through `mcp` is not a dependency. If two tabs keep changing
+  each other the watcher is stopped with an error after 50 wake-ups in a second.
+- *The same router serves AI helpers.* They use `mms.mcp('lab', 'tools/list')`
+  and `mms.mcpLog()`, or the tools `mcp_request` and `mcp_log`, so an assistant
+  can ask a tab anything a cell can and can watch what the cells say to each
+  other.
+
+See it work: on the Game board, **A15** shows every way to name a cell, including
+cells of the Lab; **A42** counts changes of the Lab's rocket; **G42** asks the
+Lab over MCP; **M42** is a button that starts the Lab's rocket (a trigger over
+MCP); **Q42** shouts a `wave` that the Lab's **A31** answers with an `echo`;
+and **U42** shows the traffic live.
+
 ## 9 How the cell code is run (internals)
 
 [↑ Contents](#contents)
@@ -1090,8 +1141,8 @@ The tools are the ones in `mms.help()`: `get_state`, `get_board`,
 `legal_moves`, `make_move`, `shuffle_army`, `start_battle`, `pause_battle`,
 `resume_battle`, `undo_move`, `new_game`, `list_tabs`, `list_cells`, `get_cell`,
 `resolve_cell`, `set_cell_code`, `write_code_live`, `get_requests`,
-`wait_for_request`, `reply_to_request`, `run_cell`, `set_mode`, `say_to_player`
-and `export_svg`. The assistant gets the list from the page itself, so it is
+`wait_for_request`, `reply_to_request`, `run_cell`, `set_mode`, `say_to_player`,
+`mcp_request`, `mcp_log` and `export_svg`. The assistant gets the list from the page itself, so it is
 always current.
 
 #### 11.3.2 Talking to the AI from a cell
@@ -1234,6 +1285,7 @@ src/sheet/        Sheet model: cells, addresses, dependency tracking (reactivity
 src/editor/       Monaco integration, popup editor, inline per-cell editor
 src/game/     Game rules, board state, AI move suggestions
 src/ui/           Control panel, phone dock, touch gestures, the tab strip (Tabs.ts, drawn by TabStrip.ts), the Share window (ShareDialog.ts), the Examples tab (ExamplesGallery.ts), SheetPane.ts (everything one sheet needs; used by the board and the Lab) and the ⋮ menu (CellMenu.ts, HoverMenu.ts)
+src/mcp/          The MCP layer: router.ts (the page's message router and traffic log), tabServer.ts (one MCP server per tab)
 src/workspace.ts  The workspace: every tab, cell paths (/lab/J24, @uid), where you and the other person are
 src/share/        Sharing: link.ts (the WebRTC link and its copy-paste codes), session.ts (what travels, and the checks on it)
 src/lab.ts        The Lab tab: a second sheet, its toolbar and saving; labDemos.ts holds its demo cells
