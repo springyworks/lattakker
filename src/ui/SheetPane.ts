@@ -252,9 +252,9 @@ export class SheetPane {
       } else if (id.startsWith('sheet:')) {
         const address = id.slice(6);
         const isBoard = sheet.isBoardAddress(address);
+        if (!isBoard) menu.addItem(`🤖 Ask the AI about ${address}`, null, () => aiBridge.ask({ tab: sheet.id, address }));
         if (!isBoard) {
           menu.addItem(`Edit ${address}`, null, () => this.editor.open(address));
-          menu.addItem(`🤖 Ask the AI about ${address}`, null, () => aiBridge.ask({ tab: sheet.id, address }));
           if (sheet.dataAt(address)?.code) menu.addItem(`Clear ${address}`, null, () => sheet.setCode(address, ''));
           const tasks = sheet.taskCount(address);
           if (tasks > 0) {
@@ -363,6 +363,8 @@ export class SheetPane {
     const tasks = sheet.taskCount(address);
     const items: MenuItem[] = [];
 
+    // The way out to words is always the first item.
+    items.push({ label: '🤖 Ask the AI…', hint: 'Alt+I', onSelect: () => aiBridge.ask({ tab: sheet.id, address }) });
     items.push({
       tiny: true,
       label: hasCode ? `${address} · id ${d.uid} · ran ${d.runCount}×` : `${address} · empty cell`,
@@ -370,7 +372,6 @@ export class SheetPane {
       onSelect: hasCode ? () => this.copy(d.uid, 'the id') : undefined,
     });
     items.push({ label: hasCode ? '✏️ Edit code…' : '✏️ Write TypeScript here…', onSelect: () => this.editor.open(address) });
-    items.push({ label: '🤖 Ask the AI about this…', hint: 'Alt+I', onSelect: () => aiBridge.ask({ tab: sheet.id, address }) });
     if (!hasCode) {
       items.push({
         label: '📝 Create an example here…',

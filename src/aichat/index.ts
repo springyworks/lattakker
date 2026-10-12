@@ -6,6 +6,10 @@ import { workspace } from '../workspace';
 import { Conversation } from './agent';
 import { aiBridge, type AskOptions } from './bridge';
 import { loadSettings } from './config';
+import { HelperServer } from './helperServer';
+import { MemoryServer } from './memoryServer';
+import { loadMemory } from './memory';
+import { router } from '../mcp/router';
 import { AiChatUi } from './ui';
 import { startWatcher } from './watcher';
 import type { AiContext } from './tools';
@@ -74,6 +78,11 @@ export function installAiChat(deps: { surface: Surface; strip: TabStrip; say: (t
     },
   });
 
+  // The memory and the helper are MCP servers too: outside AIs reach them through the page's router (mms.mcp).
+  router.register(new MemoryServer());
+  router.register(new HelperServer(convo, contextNow));
+  void loadMemory();
+
   const ui = new AiChatUi(convo, {
     contextNow,
     onSideChange: (open) => strip.setAiOpen(open),
@@ -99,11 +108,15 @@ export function installAiChat(deps: { surface: Surface; strip: TabStrip; say: (t
     isBusy: () => convo.busy,
   });
 
-  // Alt+I from anywhere (also inside an editor) opens the side chat; Alt+Shift+I opens the little one at the cell.
+  // Alt+I from anywhere (also inside an editor), or Ctrl+I outside an editor, opens the side chat; Alt+Shift+I opens the little one at the cell.
   window.addEventListener(
     'keydown',
     (e) => {
-      if (!e.altKey || e.ctrlKey || e.metaKey || e.code !== 'KeyI') return;
+      if (e.code !== 'KeyI' || e.metaKey) return;
+      const alt = e.altKey && !e.ctrlKey;
+      // Ctrl+I outside an editor opens the chat too; inside one, the editor's own Ctrl+I opens it at the cursor.
+      const ctrl = e.ctrlKey && !e.altKey && !e.shiftKey && !(e.target as HTMLElement | null)?.closest?.('.monaco-editor');
+      if (!alt && !ctrl) return;
       e.preventDefault();
       e.stopPropagation();
       if (e.shiftKey) aiBridge.ask(contextNow(), {});

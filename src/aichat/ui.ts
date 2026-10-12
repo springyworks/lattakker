@@ -3,6 +3,7 @@ import { installPopupMenu } from '../editor/EditorContextMenu';
 import type { Conversation, Entry } from './agent';
 import { destination, forgetAll, getKey, getSettings, isConfigured, setKey, updateSettings } from './config';
 import { renderMarkdown } from './markdown';
+import { allNotes, exportJson, forget, importJson, isKeptSafe, keepSafe, memoryInfo, onMemoryChange, wipe } from './memory';
 import { describeModel } from './modelInfo';
 import { GeminiProvider, OpenAiCompatProvider, friendly, type ModelProvider } from './providers';
 import type { AiContext } from './tools';
@@ -54,6 +55,9 @@ export class AiChatUi {
   private settingsOpen = false;
   private models: string[] = [];
   private modelNote = '';
+  private kept = false;
+  private memoryNote = '';
+  private wipeArmed = false;
 
   constructor(
     private readonly convo: Conversation,
@@ -75,6 +79,8 @@ export class AiChatUi {
       });
     }
     convo.onChange(() => this.render());
+    onMemoryChange(() => this.settingsOpen && this.render());
+    void isKeptSafe().then((v) => (this.kept = v));
     workspace.onFocusChange(() => this.paintChip());
     workspace.onCurrentChange(() => this.paintChip());
     document.addEventListener(
@@ -374,8 +380,12 @@ export class AiChatUi {
     };
     const done = el('button', { className: 'ai-send', textContent: 'Done' });
     done.onclick = () => this.showSettings(false);
+    const outside = el('input', { type: 'checkbox', checked: s.allowOutside });
+    outside.onchange = () => updateSettings((x) => (x.allowOutside = outside.checked));
+    root.append(this.memorySettings());
     root.append(
       el('h3', { textContent: 'Other' }),
+      el('label', { className: 'ai-row' }, outside, ' Let an outside AI (one connected over MCP, see the README) put questions to this helper. It then uses your helper, so with Gemini it uses your key and quota. Off by default.'),
       el('label', { className: 'ai-row' }, remember, ' Remember the key on this computer (otherwise it is forgotten when the page closes). Code in a cell could read a remembered key, so only do this on your own computer.'),
       el('label', { className: 'ai-row' }, auto, ' When I write “// AI:”, “//ai” or “//help” in a cell, pop up the helper after ', secs, ' seconds.'),
       el('div', { className: 'ai-actions' }, done, forget),
@@ -385,6 +395,79 @@ export class AiChatUi {
   }
 
   /** A list of the models the server offers (the whole list, always), a box for typing a name, and a button that really asks the model one tiny thing. */
+  /** The helper's memory: how much it holds, a backup to a file, and a way to look through and clean it. */
+  private memorySettings(): HTMLElement {
+    const info = memoryInfo();
+    const root = el('div', { className: 'ai-group' }, el('h3', { textContent: 'Memory of the helper' }));
+    root.append(
+      el('p', { className: 'ai-note', textContent: `${info.count} notes (${Math.round(info.chars / 100) / 10} thousand characters). ${info.durable ? 'Kept in this browser, so they survive a reload. If the browser clears its storage they are gone: make a backup.' : 'This browser gives no storage here: notes last only until the page closes.'}${this.kept ? ' The browser promised to keep this storage.' : ''}` }),
+    );
+    const save = el('button', { className: 'ai-stop', textContent: '💾 Back up to a file' });
+    save.onclick = () => void this.backup();
+    const file = el('input', { type: 'file', accept: 'application/json,.json', hidden: true });
+    file.onchange = () =>
+      void file.files?.[0]?.text().then(async (t) => {
+        const r = await importJson(t);
+        this.memoryNote = r.ok ? `Loaded the backup: ${r.added} notes added or updated.` : (r.error ?? 'could not read it');
+        this.render();
+      });
+    const load = el('button', { className: 'ai-stop', textContent: '📂 Load a backup' });
+    load.onclick = () => file.click();
+    const safe = el('button', { className: 'ai-stop', textContent: '🛡 Ask the browser to keep it', disabled: this.kept });
+    safe.title = 'Asks the browser not to clear this storage when the disk is nearly full. It may say no.';
+    safe.onclick = () =>
+      void keepSafe().then((v) => {
+        this.kept = v;
+        this.memoryNote = v ? 'The browser will keep the storage.' : 'The browser did not promise (it decides itself). Make backups.';
+        this.render();
+      });
+    const clear = el('button', { className: 'ai-stop', textContent: this.wipeArmed ? 'Click again: forget everything' : '🗑 Forget all notes', disabled: info.count === 0 });
+    clear.onclick = () => {
+      if (!this.wipeArmed) {
+        this.wipeArmed = true;
+        window.setTimeout(() => ((this.wipeArmed = false), this.settingsOpen && this.render()), 4000);
+        this.render();
+        return;
+      }
+      this.wipeArmed = false;
+      void wipe();
+    };
+    root.append(el('div', { className: 'ai-actions' }, save, load, safe, clear), file);
+    if (this.memoryNote) root.append(el('div', { className: 'ai-note', textContent: this.memoryNote }));
+    const list = el('details', { className: 'ai-help' }, el('summary', { textContent: 'Look through the notes' }));
+    for (const n of allNotes().slice(0, 100)) {
+      const drop = el('button', { className: 'ai-icon', textContent: '✕', title: 'Forget this note' });
+      drop.onclick = () => void forget(n.id);
+      list.append(el('div', { className: 'ai-note' }, drop, el('strong', { textContent: n.title }), ` — ${n.text.slice(0, 140)}`, el('span', { className: 'ai-via', textContent: ` · ${n.source}${n.tags.length ? ' · ' + n.tags.join(', ') : ''}` })));
+    }
+    if (!info.count) list.append(el('div', { className: 'ai-note', textContent: 'No notes yet. The helper writes them when it learns something lasting.' }));
+    root.append(list);
+    return root;
+  }
+
+  /** Saves the memory as a file: a "Save as" window when the browser has one, else an ordinary download. */
+  private async backup(): Promise<void> {
+    const text = exportJson();
+    const name = `lattakker-memory-${new Date().toISOString().slice(0, 10)}.json`;
+    try {
+      const pick = (window as unknown as { showSaveFilePicker?: (o: unknown) => Promise<{ createWritable(): Promise<{ write(t: string): Promise<void>; close(): Promise<void> }> }> }).showSaveFilePicker;
+      if (pick) {
+        const handle = await pick({ suggestedName: name, types: [{ description: 'Memory backup', accept: { 'application/json': ['.json'] } }] });
+        const w = await handle.createWritable();
+        await w.write(text);
+        await w.close();
+      } else {
+        const a = el('a', { href: URL.createObjectURL(new Blob([text], { type: 'application/json' })), download: name });
+        a.click();
+        URL.revokeObjectURL(a.href);
+      }
+      this.memoryNote = `Saved ${name}.`;
+    } catch (err) {
+      this.memoryNote = err instanceof DOMException && err.name === 'AbortError' ? 'Cancelled.' : `Could not save: ${err instanceof Error ? err.message : String(err)}`;
+    }
+    this.render();
+  }
+
   private modelPicker(make: () => ModelProvider, current: string, set: (m: string) => void, auto = true): HTMLElement {
     const note = el('div', { className: 'ai-note', textContent: this.modelNote });
     const say = (text: string): void => {

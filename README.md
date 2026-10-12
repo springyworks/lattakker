@@ -60,6 +60,7 @@ Live demo: https://springyworks.github.io/lattakker/
     - [11.4.2 Asking: the 🤖 button, Alt+I, right-click](#1142-asking-the--button-alti-right-click)
     - [11.4.3 A “// AI:” line pops the helper up](#1143-a--ai--line-pops-the-helper-up)
     - [11.4.4 What the helper can and cannot do](#1144-what-the-helper-can-and-cannot-do)
+    - [11.4.5 Memory, and outside AIs asking the helper](#1145-memory-and-outside-ais-asking-the-helper)
 - [12 Rows](#12-rows)
 - [13 Project layout](#13-project-layout)
 - [14 Licence and artwork](#14-licence-and-artwork)
@@ -1376,6 +1377,7 @@ previews) and the chat itself have the app's own right-click menu.
 
 #### 11.4.2 Asking: the 🤖 button, Alt+I, right-click
 
+- In a code editor, **Ctrl+I** (as in VS Code) opens the little chat at the cursor, knowing the line and any selected text. **“🤖 Ask the AI…” is always the first item of every right-click menu** with a cell behind it.
 - **🤖 AI** in the strip, or **Alt+I** anywhere (also inside an editor): the side
   chat. Its 📍 chip shows the cell the question will be about; click another
   cell and it follows. **Alt+Shift+I** opens the little pop-up at that cell.
@@ -1415,6 +1417,31 @@ or start or end games. Text inside cells is treated as data, never as orders,
 and what the model writes is shown as plain text (no markup is ever
 executed). The code is in `src/aichat/` (providers, tools, the agent loop,
 the chat window, the watcher).
+
+#### 11.4.5 Memory, and outside AIs asking the helper
+
+The helper has a **memory**: short notes (title, text, tags) in this browser's
+IndexedDB, so they survive a reload. It reads them with `recall` and writes with
+`remember`; it tidies them (`tidy_memory`: find near-duplicates, merge, forget)
+when asked. Notes that look like personal information (e-mail, phone, address,
+password, key) are refused. In ⚙ you can look through the notes, forget
+them, **back them up to a file** (and load a backup), and ask the browser to keep
+the storage safe. If the browser wipes its storage the memory starts over, so
+back up what you care about.
+
+The memory and the helper are MCP servers on the page's router, named `memory`
+and `helper`. An outside AI uses them like the tabs
+([8.10](#810-talking-to-tabs-over-mcp-the-mcp-global)):
+`mms.mcp('memory', 'tools/call', { name: 'recall', arguments: { query: 'rocket' } })`.
+`mms.mcp('helper', 'tools/call', { name: 'ask', arguments: { question: '…' } })`
+puts a question to the built-in helper, but only after a person ticks **Let an
+outside AI ask the helper** in ⚙ (off by default, because it spends your own key
+or computer). The question appears in the chat marked as coming from an outside AI.
+
+*A model that runs inside the page itself* (WebGPU) is not built in: it needs a
+download of hundreds of megabytes and a browser with WebGPU. The helper's providers
+are one small interface (`providers.ts`), so such a model can be added there later and
+the memory and the `helper` server will work with it unchanged.
 
 ## 12 Rows
 

@@ -14,6 +14,8 @@ export interface AiContext {
   address: string | null;
   /** The line (1-based) of the cell's code the question was written on or the cursor is on. */
   line?: number | null;
+  /** Text the person had selected in the editor. */
+  selection?: string;
 }
 
 /** What the tools need from the rest of the app. */
@@ -67,6 +69,25 @@ export const TOOL_DECLS: ToolDecl[] = [
     name: 'read_guide',
     description: 'The guide to the app: what cells can do (grid, at, on, mcp ...), how paths work. Read it before explaining how the app works or writing code for it.',
     parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'recall',
+    description: 'Look in your memory (notes kept in this browser, they survive a reload) for what you learned earlier about this person, their project or the app. Do this before answering questions about "last time", their goals or their preferences.',
+    parameters: { type: 'object', properties: { query: { type: 'string', description: 'Some words or the question.' } }, required: ['query'] },
+  },
+  {
+    name: 'remember',
+    description: 'Keep a short note in your memory: something useful and lasting (what they are building, what is hard for them, a lesson that worked). Never personal information (names, e-mail, address, school). A note with the same title is replaced.',
+    parameters: { type: 'object', properties: { title: { type: 'string' }, text: { type: 'string' }, tags: { type: 'string', description: 'A few words separated by commas.' } }, required: ['title', 'text'] },
+  },
+  {
+    name: 'tidy_memory',
+    description: 'Admin of your memory. action "duplicates": pairs of notes that say nearly the same; "update": change a note (id, title, text); "forget": delete a note (id). Merge a pair by updating one and forgetting the other.',
+    parameters: {
+      type: 'object',
+      properties: { action: { type: 'string', enum: ['duplicates', 'update', 'forget', 'stats'] }, id: { type: 'string' }, title: { type: 'string' }, text: { type: 'string' } },
+      required: ['action'],
+    },
   },
   {
     name: 'mcp_call',
@@ -155,6 +176,21 @@ export async function runTool(host: ToolHost, name: string, args: Args): Promise
         return limit(host.boardText());
       case 'read_guide':
         return limit(host.help());
+      case 'recall':
+      case 'remember':
+      case 'tidy_memory': {
+        let tool: string = name;
+        let a: Args = args;
+        if (name === 'remember') a = { ...args, tags: typeof args.tags === 'string' ? args.tags.split(',') : args.tags };
+        if (name === 'tidy_memory') {
+          const action = String(args.action ?? '');
+          tool = { duplicates: 'find_duplicates', update: 'update_note', forget: 'forget', stats: 'stats' }[action] ?? '';
+          if (!tool) return asText({ error: 'action must be duplicates, update, forget or stats' });
+        }
+        const answer = await router.request(CLIENT, 'memory', 'tools/call', { name: tool, arguments: a });
+        const r = inner(answer);
+        return limit(asText(r.ok ? r.value : { error: r.value }));
+      }
       case 'mcp_call': {
         const server = String(args.server ?? '');
         const method = String(args.method ?? '');

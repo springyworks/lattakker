@@ -6,6 +6,7 @@ import { isAnswered, requestAt } from '../ai/requests';
 import { createEditor, modelFor, monaco } from './monaco';
 import { installPopupMenu } from './EditorContextMenu';
 import { aiBridge } from '../aichat/bridge';
+import type { AiContext } from '../aichat/tools';
 import { getSettings, isConfigured } from '../aichat/config';
 
 /** True when the built-in helper is set up and will pick up a question by itself. */
@@ -380,8 +381,8 @@ export class CellEditor {
     this.outTimer = window.setInterval(() => this.renderOutput(), 400);
   }
 
-  private askAi(): void {
-    if (this.address) aiBridge.ask({ tab: this.sheet.id, address: this.address });
+  private askContext(): AiContext | null {
+    return this.address ? { tab: this.sheet.id, address: this.address } : null;
   }
 
   /** Right-click on the title bar or the output strip gets the popup menu too, not the browser's. */
@@ -390,9 +391,7 @@ export class CellEditor {
       { label: 'Restart', hint: 'Ctrl+Enter', onSelect: () => this.run() },
       { label: 'Restart & close', hint: 'Esc', onSelect: () => this.close(true) },
       { label: 'Close, keep the old code', danger: true, onSelect: () => this.close(false) },
-      { separator: true },
-      { label: '🤖 Ask the AI about this…', hint: 'Alt+I', onSelect: () => this.askAi() },
-    ]);
+    ], undefined, () => this.askContext());
     installPopupMenu(out, () => {
       const picked = window.getSelection()?.toString() ?? '';
       const text = picked || outCell.innerText.trim();
@@ -404,10 +403,8 @@ export class CellEditor {
         },
         { label: this.outOpen ? 'Shrink output' : 'Enlarge output', onSelect: () => tag.click() },
         { label: 'Restart', hint: 'Ctrl+Enter', onSelect: () => this.run() },
-        { separator: true },
-        { label: '🤖 Ask the AI about this…', hint: 'Alt+I', onSelect: () => this.askAi() },
       ];
-    });
+    }, undefined, () => this.askContext());
   }
 
   /** Types code into the open editor over a few seconds so the player watches it grow. Progress follows the clock, so a throttled background tab still finishes on time. */

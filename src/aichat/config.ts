@@ -17,6 +17,8 @@ export interface AiSettings {
   /** Pop the little chat up by itself when a "// AI:" question has been left alone for a while. */
   autoPopup: boolean;
   autoSeconds: number;
+  /** Let an outside AI (connected over MCP) put questions to this helper. Off unless a person turns it on. */
+  allowOutside: boolean;
 }
 
 export const DEFAULT_SETTINGS: AiSettings = {
@@ -26,6 +28,7 @@ export const DEFAULT_SETTINGS: AiSettings = {
   remember: false,
   autoPopup: true,
   autoSeconds: 3,
+  allowOutside: false,
 };
 
 const SETTINGS_KEY = 'lattakker:ai:v1';
@@ -46,6 +49,7 @@ function merge(base: AiSettings, saved: Partial<AiSettings> | null): AiSettings 
     gemini: { model: String(saved.gemini?.model || base.gemini.model), adultAck: saved.gemini?.adultAck === true },
     remember: saved.remember === true,
     autoPopup: saved.autoPopup !== false,
+    allowOutside: saved.allowOutside === true,
     autoSeconds: Number.isFinite(seconds) ? Math.min(600, Math.max(3, Math.round(seconds))) : base.autoSeconds,
   };
 }
