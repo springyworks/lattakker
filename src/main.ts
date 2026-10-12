@@ -16,6 +16,7 @@ import { createLab } from './lab';
 import { installAiSurface } from './ai/surface';
 import { loadSaved, startAutoSave } from './storage';
 import { workspace } from './workspace';
+import { ShareDialog } from './ui/ShareDialog';
 
 const HELP = `How to play Lattakker
 • Both armies have 40 pieces. Yours is RED. Blue's pieces are face down.
@@ -216,6 +217,8 @@ const gallery = new ExamplesGallery(
 );
 lab.root.after(gallery.root);
 const tabs = new Tabs({ board: container, lab: lab.root, examples: gallery.root });
+const share = new ShareDialog(tabs.strip);
+
 // The strip always says where you are, as a cell path: click a cell (or a tile) and it follows.
 const showHere = (): void => tabs.setPath(workspace.hereText());
 workspace.onFocusChange(showHere);
@@ -244,5 +247,5 @@ if (restored && saved) {
 scheduleSave = startAutoSave(view.game, sheet);
 
 // Expose a few handles for tinkering from the browser console / AI chats.
-Object.assign(window as unknown as Record<string, unknown>, { sheet, game: view.game, view, hud, loadExamples, tabs, lab: lab.sheet, labPane: lab.pane, workspace });
+Object.assign(window as unknown as Record<string, unknown>, { sheet, game: view.game, view, hud, loadExamples, tabs, lab: lab.sheet, labPane: lab.pane, workspace, share });
 installAiSurface({ sheet, view, hud, editor });

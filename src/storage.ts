@@ -3,6 +3,16 @@ import type { Mode, Sheet } from './sheet/Sheet';
 
 const KEY = 'lattakker:v1';
 
+/**
+ * While a visitor is a guest in someone else's shared session, the sheets show that person's cells. Those
+ * must not overwrite what this browser remembers of its own work, so saving is switched off until the page
+ * is reloaded (which brings the visitor's own cells back).
+ */
+let savingPaused = false;
+export function pauseSaving(on: boolean): void {
+  savingPaused = on;
+}
+
 interface SavedApp {
   game: SavedGame;
   rows: number;
@@ -29,6 +39,7 @@ export function startAutoSave(game: Game, sheet: Sheet): () => void {
   let timer = 0;
   const write = (): void => {
     timer = 0;
+    if (savingPaused) return;
     try {
       const app: SavedApp = {
         game: game.serialize(),
@@ -83,6 +94,7 @@ export function startLabAutoSave(sheet: Sheet): void {
   let timer = 0;
   const write = (): void => {
     timer = 0;
+    if (savingPaused) return;
     try {
       const lab: SavedLab = {
         rows: sheet.rowCount,

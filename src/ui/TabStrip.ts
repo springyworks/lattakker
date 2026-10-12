@@ -25,6 +25,13 @@ export class TabStrip {
   private readonly graph: Graph;
   private readonly tabCells = new Map<string, Cell>();
   private pathCell!: Cell;
+  private shareCell!: Cell;
+  private remoteCell!: Cell;
+  /** What a click on the share button does (set by whoever owns the share dialog). */
+  onShare: () => void = () => {};
+  private shareText = '🤝 Share';
+  private shareOn = false;
+  private remoteText = '';
   private active = '';
   private hovered: string | null = null;
   private pathText = '';
@@ -57,6 +64,8 @@ export class TabStrip {
       tips.delay = 400;
       tips.getTooltipForCell = (cell: Cell) => {
         const id = cell.getId() ?? '';
+        if (id === 'strip:share') return 'Work together with a tutor or a friend: a direct link between two browsers, no server';
+        if (id === 'strip:remote') return 'Where the other person is pointing right now';
         if (id === 'strip:path') return "Where you are, written as a cell path. Click to copy it. Code can use it: at('/lab/J24')";
         return this.tabs.find((t) => `strip:${t.id}` === id)?.hint ?? '';
       };
@@ -77,6 +86,23 @@ export class TabStrip {
         this.tabCells.set(spec.id, cell);
         x += w + TAB_GAP;
       }
+      this.shareCell = graph.insertVertex({
+        parent: graph.getDefaultParent(),
+        id: 'strip:share',
+        value: this.shareText,
+        position: [x + 6, (STRIP_H - PATH_H) / 2 + 2],
+        size: [112, PATH_H],
+        style: this.shareStyle(),
+      });
+      this.remoteCell = graph.insertVertex({
+        parent: graph.getDefaultParent(),
+        id: 'strip:remote',
+        value: '',
+        position: [x + 130, (STRIP_H - PATH_H) / 2 + 2],
+        size: [120, PATH_H],
+        style: this.remoteStyle(),
+      });
+      graph.getDataModel().setVisible(this.remoteCell, false);
       this.pathCell = graph.insertVertex({
         parent: graph.getDefaultParent(),
         id: 'strip:path',
@@ -91,6 +117,8 @@ export class TabStrip {
       const cell = evt.getProperty('cell') as Cell | null | undefined;
       const id = cell?.getId() ?? '';
       if (id === 'strip:path') this.copyPath();
+      else if (id === 'strip:share') this.onShare();
+      else if (id === 'strip:remote') this.copyRemote();
       else if (id.startsWith('strip:')) this.onSelect(id.slice(6));
     });
     // Hover feedback on a tab: the drawing itself reacts, no CSS involved.
@@ -98,7 +126,7 @@ export class TabStrip {
       mouseDown: () => {},
       mouseMove: (_s: unknown, me: { getCell(): Cell | null }) => {
         const id = me.getCell()?.getId() ?? '';
-        const over = id.startsWith('strip:') && id !== 'strip:path' ? id.slice(6) : null;
+        const over = id.startsWith('strip:') && !['strip:path', 'strip:share', 'strip:remote'].includes(id) ? id.slice(6) : null;
         if (over !== this.hovered) {
           this.hovered = over;
           this.paintTabs();
@@ -152,6 +180,57 @@ export class TabStrip {
     };
   }
 
+  private shareStyle(): Record<string, unknown> {
+    return {
+      shape: 'rectangle',
+      rounded: true,
+      arcSize: 40,
+      fillColor: this.shareOn ? '#d9e8dd' : '#f6f7f9',
+      strokeColor: this.shareOn ? '#5b9a74' : EDGE,
+      strokeWidth: 1,
+      fontColor: INK,
+      fontSize: 12,
+      fontStyle: 1,
+      fontFamily: 'system-ui, sans-serif',
+      align: 'center',
+      verticalAlign: 'middle',
+      whiteSpace: 'nowrap',
+    };
+  }
+
+  private remoteStyle(): Record<string, unknown> {
+    return { ...this.pathStyle(), fillColor: '#e8def8', strokeColor: '#a68bd0' };
+  }
+
+  /** The share button: its words and whether a session is running. */
+  setShare(text: string, on: boolean): void {
+    this.shareText = text;
+    this.shareOn = on;
+    const model = this.graph.getDataModel();
+    model.beginUpdate();
+    try {
+      model.setValue(this.shareCell, text);
+      model.setStyle(this.shareCell, this.shareStyle());
+    } finally {
+      model.endUpdate();
+    }
+    this.placePath();
+  }
+
+  /** Where the other person is pointing ("🧑 /lab/J24"), or null when nobody is. */
+  setRemote(text: string | null): void {
+    this.remoteText = text ?? '';
+    const model = this.graph.getDataModel();
+    model.beginUpdate();
+    try {
+      model.setVisible(this.remoteCell, text !== null);
+      if (text !== null) model.setValue(this.remoteCell, text);
+    } finally {
+      model.endUpdate();
+    }
+    this.placePath();
+  }
+
   private paintTabs(): void {
     const model = this.graph.getDataModel();
     model.beginUpdate();
@@ -189,20 +268,36 @@ export class TabStrip {
     this.placePath();
   }
 
-  /** The path sits at the right edge of the strip and is as wide as its text. */
+  /** The share button follows the tabs; the other person's pointer and the path sit at the right edge, each as wide as its text. */
   private placePath(): void {
-    const text = this.flashing ? 'copied ✓' : `📍 ${this.pathText}`;
-    const w = Math.max(90, Math.round(text.length * 7.4 + 24));
-    const available = this.container.clientWidth;
+    const widthFor = (text: string, min: number): number => Math.max(min, Math.round(text.length * 7.4 + 24));
+    const model = this.graph.getDataModel();
+    const move = (cell: Cell, x: number, w: number): void => {
+      const geo = cell.getGeometry()!;
+      if (geo.x === x && geo.width === w) return;
+      const next = geo.clone();
+      next.x = x;
+      next.width = w;
+      model.setGeometry(cell, next);
+    };
     const lastTab = this.tabCells.get(this.tabs[this.tabs.length - 1].id)!.getGeometry()!;
-    const minX = lastTab.x + lastTab.width + 12;
-    const x = Math.max(minX, available - w - 14);
-    const geo = this.pathCell.getGeometry()!;
-    if (geo.x === x && geo.width === w) return;
-    const next = geo.clone();
-    next.x = x;
-    next.width = w;
-    this.graph.getDataModel().setGeometry(this.pathCell, next);
+    const shareX = lastTab.x + lastTab.width + 12;
+    const shareW = widthFor(this.shareText, 112);
+    move(this.shareCell, shareX, shareW);
+    const pathText = this.flashing ? 'copied ✓' : `📍 ${this.pathText}`;
+    const pathW = widthFor(pathText, 90);
+    const available = this.container.clientWidth;
+    const pathX = Math.max(shareX + shareW + 12, available - pathW - 14);
+    move(this.pathCell, pathX, pathW);
+    if (this.remoteText) {
+      const remoteW = widthFor(this.remoteText, 90);
+      move(this.remoteCell, Math.max(shareX + shareW + 12, pathX - remoteW - 8), remoteW);
+    }
+  }
+
+  private copyRemote(): void {
+    const path = this.remoteText.replace(/^\S+\s/, '');
+    void navigator.clipboard?.writeText(path).catch(() => {});
   }
 
   private copyPath(): void {

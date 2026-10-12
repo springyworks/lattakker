@@ -77,12 +77,19 @@ export interface Focus {
   tile: { x: number; y: number } | null;
 }
 
+/** Where the person on the other end of a shared session is pointing. */
+export interface RemotePresence extends Focus {
+  name: string;
+}
+
 export class Workspace {
   private readonly tabs = new Map<string, WorkspaceTab>();
   private currentId = 'board';
   private readonly listeners: Array<(id: string) => void> = [];
   private focusNow: Focus | null = null;
   private readonly focusListeners: Array<(focus: Focus | null) => void> = [];
+  private remoteNow: RemotePresence | null = null;
+  private readonly remoteListeners: Array<(remote: RemotePresence | null) => void> = [];
 
   register(tab: WorkspaceTab): void {
     this.tabs.set(tab.id, tab);
@@ -125,6 +132,19 @@ export class Workspace {
 
   onFocusChange(listener: (focus: Focus | null) => void): void {
     this.focusListeners.push(listener);
+  }
+
+  get remote(): RemotePresence | null {
+    return this.remoteNow;
+  }
+
+  setRemote(remote: RemotePresence | null): void {
+    this.remoteNow = remote;
+    this.remoteListeners.forEach((l) => l(remote));
+  }
+
+  onRemoteChange(listener: (remote: RemotePresence | null) => void): void {
+    this.remoteListeners.push(listener);
   }
 
   /** What to show for "you are here": the focused cell's absolute path when it is in the tab on screen, else the tab's own path. */
