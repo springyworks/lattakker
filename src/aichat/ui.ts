@@ -2,7 +2,7 @@ import { workspace } from '../workspace';
 import type { Conversation, Entry } from './agent';
 import { destination, forgetAll, getKey, getSettings, isConfigured, setKey, updateSettings } from './config';
 import { renderMarkdown } from './markdown';
-import { GeminiProvider, OpenAiCompatProvider, friendly } from './providers';
+import { GeminiProvider, OpenAiCompatProvider, friendly, type ModelProvider } from './providers';
 import type { AiContext } from './tools';
 
 /**
@@ -355,30 +355,57 @@ export class AiChatUi {
     this.sideBody.append(root);
   }
 
-  private modelPicker(list: () => Promise<string[]>, current: string, set: (m: string) => void): HTMLElement {
-    const input = el('input', { type: 'text', value: current, className: 'ai-wide', placeholder: 'model name' });
-    input.setAttribute('list', 'ai-models');
-    input.onchange = () => set(input.value.trim());
-    const data = el('datalist', { id: 'ai-models' });
-    for (const m of this.models) data.append(el('option', { value: m }));
-    const find = el('button', { className: 'ai-stop', textContent: 'Find models' });
+  /** A list of the models the server offers (the whole list, always), a box for typing a name, and a button that really asks the model one tiny thing. */
+  private modelPicker(make: () => ModelProvider, current: string, set: (m: string) => void, auto = true): HTMLElement {
     const note = el('div', { className: 'ai-note', textContent: this.modelNote });
-    find.onclick = () => {
-      note.textContent = 'asking…';
-      list().then(
-        (models) => {
-          this.models = models;
-          this.modelNote = models.length ? `${models.length} found. Click the box and pick one.` : 'The server answered, but has no models.';
-          if (models.length && !current) set(models[0]);
-          this.render();
-        },
-        (err: unknown) => {
-          this.modelNote = friendly(err);
-          this.render();
-        },
-      );
+    const say = (text: string): void => {
+      this.modelNote = text;
+      note.textContent = text;
     };
-    return el('div', { className: 'ai-field' }, el('label', { textContent: 'Model' }), el('div', { className: 'ai-inline' }, input, find), data, note);
+    const load = (): void => {
+      say('asking for the list of models…');
+      make()
+        .listModels()
+        .then(
+          (models) => {
+            this.models = models;
+            this.modelNote = models.length ? `${models.length} models. Pick one from the list.` : 'The server answered, but has no models.';
+            if (models.length && !current) set(models[0]);
+            this.render();
+          },
+          (err: unknown) => say(friendly(err)),
+        );
+    };
+    const choices = el('select', { className: 'ai-wide' });
+    const names = this.models.includes(current) || !current ? this.models : [current, ...this.models];
+    if (!names.length) choices.append(el('option', { value: '', textContent: '(press “Find models”)' }));
+    for (const m of names) choices.append(el('option', { value: m, textContent: m, selected: m === current }));
+    choices.onchange = () => {
+      set(choices.value);
+      this.render();
+    };
+    const typed = el('input', { type: 'text', value: current, className: 'ai-wide', placeholder: 'or type a model name' });
+    typed.onchange = () => {
+      set(typed.value.trim());
+      this.render();
+    };
+    const find = el('button', { className: 'ai-stop', textContent: 'Find models' });
+    find.onclick = load;
+    const test = el('button', { className: 'ai-stop', textContent: 'Test this model' });
+    test.title = 'Sends one tiny question to the model and shows exactly what came back';
+    test.onclick = () => {
+      const started = performance.now();
+      say(`asking ${current || 'the model'}…`);
+      make()
+        .complete('Answer with one short word.', [{ role: 'user', text: 'Say OK.' }], [], new AbortController().signal)
+        .then(
+          (r) => say(`✓ ${current} answered in ${((performance.now() - started) / 1000).toFixed(1)} s: “${r.text.trim().slice(0, 40)}”`),
+          (err: unknown) => say(`✗ ${friendly(err)}`),
+        );
+    };
+    // The list is fetched by itself the first time, when there is a key (or no key is needed).
+    if (auto && !this.models.length && !this.modelNote) window.setTimeout(() => !this.models.length && !this.modelNote && load(), 0);
+    return el('div', { className: 'ai-field' }, el('label', { textContent: 'Model' }), choices, el('div', { className: 'ai-inline' }, typed), el('div', { className: 'ai-actions' }, find, test), note);
   }
 
   private localSettings(): HTMLElement {
@@ -392,7 +419,7 @@ export class AiChatUi {
       { className: 'ai-group' },
       el('div', { className: 'ai-field' }, el('label', { textContent: 'Server address (OpenAI-compatible)' }), url),
       this.modelPicker(
-        () => new OpenAiCompatProvider(getSettings().local.baseUrl, getSettings().local.model, getKey('local')).listModels(),
+        () => new OpenAiCompatProvider(getSettings().local.baseUrl, getSettings().local.model, getKey('local')),
         s.local.model,
         (m) => updateSettings((x) => (x.local.model = m)),
       ),
@@ -417,6 +444,8 @@ export class AiChatUi {
     const key = el('input', { type: 'password', value: getKey('gemini'), className: 'ai-wide', placeholder: 'paste your Gemini API key', autocomplete: 'off' });
     key.onchange = () => {
       setKey('gemini', key.value);
+      this.models = [];
+      this.modelNote = '';
       this.render();
     };
     const terms = el(
@@ -438,9 +467,10 @@ export class AiChatUi {
       parts.push(
         el('div', { className: 'ai-field' }, el('label', { textContent: 'Gemini API key' }), key),
         this.modelPicker(
-          () => new GeminiProvider(getSettings().gemini.model, getKey('gemini')).listModels(),
+          () => new GeminiProvider(getSettings().gemini.model, getKey('gemini')),
           s.gemini.model,
           (m) => updateSettings((x) => (x.gemini.model = m || x.gemini.model)),
+          !!getKey('gemini'),
         ),
       );
     }

@@ -279,7 +279,7 @@ export class GeminiProvider implements ModelProvider {
       if (signal.aborted) throw err;
       throw new AiError('network', `Could not reach Google. Is the internet working? ${err instanceof Error ? err.message : ''}`.trim());
     }
-    if (!res.ok) throw fail(res.status, await errorMessage(res));
+    if (!res.ok) throw fail(res.status, `${await errorMessage(res)} [Google answered HTTP ${res.status} for the model ${this.model}]`);
     const data = (await res.json()) as {
       candidates?: Array<{ content?: { role?: string; parts?: Array<Record<string, unknown>> }; finishReason?: string }>;
       promptFeedback?: { blockReason?: string };
