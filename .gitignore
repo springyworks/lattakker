@@ -2,3 +2,6 @@ node_modules
 dist
 *.local
 .DS_Store
+
+# the screen recording is kept out of the repository (the .gif next to it is what the README shows)
+resources/animated_screen_recording.mp4
