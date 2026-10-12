@@ -106,7 +106,7 @@ export function normaliseAddress(text: string): string | null {
  * "A1:B3"), null to leave it alone, or 'kept' when it touches cells that moved but cannot be
  * rewritten safely (so the caller can warn instead of silently pointing at the wrong cell).
  */
-export type RefRewrite = (ends: CellPos[], literal: string) => CellPos[] | 'kept' | null;
+export type RefRewrite = (ends: CellPos[], literal: string, tab?: string) => CellPos[] | 'kept' | null;
 
 export interface RewriteResult {
   code: string;
@@ -126,6 +126,8 @@ interface End {
 
 interface ParsedLiteral {
   lead: string;
+  /** The tab named by an absolute path such as "/lab/J24", or undefined for a plain address. */
+  tab?: string;
   trail: string;
   kind: 'cell' | 'colon' | 'dash';
   sep: string;
@@ -133,9 +135,11 @@ interface ParsedLiteral {
 }
 
 // A tile path such as "A16/3,4" (tile x,y inside block A16) moves with its block, so it counts as that cell's address too.
-const SINGLE_RE = /^(\s*)(\$?)([a-z]{1,3})(\$?)(\d{1,3})((?:\/\d+,\d+)?\s*)$/i;
-const COLON_RE = /^(\s*)(\$?)([a-z]{1,3})(\$?)(\d{1,3})(\s*:\s*)(\$?)([a-z]{1,3})(\$?)(\d{1,3})(\s*)$/i;
-const DASH_RE = /^(\s*)([a-z]{1,3})(\d{1,3})(\s*-\s*)(\d{1,3})(\s*)$/i;
+// The optional /tab/ in front makes the address absolute ("/lab/J24"); lowercase, so it cannot be mistaken for a column.
+const TAB = '(?:\\/([a-z][a-z0-9-]*)\\/)?';
+const SINGLE_RE = new RegExp('^(\\s*)' + TAB + '(\\$?)([a-z]{1,3})(\\$?)(\\d{1,3})((?:\\/\\d+,\\d+)?\\s*)$', 'i');
+const COLON_RE = new RegExp('^(\\s*)' + TAB + '(\\$?)([a-z]{1,3})(\\$?)(\\d{1,3})(\\s*:\\s*)(\\$?)([a-z]{1,3})(\\$?)(\\d{1,3})(\\s*)$', 'i');
+const DASH_RE = new RegExp('^(\\s*)' + TAB + '([a-z]{1,3})(\\d{1,3})(\\s*-\\s*)(\\d{1,3})(\\s*)$', 'i');
 
 function end(dollarCol: string, letters: string, dollarRow: string, digits: string): End | null {
   const row = parseInt(digits, 10) - 1;
@@ -144,22 +148,24 @@ function end(dollarCol: string, letters: string, dollarRow: string, digits: stri
 
 /** Only a literal whose whole text is one address or one range counts; any other text is left alone. */
 function parseLiteral(text: string): ParsedLiteral | null {
+  // m[2] is the optional tab. It stays part of `lead` so the literal is written back exactly as it was found.
+  const prefix = (m: RegExpExecArray): string => m[1] + (m[2] ? `/${m[2]}/` : '');
   let m = SINGLE_RE.exec(text);
   if (m) {
-    const a = end(m[2], m[3], m[4], m[5]);
-    return a && { lead: m[1], trail: m[6], kind: 'cell', sep: '', ends: [a] };
+    const a = end(m[3], m[4], m[5], m[6]);
+    return a && { lead: prefix(m), tab: m[2], trail: m[7], kind: 'cell', sep: '', ends: [a] };
   }
   m = COLON_RE.exec(text);
   if (m) {
-    const a = end(m[2], m[3], m[4], m[5]);
-    const b = end(m[7], m[8], m[9], m[10]);
-    return a && b && { lead: m[1], trail: m[11], kind: 'colon', sep: m[6], ends: [a, b] };
+    const a = end(m[3], m[4], m[5], m[6]);
+    const b = end(m[8], m[9], m[10], m[11]);
+    return a && b && { lead: prefix(m), tab: m[2], trail: m[12], kind: 'colon', sep: m[7], ends: [a, b] };
   }
   m = DASH_RE.exec(text);
   if (m) {
-    const a = end('', m[2], '', m[3]);
-    const b = end('', m[2], '', m[5]);
-    return a && b && { lead: m[1], trail: m[6], kind: 'dash', sep: m[4], ends: [a, b] };
+    const a = end('', m[3], '', m[4]);
+    const b = end('', m[3], '', m[6]);
+    return a && b && { lead: prefix(m), tab: m[2], trail: m[7], kind: 'dash', sep: m[5], ends: [a, b] };
   }
   return null;
 }
@@ -197,7 +203,7 @@ export function mapAddressLiterals(code: string, fn: RefRewrite): RewriteResult 
     const inner = code.slice(start + 1, stop - 1);
     const parsed = parseLiteral(inner);
     if (!parsed) return;
-    const result = fn(parsed.ends.map((e) => ({ col: e.col, row: e.row })), inner);
+    const result = fn(parsed.ends.map((e) => ({ col: e.col, row: e.row })), inner, parsed.tab);
     if (result === 'kept') {
       kept.push(inner.trim());
       return;

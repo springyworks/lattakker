@@ -223,6 +223,7 @@ export class Sheet {
   /** cell id -> a live DOM node to host as that cell's label (e.g. the Monaco editor frame). */
   private nodeLabels = new Map<string, HTMLElement>();
   private refreshQueue = new Set<string>();
+  private foreignRewriter: ((rewrite: RefRewrite) => void) | null = null;
   private lastTileClick: { address: string; x: number; y: number; time: number } | null = null;
 
   /** Only the main tab has the Lattakker board (A1:J10) and the reserved rows below it. */
@@ -947,14 +948,42 @@ export class Sheet {
     this.referencesHandlers.push(handler);
   }
 
-  /** Rewrites address literals in every cell's code at once; `relocate` says where each cell's code will live afterwards. */
-  private rewriteReferences(rewrite: RefRewrite, relocate: (address: string) => string): ReferenceReport {
+  /** Set by the workspace: after this sheet's cells moved, other tabs' code that names them by absolute path is rewritten too. */
+  setForeignRewriter(fn: (rewrite: RefRewrite) => void): void {
+    this.foreignRewriter = fn;
+  }
+
+  /**
+   * Another tab's cells moved: follow them in the code written here that names that tab by absolute path
+   * ("/lab/J24"). Plain addresses in this code mean this tab and are not touched.
+   */
+  rewriteForeign(tabId: string, rewrite: RefRewrite): void {
     const cells: string[] = [];
     const warnings: string[] = [];
     let count = 0;
     for (const d of this.data.values()) {
       if (!d.code) continue;
-      const result = mapAddressLiterals(d.code, rewrite);
+      const result = mapAddressLiterals(d.code, (ends, literal, tab) => (tab === tabId ? rewrite(ends, literal) : null));
+      if (result.count > 0) {
+        d.code = result.code;
+        count += result.count;
+        cells.push(d.address);
+      }
+      for (const literal of result.kept) warnings.push(`${d.address} still says "${literal}", but cells there moved. Check that it points where you mean.`);
+    }
+    this.announceReferences({ count, cells, warnings });
+  }
+
+  /** Rewrites address literals in every cell's code at once; `relocate` says where each cell's code will live afterwards. */
+  private rewriteReferences(rewrite: RefRewrite, relocate: (address: string) => string): ReferenceReport {
+    const cells: string[] = [];
+    const warnings: string[] = [];
+    let count = 0;
+    // A literal that names another tab ("/lab/J24") is that tab's business; here only this tab's own addresses move.
+    const own: RefRewrite = (ends, literal, tab) => (tab && tab !== this.id ? null : rewrite(ends, literal));
+    for (const d of this.data.values()) {
+      if (!d.code) continue;
+      const result = mapAddressLiterals(d.code, own);
       if (result.count > 0) {
         d.code = result.code;
         count += result.count;
@@ -964,6 +993,7 @@ export class Sheet {
         warnings.push(`${relocate(d.address)} still says "${literal}", but cells there moved. Check that it points where you mean.`);
       }
     }
+    this.foreignRewriter?.(rewrite);
     return { count, cells, warnings };
   }
 

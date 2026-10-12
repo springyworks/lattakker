@@ -4,6 +4,7 @@ import type { GameView } from '../game/GameView';
 import { isLake } from '../game/model';
 import { GAME_NODE, MODE_NODE, describeNode, ROWS_NODE, clickNode, codeNode, sizeNode } from './reactivity';
 import { parseTilePath } from './address';
+import { workspace } from '../workspace';
 import { CancelError, parseInterval, type RunContext } from './tasks';
 import { makePlot, type PlotOptions } from './plot';
 
@@ -58,6 +59,80 @@ export function buildApi(
     for (const [address, before] of entries) if (signature(address) !== before) sheet.notifyChanged(address);
   };
 
+  // ------------------------------------------------- cells in another tab (read-only)
+
+  /** A cell in another tab can be read, and this cell runs again when it changes; it cannot be written. */
+  const foreignSubs = new Set<string>();
+  const trackForeign = (owner: Sheet, node: string): void => {
+    if (!ctx.tracking || ctx.cancelled) return;
+    const key = `${owner.id}|${node}`;
+    if (foreignSubs.has(key)) return;
+    foreignSubs.add(key);
+    const stop = owner.subscribe([node], () => {
+      sheet.markDirty([data.address]);
+      sheet.requestRun();
+    });
+    ctx.addTransient(stop);
+  };
+  const foreignRefs = new Map<string, object>();
+  const makeForeignRef = (owner: Sheet, address: string) => {
+    const key = `${owner.id}/${address}`;
+    const existing = foreignRefs.get(key);
+    if (existing) return existing;
+    const d = owner.dataAt(address);
+    if (!d) throw new Error(`Unknown cell ${key}`);
+    const path = workspace.pathOf(owner.id, address);
+    const readOnly = (): never => {
+      throw new Error(`${path} is in another tab: this cell can read it, but only its own tab's code can change it`);
+    };
+    const ref = {
+      address,
+      tab: owner.id,
+      path,
+      col: d.col,
+      row: d.row,
+      get text() {
+        return owner.displayText(d);
+      },
+      get code() {
+        trackForeign(owner, codeNode(address));
+        return d.code;
+      },
+      get piece() {
+        return owner.isBoardAddress(address) ? view.pieceInfoAt(address) : null;
+      },
+      get cols() {
+        trackForeign(owner, sizeNode(address));
+        return d.span.cols;
+      },
+      get rows() {
+        trackForeign(owner, sizeNode(address));
+        return d.span.rows;
+      },
+      get isBoard() {
+        return owner.isBoardAddress(address);
+      },
+      span(cols?: number, rows?: number) {
+        if (cols !== undefined || rows !== undefined) readOnly();
+        trackForeign(owner, sizeNode(address));
+        return { cols: d.span.cols, rows: d.span.rows };
+      },
+      print: readOnly,
+      clear: readOnly,
+      show: readOnly,
+      plot: readOnly,
+      view: readOnly,
+      color: readOnly,
+      textColor: readOnly,
+      flash: readOnly,
+      toString() {
+        return path;
+      },
+    };
+    foreignRefs.set(key, ref);
+    return ref;
+  };
+
   const makeRef = (address: string) => {
     const existing = refs.get(address);
     if (existing) return existing;
@@ -65,6 +140,9 @@ export function buildApi(
     if (!d) throw new Error(`Unknown cell ${address}`);
     const ref = {
       address,
+      /** Which tab this cell is in and its absolute path, like '/lab/J24'. */
+      tab: sheet.id,
+      path: workspace.pathOf(sheet.id, address),
       col: d.col,
       row: d.row,
       get text() {
@@ -179,17 +257,19 @@ export function buildApi(
   });
 
   /** One tile of a block's grid: it is addressed by its own x,y inside the block, never by a sheet address. */
-  const makeTile = (block: SheetCellData, x: number, y: number, ensure: () => TileGrid) => {
+  const makeTile = (block: SheetCellData, x: number, y: number, ensure: () => TileGrid, owner: Sheet = sheet) => {
     const grid = ensure();
     if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0 || x >= grid.cols || y >= grid.rows) {
       throw new Error(`Tile ${x},${y} is outside the ${grid.cols}×${grid.rows} grid in ${block.address} (x goes 0 to ${grid.cols - 1}, y goes 0 to ${grid.rows - 1})`);
     }
     const i = y * grid.cols + x;
     const read = (): TileGrid => {
-      if (block.address !== data.address) track(block.address);
+      if (owner !== sheet) trackForeign(owner, block.address);
+      else if (block.address !== data.address) track(block.address);
       return ensure();
     };
     const write = (): TileGrid => {
+      if (owner !== sheet) throw new Error(`${workspace.pathOf(owner.id, block.address)} is in another tab: this cell can read its tiles, but only its own tab's code can change them`);
       markWrite(block.address);
       return ensure();
     };
@@ -197,7 +277,9 @@ export function buildApi(
       x,
       y,
       block: block.address,
+      tab: owner.id,
       address: `${block.address}/${x},${y}`,
+      path: workspace.pathOf(owner.id, block.address, { x, y }),
       get fill() {
         return read().fills[i];
       },
@@ -280,24 +362,46 @@ export function buildApi(
     return g;
   };
 
-  /** at('A16/3,4'): a tile of another block's grid, reached through the block's address and the tile's own x,y. */
-  const tileByPath = (path: { block: string; x: number; y: number }) => {
-    const block = sheet.resolve(path.block);
-    const blockData = block ? sheet.dataAt(block) : undefined;
-    if (!block || !blockData) throw new Error(`"${path.block}" is not a cell address`);
-    if (block !== data.address) track(block);
-    return makeTile(blockData, path.x, path.y, () => {
-      if (!blockData.tiles) throw new Error(`${block} has no grid yet (its code calls grid(cols, rows))`);
-      return blockData.tiles;
-    });
+  /** at('A16/3,4') or at('/lab/A16/3,4'): a tile of a block's grid, reached through the block's address and the tile's own x,y. */
+  const tileByPath = (blockAddress: string, x: number, y: number, owner: Sheet = sheet) => {
+    const blockData = owner.dataAt(blockAddress);
+    if (!blockData) throw new Error(`"${blockAddress}" is not a cell address`);
+    if (owner !== sheet) trackForeign(owner, blockAddress);
+    else if (blockAddress !== data.address) track(blockAddress);
+    return makeTile(
+      blockData,
+      x,
+      y,
+      () => {
+        if (!blockData.tiles) throw new Error(`${workspace.pathOf(owner.id, blockAddress)} has no grid yet (its code calls grid(cols, rows))`);
+        return blockData.tiles;
+      },
+      owner,
+    );
   };
+
+  /** Text that names a cell with an absolute path, an identity or a URI instead of a plain address. */
+  const isGlobalPath = (text: string): boolean => /^(\/|@|lattakker:|c-[0-9a-f]{8}(\/|$))/i.test(text.trim());
 
   const at = (address: string) => {
     ctx.guard();
-    const path = parseTilePath(String(address));
-    if (path) return tileByPath(path);
-    const resolved = sheet.resolve(String(address));
-    if (!resolved) throw new Error(`"${address}" is not a cell address (try something like B7)`);
+    const text = String(address);
+    if (isGlobalPath(text)) {
+      const found = workspace.resolve(text, sheet.id);
+      if ('error' in found) throw new Error(found.error);
+      const owner = found.tab.sheet;
+      if (found.tile) return tileByPath(found.address, found.tile.x, found.tile.y, owner);
+      if (owner === sheet) {
+        track(found.address);
+        return makeRef(found.address);
+      }
+      trackForeign(owner, found.address);
+      return makeForeignRef(owner, found.address);
+    }
+    const path = parseTilePath(text);
+    if (path) return tileByPath(sheet.resolve(path.block) ?? path.block, path.x, path.y);
+    const resolved = sheet.resolve(text);
+    if (!resolved) throw new Error(`"${address}" is not a cell address (try something like B7, or a path like /lab/J24)`);
     track(resolved);
     return makeRef(resolved);
   };
@@ -485,6 +589,8 @@ export function buildApi(
     if (typeof fn !== 'function') throw new Error("on needs a function: on('B7', (cell) => { ... }) or on('B7', 'size', (cell) => { ... })");
     let nodes: string[];
     let label: string;
+    // The sheet whose cells are watched: this one, or another tab's when the target is an absolute path.
+    let owner: Sheet = sheet;
     const gridBlock = typeof target === 'object' && target !== null && (target as { isGrid?: boolean }).isGrid ? (target as { address: string }).address : null;
     if (gridBlock) {
       label = `${gridBlock} grid`;
@@ -500,16 +606,24 @@ export function buildApi(
       if (event !== 'change') throw new Error("on('game', ...) only has the 'change' event");
       nodes = [GAME_NODE];
     } else {
-      const text = typeof target === 'object' && target !== null ? String((target as { address?: string }).address) : String(target);
+      const text = typeof target === 'object' && target !== null ? String((target as { path?: string; address?: string }).path ?? (target as { address?: string }).address) : String(target);
       label = text;
       const nodeFor = EVENT_NODES[event];
       if (!nodeFor) throw new Error(`Unknown event '${event}'. Try 'change', 'size', 'code' or 'click'`);
-      let addresses = sheet.resolveRange(text);
-      if (addresses.length === 0) {
-        const one = sheet.resolve(text);
-        if (one) addresses = [one];
+      let addresses: string[] = [];
+      if (isGlobalPath(text)) {
+        const found = workspace.resolve(text, sheet.id);
+        if ('error' in found) throw new Error(found.error);
+        owner = found.tab.sheet;
+        addresses = [found.address];
+      } else {
+        addresses = sheet.resolveRange(text);
+        if (addresses.length === 0) {
+          const one = sheet.resolve(text);
+          if (one) addresses = [one];
+        }
       }
-      if (addresses.length === 0) throw new Error(`"${text}" is not a cell, a range, 'game' or 'sheet' (try on('B7', ...))`);
+      if (addresses.length === 0) throw new Error(`"${text}" is not a cell, a range, 'game' or 'sheet' (try on('B7', ...) or on('/lab/J24', ...))`);
       nodes = addresses.map(nodeFor);
     }
     let unsubscribe = () => {};
@@ -520,9 +634,9 @@ export function buildApi(
     };
     const run = callback(fn as (...args: unknown[]) => unknown, stop);
     const stamps: number[] = [];
-    unsubscribe = sheet.subscribe(nodes, (node) => {
+    unsubscribe = owner.subscribe(nodes, (node) => {
       // A cell never wakes itself up by writing to itself.
-      if (event === 'change' && node === data.address) return;
+      if (event === 'change' && owner === sheet && node === data.address) return;
       const now = Date.now();
       while (stamps.length && now - stamps[0] > 1000) stamps.shift();
       stamps.push(now);
@@ -538,7 +652,10 @@ export function buildApi(
         if (t && blockData?.tiles) void run(makeTile(blockData, t.x, t.y, () => blockData.tiles ?? newTiles(t.x + 1, t.y + 1)));
       } else if (node === GAME_NODE) void run(trackedGame);
       else if (node === ROWS_NODE || node === MODE_NODE) void run(sheetApi);
-      else void run(makeRef(node.includes(':') ? node.slice(node.indexOf(':') + 1) : node));
+      else {
+        const watched = node.includes(':') ? node.slice(node.indexOf(':') + 1) : node;
+        void run(owner === sheet ? makeRef(watched) : makeForeignRef(owner, watched));
+      }
     });
     forget = ctx.addTask(stop);
     return stop;

@@ -38,6 +38,10 @@ interface PlotOptions {
 /** One spreadsheet cell, addressed like A1, C7 or M14. */
 interface CellRef {
   readonly address: string;
+  /** The tab this cell is in: 'board' or 'lab'. */
+  readonly tab: string;
+  /** The cell's absolute path, e.g. '/lab/J24'. Works from every tab. */
+  readonly path: string;
   readonly col: number;
   readonly row: number;
   /** Text currently shown in the cell (output, or code in view mode). */
@@ -117,7 +121,11 @@ interface Tile {
   readonly y: number;
   /** The block this tile lives in, e.g. 'A16'. */
   readonly block: string;
-  /** The tile's full path, e.g. 'A16/3,4'. at('A16/3,4') gets it from anywhere. */
+  /** The tab that block is in. */
+  readonly tab: string;
+  /** The tile's absolute path, e.g. '/lab/A16/3,4'. at() with that path gets it from any tab. */
+  readonly path: string;
+  /** The tile's address inside its tab, e.g. 'A16/3,4'. */
   readonly address: string;
   /** Its colour, or null when blank. */
   readonly fill: string | null;
@@ -218,9 +226,17 @@ declare const memory: Record<string, any>;
 declare const run: { readonly reason: 'edit' | 'moved' | 'update'; readonly count: number };
 /** Stop all timers and watchers this cell started. */
 declare function stop(): void;
-/** A tile inside another block's grid, by path: at('A16/3,4') is the tile in column 3, row 4 of the grid in A16. */
+/**
+ * A tile inside a block's grid, by path: at('A16/3,4') is the tile in column 3, row 4 of the grid in A16;
+ * at('/lab/A16/3,4') is the same kind of tile in another tab. Tiles of another tab can be read, not changed.
+ */
 declare function at(path: \`\${string}/\${number},\${number}\`): Tile;
-/** Another cell by address, e.g. at('A1') */
+/**
+ * Another cell by address or by path. A plain address is a cell of this tab: at('A1').
+ * A path starting with / names a tab first, so it works from anywhere: at('/lab/J24'), at('/board/A12').
+ * @c-1a2b3c4d is a cell's identity, which stays with its code when it moves. Cells of another tab can be read
+ * (and this cell runs again when they change) but only their own tab's code can change them.
+ */
 declare function at(address: string): CellRef;
 /** A range of cells, e.g. range('A1:J10') or range('C32-55') */
 declare function range(text: string): CellRange;

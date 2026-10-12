@@ -15,6 +15,7 @@ import { SheetPane } from './ui/SheetPane';
 import { createLab } from './lab';
 import { installAiSurface } from './ai/surface';
 import { loadSaved, startAutoSave } from './storage';
+import { workspace } from './workspace';
 
 const HELP = `How to play Lattakker
 • Both armies have 40 pieces. Yours is RED. Blue's pieces are face down.
@@ -34,7 +35,7 @@ const HELP_SHORT = 'Pick a red piece, tap a dot to move it. Tap a red cross to a
 const smallScreen = window.matchMedia('(max-width: 900px), (pointer: coarse)').matches;
 const container = document.getElementById('app')!;
 container.classList.add('sheet-pane');
-const sheet = new Sheet(container, { board: true });
+const sheet = new Sheet(container, { board: true, id: 'board' });
 const hud = new Hud(sheet);
 const view = new GameView(sheet, hud);
 const saved = loadSaved();
@@ -74,6 +75,10 @@ const pane = new SheetPane(
 );
 const { editor, popups } = pane;
 const lab = createLab(view, smallScreen);
+
+// Both sheets join the workspace, so a cell can be named from anywhere: /board/A12, /lab/J24, @c-1a2b3c4d.
+workspace.register({ id: 'board', title: 'Game board', sheet, editor, select: () => tabs.select('board') });
+workspace.register({ id: 'lab', title: 'Lab', sheet: lab.sheet, editor: lab.pane.editor, select: () => tabs.select('lab') });
 
 function toggleMode(): void {
   const next = sheet.mode === 'run' ? 'view' : 'run';
@@ -212,6 +217,7 @@ const gallery = new ExamplesGallery(
 lab.root.after(gallery.root);
 const tabs = new Tabs({ board: container, lab: lab.root, examples: gallery.root });
 tabs.onChange((tab) => {
+  workspace.setCurrent(tab);
   popups.closeAll();
   pane.cellMenu.closeMenu();
   pane.navigator.root.hidden = tab !== 'board';
@@ -233,5 +239,5 @@ if (restored && saved) {
 scheduleSave = startAutoSave(view.game, sheet);
 
 // Expose a few handles for tinkering from the browser console / AI chats.
-Object.assign(window as unknown as Record<string, unknown>, { sheet, game: view.game, view, hud, loadExamples, tabs, lab: lab.sheet, labPane: lab.pane });
+Object.assign(window as unknown as Record<string, unknown>, { sheet, game: view.game, view, hud, loadExamples, tabs, lab: lab.sheet, labPane: lab.pane, workspace });
 installAiSurface({ sheet, view, hud, editor });

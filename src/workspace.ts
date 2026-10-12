@@ -1,0 +1,151 @@
+import type { Sheet } from './sheet/Sheet';
+import type { CellEditor } from './editor/CellEditor';
+
+/**
+ * The workspace knows every tab that holds a sheet, so a cell can be named from anywhere. Cell paths
+ * read like file paths, with "/" meaning "inside":
+ *
+ *   J24            relative: a cell of the tab you are in (what code usually writes)
+ *   J24/3,4        relative: tile x=3, y=4 of the grid inside block J24
+ *   /lab/J24       absolute: starts at the root, so it works from every tab
+ *   /lab/J24/3,4   absolute tile
+ *   @c-1a2b3c4d    identity: the code's uid, which stays with the code when cells move
+ *   lattakker:///lab/J24/3,4   the same absolute path written as a URI (for tools)
+ *
+ * Only letters, digits and "/ , @ -" are used, so a path needs no escaping in JSON or in a URL, and it
+ * lives inside an ordinary string literal, so TypeScript itself needs no new syntax.
+ */
+
+export interface WorkspaceTab {
+  /** Short lowercase id used in paths: 'board', 'lab'. */
+  id: string;
+  title: string;
+  sheet: Sheet;
+  editor: CellEditor;
+  /** Brings this tab to the front. */
+  select(): void;
+}
+
+export interface ResolvedPath {
+  tab: WorkspaceTab;
+  address: string;
+  /** Set when the path names a tile inside the cell's grid. */
+  tile: { x: number; y: number } | null;
+}
+
+export interface PathParts {
+  tab: string | null;
+  /** 'A12', or a uid when `byUid` is true. */
+  cell: string;
+  byUid: boolean;
+  tile: { x: number; y: number } | null;
+}
+
+const UID = /^c-[0-9a-f]{8}$/;
+const TILE_TAIL = /\/(\d+),(\d+)$/;
+const TAB_ID = /^[a-z][a-z0-9-]*$/;
+
+/** Splits a path into its parts without looking at any sheet. Returns an error message for text that is not a path. */
+export function parsePath(input: string): PathParts | { error: string } {
+  let text = input.trim();
+  if (!text) return { error: 'a cell path is empty' };
+  if (text.toLowerCase().startsWith('lattakker://')) text = text.slice('lattakker://'.length);
+  let tile: PathParts['tile'] = null;
+  const t = TILE_TAIL.exec(text);
+  if (t) {
+    tile = { x: Number(t[1]), y: Number(t[2]) };
+    text = text.slice(0, t.index);
+  }
+  if (text.startsWith('@')) {
+    const uid = text.slice(1).toLowerCase();
+    return UID.test(uid) ? { tab: null, cell: uid, byUid: true, tile } : { error: `"${input}" is not a cell identity (it looks like @c-1a2b3c4d)` };
+  }
+  if (UID.test(text.toLowerCase())) return { tab: null, cell: text.toLowerCase(), byUid: true, tile };
+  if (text.startsWith('/')) {
+    const parts = text.slice(1).split('/');
+    if (parts.length !== 2 || !TAB_ID.test(parts[0]) || !parts[1]) return { error: `"${input}" is not a cell path (it looks like /lab/J24 or /lab/J24/3,4)` };
+    return { tab: parts[0], cell: parts[1].toUpperCase(), byUid: false, tile };
+  }
+  if (text.includes('/')) return { error: `"${input}" is not a cell path (start with / for an absolute path: /lab/J24)` };
+  return { tab: null, cell: text.toUpperCase(), byUid: false, tile };
+}
+
+export class Workspace {
+  private readonly tabs = new Map<string, WorkspaceTab>();
+  private currentId = 'board';
+  private readonly listeners: Array<(id: string) => void> = [];
+
+  register(tab: WorkspaceTab): void {
+    this.tabs.set(tab.id, tab);
+    tab.sheet.setForeignRewriter((rewrite) => {
+      for (const other of this.tabs.values()) if (other.sheet !== tab.sheet) other.sheet.rewriteForeign(tab.id, rewrite);
+    });
+  }
+
+  list(): WorkspaceTab[] {
+    return [...this.tabs.values()];
+  }
+
+  get(id: string): WorkspaceTab | undefined {
+    return this.tabs.get(id);
+  }
+
+  /** The tab the player is looking at ('board', 'lab', or another page such as 'examples'). */
+  get current(): string {
+    return this.currentId;
+  }
+
+  setCurrent(id: string): void {
+    if (this.currentId === id) return;
+    this.currentId = id;
+    this.listeners.forEach((l) => l(id));
+  }
+
+  onCurrentChange(listener: (id: string) => void): void {
+    this.listeners.push(listener);
+  }
+
+  /** Which tab owns a sheet, or undefined. */
+  tabOf(sheet: Sheet): WorkspaceTab | undefined {
+    return this.list().find((t) => t.sheet === sheet);
+  }
+
+  /**
+   * Finds the cell a path names. A relative path starts in `from` (the tab the asker is in; 'board' when
+   * nobody says). A bare uid is looked for in `from` first, then everywhere.
+   */
+  resolve(input: string, from: string | null = null): ResolvedPath | { error: string } {
+    const parts = parsePath(input);
+    if ('error' in parts) return parts;
+    if (parts.byUid) {
+      const order = [from ? this.tabs.get(from) : undefined, ...this.tabs.values()].filter((t): t is WorkspaceTab => !!t);
+      for (const tab of order) {
+        const address = tab.sheet.addressOfUid(parts.cell);
+        if (address) return { tab, address, tile: parts.tile };
+      }
+      return { error: `No cell has the identity "${parts.cell}" any more (its code was cleared or replaced).` };
+    }
+    const tabId = parts.tab ?? from ?? 'board';
+    const tab = this.tabs.get(tabId);
+    if (!tab) return { error: `There is no tab "${tabId}". Tabs: ${this.list().map((t) => t.id).join(', ')}.` };
+    const address = tab.sheet.resolve(parts.cell);
+    if (!address) return { error: `"${parts.cell}" is not a cell address in the ${tab.id} tab (try something like A12; columns A-Z, rows 1-${tab.sheet.rowCount})` };
+    return { tab, address, tile: parts.tile };
+  }
+
+  /** The absolute path of a cell (or of a tile in its grid). */
+  pathOf(tabId: string, address: string, tile?: { x: number; y: number } | null): string {
+    return `/${tabId}/${address}${tile ? `/${tile.x},${tile.y}` : ''}`;
+  }
+
+  /**
+   * The shortest path that is still unambiguous for someone standing in `from`: a plain address inside the
+   * same tab, the full path from any other tab. This is what a menu or a chat message should show.
+   */
+  pathFor(tabId: string, address: string, from: string | null, tile?: { x: number; y: number } | null): string {
+    return from === tabId ? `${address}${tile ? `/${tile.x},${tile.y}` : ''}` : this.pathOf(tabId, address, tile);
+  }
+}
+
+/** The one workspace of the page. */
+export const workspace = new Workspace();
