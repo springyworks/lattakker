@@ -1377,10 +1377,16 @@ question goes.
 
 #### 11.4.3 A “// AI:” line pops the helper up
 
-Write a line such as `// AI: why is this red?` in a cell and leave it alone.
-After **22 seconds** (change it in ⚙, 3 to 600) the pop-up opens by itself,
-asks the question and writes the answer back under your line as `// ↳ AI: …`,
-exactly as an outside assistant would. If an outside assistant is already
+Write a comment line such as `// AI: why is this red?` in a cell, or just
+`//ai` or `//help` on its own line (any capitals, with or without a colon), and
+leave it alone. After **3 seconds** (change it in ⚙, 3 to 600) the pop-up opens
+by itself and asks the question (for a bare `//ai` or `//help`: "please look at
+my code here and help me"). The helper is told **which cell and which line** you
+wrote it on, and reads the text in the open editor even if it is not saved
+yet, so "here" means that line. It writes its answer back under your line as `// ↳ AI: …`,
+exactly as an outside assistant would. If it wants to add code *at that spot*,
+it shows a card with **✍ Add it below line N**: only when you press it, the
+lines are inserted there (Ctrl+Z undoes it). If an outside assistant is already
 listening on MCP (`wait_for_request`), the built-in helper stays quiet so
 nobody answers twice. Without a helper set up you only get a one-time hint.
 

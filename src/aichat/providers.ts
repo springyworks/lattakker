@@ -58,6 +58,26 @@ export interface ModelProvider {
 const GEMINI = 'https://generativelanguage.googleapis.com/v1beta';
 const MAX_OUTPUT_TOKENS = 1400;
 
+const wait = (ms: number, signal?: AbortSignal): Promise<void> =>
+  new Promise((resolve, reject) => {
+    const t = window.setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => {
+      window.clearTimeout(t);
+      reject(new DOMException('Aborted', 'AbortError'));
+    });
+  });
+
+/** A busy server (503/500/504, or 429) often answers a moment later: try a few times before giving up. */
+async function fetchWithRetry(url: string, init: RequestInit, signal: AbortSignal, onWait?: (seconds: number) => void): Promise<Response> {
+  const pauses = [1500, 4000, 8000];
+  for (let i = 0; ; i++) {
+    const res = await fetch(url, init);
+    if (![429, 500, 502, 503, 504].includes(res.status) || i >= pauses.length) return res;
+    onWait?.(Math.round(pauses[i] / 1000));
+    await wait(pauses[i], signal);
+  }
+}
+
 async function errorMessage(res: Response): Promise<string> {
   try {
     const body = (await res.json()) as { error?: { message?: string } | string };
@@ -254,7 +274,7 @@ export class GeminiProvider implements ModelProvider {
     }
     let res: Response;
     try {
-      res = await fetch(`${GEMINI}/models/${encodeURIComponent(this.model)}:generateContent`, { method: 'POST', headers: this.headers(), body: JSON.stringify(body), signal });
+      res = await fetchWithRetry(`${GEMINI}/models/${encodeURIComponent(this.model)}:generateContent`, { method: 'POST', headers: this.headers(), body: JSON.stringify(body), signal }, signal);
     } catch (err) {
       if (signal.aborted) throw err;
       throw new AiError('network', `Could not reach Google. Is the internet working? ${err instanceof Error ? err.message : ''}`.trim());
@@ -318,6 +338,8 @@ export function friendly(err: unknown): string {
     switch (err.kind) {
       case 'rate':
         return 'The AI is resting for a moment (too many questions in a short time). Wait a minute and ask again.';
+      case 'server':
+        return `The AI service is busy right now (${err.message}). I tried a few times. Ask again in a minute, or pick another model in the settings ⚙ (a “lite” or “flash” model is often less busy).`;
       case 'auth':
         return `The AI said no: ${err.message} (a grown-up can check the key in the settings ⚙).`;
       case 'network':

@@ -12,13 +12,17 @@ const MAX_RESULT = 4000;
 export interface AiContext {
   tab: string;
   address: string | null;
+  /** The line (1-based) of the cell's code the question was written on or the cursor is on. */
+  line?: number | null;
 }
 
 /** What the tools need from the rest of the app. */
 export interface ToolHost {
   context(): AiContext;
   /** Shows the person some code the helper suggests; nothing is written until they say so. */
-  suggest(path: string, code: string, note: string): void;
+  suggest(path: string, code: string, note: string, afterLine: number | null): void;
+  /** The text in the open editor of that cell (saved or not), or null when no editor is open on it. */
+  liveText(tab: string, address: string): string | null;
   help(): string;
   state(): unknown;
   boardText(): string;
@@ -31,7 +35,7 @@ const cellPath = { type: 'string', description: 'A cell path: "A12" (in the tab 
 export const TOOL_DECLS: ToolDecl[] = [
   {
     name: 'look_around',
-    description: 'Where the person is right now: which tab, which cell they are asking from, and that cell (code, output, error). Call this first when the question is about "this cell".',
+    description: 'Where the person is right now: which tab, which cell and which line of its code they are asking from, and that cell (code with line numbers, output, error). Call this first when the question is about "this cell" or "here".',
     parameters: { type: 'object', properties: {} },
   },
   {
@@ -74,7 +78,12 @@ export const TOOL_DECLS: ToolDecl[] = [
     description: 'Offer code for a cell. The person sees it in a card and decides: only if they press the button is it typed into the cell, slowly, where they can watch. Always explain the code in your answer too. Put a comment line above every line of code.',
     parameters: {
       type: 'object',
-      properties: { path: cellPath, code: { type: 'string', description: 'The complete TypeScript for the cell.' }, note: { type: 'string', description: 'One short sentence: what this code does.' } },
+      properties: {
+        path: cellPath,
+        code: { type: 'string', description: 'The TypeScript to offer. Without after_line it replaces the whole cell, so it must be the complete code.' },
+        after_line: { type: 'integer', description: 'Give a line number of the cell (as numbered by look_around / read_cell) to insert the code as new lines right below that line instead of replacing the cell. Use it when the person asked "here".' },
+        note: { type: 'string', description: 'One short sentence: what this code does.' },
+      },
       required: ['path', 'code'],
     },
   },
@@ -99,7 +108,12 @@ async function readCell(host: ToolHost, path: string): Promise<unknown> {
   if ('error' in hit) return { error: hit.error };
   const answer = await router.request(CLIENT, hit.tab.id, 'tools/call', { name: 'get_cell', arguments: { address: hit.address } });
   const { ok, value } = inner(answer);
-  return ok ? value : { error: value };
+  if (!ok) return { error: value };
+  // What is in the open editor is newer than what is saved (the person may still be typing), and line numbers make "here" exact.
+  const cell = value as { code?: string };
+  const live = host.liveText(hit.tab.id, hit.address);
+  const code = live ?? cell.code ?? '';
+  return { ...cell, code: undefined, codeWithLineNumbers: code.split('\n').map((l, i) => `${i + 1}: ${l}`).join('\n'), editorOpenWithUnsavedText: live !== null && live !== cell.code };
 }
 
 /** Runs one tool the model asked for. The answer is always text; a problem is reported in it, never thrown at the model. */
@@ -109,7 +123,7 @@ export async function runTool(host: ToolHost, name: string, args: Args): Promise
       case 'look_around': {
         const here = host.context();
         const cell = here.address ? await readCell(host, workspace.pathOf(here.tab, here.address)) : null;
-        return limit(asText({ tab: here.tab, cell: here.address ? workspace.pathOf(here.tab, here.address) : null, theCell: cell, tabs: workspace.list().map((t) => ({ id: t.id, title: t.title })) }));
+        return limit(asText({ tab: here.tab, cell: here.address ? workspace.pathOf(here.tab, here.address) : null, line: here.line ?? null, theCell: cell, tabs: workspace.list().map((t) => ({ id: t.id, title: t.title })) }));
       }
       case 'list_tabs':
         return asText(workspace.list().map((t) => ({ id: t.id, title: t.title, codeCells: t.sheet.codeCells().length })));
@@ -138,8 +152,9 @@ export async function runTool(host: ToolHost, name: string, args: Args): Promise
         if ('error' in hit) return asText({ error: hit.error });
         if (hit.tab.sheet.isBoardAddress(hit.address)) return asText({ error: `${hit.address} is a board square. Code goes in a lower row such as A12.` });
         if (typeof args.code !== 'string' || !args.code.trim()) return asText({ error: 'code must be the TypeScript text for the cell' });
-        host.suggest(workspace.pathOf(hit.tab.id, hit.address), args.code, typeof args.note === 'string' ? args.note : '');
-        return asText({ shownToThePerson: true, note: 'The person has to press the button before anything is typed. Explain the code in your answer.' });
+        const after = typeof args.after_line === 'number' && Number.isInteger(args.after_line) && args.after_line >= 1 ? args.after_line : null;
+        host.suggest(workspace.pathOf(hit.tab.id, hit.address), args.code, typeof args.note === 'string' ? args.note : '', after);
+        return asText({ shownToThePerson: true, note: 'The person has to press the button before anything is changed. Explain the code in your answer.' });
       }
       default:
         return asText({ error: `There is no tool "${name}". Tools: ${TOOL_DECLS.map((t) => t.name).join(', ')}.` });

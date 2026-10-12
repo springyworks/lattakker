@@ -24,7 +24,7 @@ function editorContext(): AiContext | null {
   const editor = monaco.editor.getEditors().find((e) => e.hasTextFocus());
   const model = editor?.getModel();
   const owner = model ? parseCellUri(model.uri) : null;
-  return owner && workspace.get(owner.scope) ? { tab: owner.scope, address: owner.address } : null;
+  return owner && workspace.get(owner.scope) ? { tab: owner.scope, address: owner.address, line: editor?.getPosition()?.lineNumber ?? null } : null;
 }
 
 /** Where the person is pointing: the cell being edited, else the selected cell of the tab on screen. */
@@ -34,6 +34,25 @@ function contextNow(): AiContext {
   const focus = workspace.focus;
   if (focus && focus.tab === workspace.current) return { tab: focus.tab, address: focus.address };
   return { tab: workspace.current, address: null };
+}
+
+/** Adds code as new lines right below a line of a cell: in the open editor when there is one (Ctrl+Z undoes it), else in the saved code. */
+function addBelowLine(path: string, code: string, line: number): { ok: boolean; error?: string } {
+  const hit = workspace.resolve(path);
+  if ('error' in hit) return { ok: false, error: hit.error };
+  const { tab, address } = hit;
+  tab.select();
+  if (tab.editor.isOpen && tab.editor.address === address) {
+    return tab.editor.insertAfterLine(line, code) ? { ok: true } : { ok: false, error: `line ${line} is not in the editor any more` };
+  }
+  const d = tab.sheet.dataAt(address);
+  if (!d) return { ok: false, error: `${path} is not a cell` };
+  const lines = d.code.split('\n');
+  if (line > lines.length) return { ok: false, error: `${path} has only ${lines.length} lines` };
+  lines.splice(line, 0, ...code.split('\n'));
+  tab.sheet.setCode(address, lines.join('\n'));
+  tab.editor.open(address);
+  return { ok: true };
 }
 
 /**
@@ -49,12 +68,17 @@ export function installAiChat(deps: { surface: Surface; strip: TabStrip; say: (t
     help: () => surface.help(),
     state: () => surface.state(),
     boardText: () => String((surface.board() as { text?: string }).text ?? ''),
+    liveText: (tab, address) => {
+      const editor = workspace.get(tab)?.editor;
+      return editor?.isOpen && editor.address === address ? editor.valueText : null;
+    },
   });
 
   const ui = new AiChatUi(convo, {
     contextNow,
     onSideChange: (open) => strip.setAiOpen(open),
-    typeIn: async (path, code) => {
+    typeIn: async (path, code, afterLine) => {
+      if (afterLine) return addBelowLine(path, code, afterLine);
       const result = (await surface.writeCodeLive(path, code)) as { ok: boolean; error?: string };
       return result.ok ? { ok: true } : { ok: false, error: result.error };
     },
@@ -68,7 +92,7 @@ export function installAiChat(deps: { surface: Surface; strip: TabStrip; say: (t
         return;
       }
       ui.openMini(ctx, options.at ?? null, !options.question);
-      if (options.question) void convo.ask(options.question, ctx, () => {}).then((r) => options.done?.(r));
+      if (options.question) void convo.ask(options.question, ctx).then((r) => options.done?.(r));
     },
     toggleSide: () => ui.toggleSide(),
     openSettings: () => ui.showSettings(true),

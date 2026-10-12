@@ -19,7 +19,7 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, props: Partial<HTMLEl
 
 export interface UiHost {
   /** Types code into a cell where the person can watch (the "Type it into the cell" button). */
-  typeIn(path: string, code: string): Promise<{ ok: boolean; error?: string }>;
+  typeIn(path: string, code: string, afterLine: number | null): Promise<{ ok: boolean; error?: string }>;
   /** Where the person is pointing right now. */
   contextNow(): AiContext;
   onSideChange(open: boolean): void;
@@ -128,7 +128,7 @@ export class AiChatUi {
 
   private paintChip(): void {
     const ctx = this.host.contextNow();
-    this.sideChip.textContent = ctx.address ? `📍 ${workspace.pathFor(ctx.tab, ctx.address, workspace.current)}` : `📍 /${ctx.tab}`;
+    this.sideChip.textContent = ctx.address ? `📍 ${workspace.pathFor(ctx.tab, ctx.address, workspace.current)}${ctx.line ? `:${ctx.line}` : ''}` : `📍 /${ctx.tab}`;
     this.sideChip.title = 'The cell your question will be about (click a cell to change it)';
   }
 
@@ -161,7 +161,7 @@ export class AiChatUi {
   /** Opens the little chat near `anchor` (a point on screen) about `ctx`. */
   openMini(ctx: AiContext, anchor: { x: number; y: number } | null, focusInput = true): void {
     this.miniCtx = ctx;
-    const label = ctx.address ? workspace.pathFor(ctx.tab, ctx.address, workspace.current) : `/${ctx.tab}`;
+    const label = ctx.address ? `${workspace.pathFor(ctx.tab, ctx.address, workspace.current)}${ctx.line ? ` · line ${ctx.line}` : ''}` : `/${ctx.tab}`;
     this.mini.querySelector<HTMLElement>('[data-role=title]')!.textContent = `About ${label}`;
     this.mini.hidden = false;
     this.render();
@@ -193,7 +193,7 @@ export class AiChatUi {
       return;
     }
     input.value = '';
-    void this.convo.ask(text, ctx(), () => {});
+    void this.convo.ask(text, ctx());
   }
 
   // ------------------------------------------------------------ drawing
@@ -271,16 +271,16 @@ export class AiChatUi {
 
   private proposalNode(entry: Extract<Entry, { kind: 'proposal' }>): HTMLElement {
     const pre = el('pre', {}, el('code', { textContent: entry.code }));
-    const card = el('div', { className: 'ai-proposal' }, el('div', { className: 'ai-who', textContent: `💡 Code for ${entry.path}` }));
+    const card = el('div', { className: 'ai-proposal' }, el('div', { className: 'ai-who', textContent: entry.afterLine ? `💡 Code to add in ${entry.path} below line ${entry.afterLine}` : `💡 Code for ${entry.path}` }));
     if (entry.note) card.append(el('div', { className: 'ai-note', textContent: entry.note }));
     card.append(pre);
     if (entry.state === 'open') {
-      const type = el('button', { className: 'ai-send', textContent: `✍ Type it into ${entry.path}` });
-      type.title = 'The code is typed slowly into the cell, so you can watch. You decide whether to keep it.';
+      const type = el('button', { className: 'ai-send', textContent: entry.afterLine ? `✍ Add it below line ${entry.afterLine}` : `✍ Type it into ${entry.path}` });
+      type.title = entry.afterLine ? 'The code is added right below that line of the cell. You can undo it with Ctrl+Z.' : 'The code is typed slowly into the cell, so you can watch. You decide whether to keep it.';
       type.onclick = () => {
         entry.state = 'typed';
         this.closeMini();
-        void this.host.typeIn(entry.path, entry.code).then((r) => {
+        void this.host.typeIn(entry.path, entry.code, entry.afterLine).then((r) => {
           if (!r.ok) this.convo.note(`Could not type it: ${r.error ?? 'unknown problem'}`);
           else this.render();
         });
@@ -295,7 +295,7 @@ export class AiChatUi {
       };
       card.append(el('div', { className: 'ai-actions' }, type, copy, skip));
     } else {
-      card.append(el('div', { className: 'ai-note', textContent: entry.state === 'typed' ? 'Typed into the cell ✓ (press Esc or Restart & close there to keep it)' : 'Skipped.' }));
+      card.append(el('div', { className: 'ai-note', textContent: entry.state === 'typed' ? 'Done ✓ (press Esc or Restart & close in the cell editor to keep it)' : 'Skipped.' }));
     }
     return card;
   }
@@ -348,7 +348,7 @@ export class AiChatUi {
     root.append(
       el('h3', { textContent: 'Other' }),
       el('label', { className: 'ai-row' }, remember, ' Remember the key on this computer (otherwise it is forgotten when the page closes). Code in a cell could read a remembered key, so only do this on your own computer.'),
-      el('label', { className: 'ai-row' }, auto, ' When I leave a “// AI:” line in a cell, pop up the helper after ', secs, ' seconds.'),
+      el('label', { className: 'ai-row' }, auto, ' When I write “// AI:”, “//ai” or “//help” in a cell, pop up the helper after ', secs, ' seconds.'),
       el('div', { className: 'ai-actions' }, done, forget),
       el('p', { className: 'ai-note', textContent: 'Microsoft Copilot cannot be used here: it has no free way to be called from a web page.' }),
     );

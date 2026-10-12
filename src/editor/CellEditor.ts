@@ -6,6 +6,10 @@ import { isAnswered, requestAt } from '../ai/requests';
 import { createEditor, modelFor, monaco } from './monaco';
 import { installPopupMenu } from './EditorContextMenu';
 import { aiBridge } from '../aichat/bridge';
+import { getSettings, isConfigured } from '../aichat/config';
+
+/** True when the built-in helper is set up and will pick up a question by itself. */
+const helperAnswers = (): boolean => isConfigured() && getSettings().autoPopup;
 
 const FRAME_W = 580;
 const FRAME_H = 360;
@@ -115,9 +119,9 @@ export class CellEditor {
     lines.forEach((text, i) => {
       const n = i + 1;
       let hint = '';
-      if (n === cursorLine && /^\s*\/\/\s*$/.test(text) && !(lines[i - 1] ?? '').trimStart().startsWith('// ↳')) hint = 'type "AI: " and ask your question';
+      if (n === cursorLine && /^\s*\/\/\s*$/.test(text) && !(lines[i - 1] ?? '').trimStart().startsWith('// ↳')) hint = 'type "ai" or "help" here and the helper pops up';
       else if (n === cursorLine && /^\s*\/\/\s*$/.test(text)) hint = 'ask the AI something';
-      else if (requestAt(lines, i) && !isAnswered(lines, i)) hint = listening ? '⏳ the AI is reading along…' : '💤 the AI is not listening right now';
+      else if (requestAt(lines, i) && !isAnswered(lines, i)) hint = listening || helperAnswers() ? '⏳ the AI is reading along…' : '💤 the AI is not listening right now';
       if (!hint) return;
       decorations.push({
         range: new monaco.Range(n, model.getLineMaxColumn(n), n, model.getLineMaxColumn(n)),

@@ -1,7 +1,9 @@
 /** Chat by comments: the player writes `// AI: ...` (or a plain `//` line under an earlier answer), the assistant answers with `// ↳ AI: ...` lines right below. */
 export const REPLY_MARK = '// ↳';
 
-const EXPLICIT = /^\s*\/\/\s*(?:@ai\b\s*[:,]?|ai\s*[:,])\s*(.*)$/i;
+// "// AI: question", "//ai", "// help" ...: the word on its own (or followed by a colon, comma or text) starts a request.
+const EXPLICIT = /^\s*\/\/\s*(?:@ai|ai|help)(?![\w-])\s*[:,]?\s*(.*)$/i;
+const NO_QUESTION = 'Please look at my code here and help me.';
 const PLAIN_COMMENT = /^\s*\/\/\s*(\S.*)$/;
 
 /** The question on line `i` (0-based), or null when that line is not a question. */
@@ -9,7 +11,7 @@ export function requestAt(lines: string[], i: number): string | null {
   const line = lines[i] ?? '';
   if (line.trimStart().startsWith(REPLY_MARK)) return null;
   const explicit = EXPLICIT.exec(line);
-  if (explicit) return explicit[1].trim() || null;
+  if (explicit) return explicit[1].trim() || NO_QUESTION;
   const plain = PLAIN_COMMENT.exec(line);
   if (plain && i > 0 && lines[i - 1].trimStart().startsWith(REPLY_MARK)) return plain[1].trim();
   return null;

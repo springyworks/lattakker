@@ -25,7 +25,7 @@ export const DEFAULT_SETTINGS: AiSettings = {
   gemini: { model: 'gemini-flash-latest', adultAck: false },
   remember: false,
   autoPopup: true,
-  autoSeconds: 22,
+  autoSeconds: 3,
 };
 
 const SETTINGS_KEY = 'lattakker:ai:v1';
@@ -38,7 +38,8 @@ const listeners: Array<() => void> = [];
 
 function merge(base: AiSettings, saved: Partial<AiSettings> | null): AiSettings {
   if (!saved || typeof saved !== 'object') return base;
-  const seconds = Number(saved.autoSeconds);
+  // Settings saved before version 2 that still hold the old default of 22 seconds get the new default.
+  const seconds = (saved as { v?: number }).v === 2 || Number(saved.autoSeconds) !== 22 ? Number(saved.autoSeconds) : base.autoSeconds;
   return {
     provider: saved.provider === 'gemini' ? 'gemini' : 'local',
     local: { baseUrl: String(saved.local?.baseUrl || base.local.baseUrl), model: String(saved.local?.model ?? '') },
@@ -65,7 +66,7 @@ export function loadSettings(): void {
 
 function persist(): void {
   try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...settings, v: 2 }));
     if (settings.remember) localStorage.setItem(KEYS_KEY, JSON.stringify(keys));
     else localStorage.removeItem(KEYS_KEY);
   } catch {

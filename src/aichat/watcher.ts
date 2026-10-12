@@ -63,7 +63,7 @@ export function startWatcher(host: WatcherHost): void {
         continue;
       }
       aiBridge.ask(
-        { tab: r.tab, address: r.address },
+        { tab: r.tab, address: r.address, line: r.line },
         {
           question: r.text,
           at: { x: window.innerWidth - 380, y: 90 },

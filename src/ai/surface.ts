@@ -818,7 +818,7 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
     {
       name: 'get_requests',
       description:
-        "List the questions the player wrote to you inside cells. A request is a comment line that starts with `// AI:` (or `// @ai`), for example `// AI: make this cell blue`. This also reads text the player is still typing in the open editor (unsaved: true). By default only unanswered requests are returned; each has address, uid, line and text. Answer with reply_to_request.",
+        "List the questions the player wrote to you inside cells. A request is a comment line that starts with `// AI:` (or `// @ai`, `//ai`, `//help`), for example `// AI: make this cell blue`; a bare `//ai` or `//help` means: look at my code here and help me. This also reads text the player is still typing in the open editor (unsaved: true). By default only unanswered requests are returned; each has address, uid, line and text. Answer with reply_to_request.",
       inputSchema: obj({ include_answered: { type: 'boolean', description: 'Also return requests that already have an answer (default false).' } }),
       readOnly: true,
       run: (a) => api.requests(a.include_answered === true),
