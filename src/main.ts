@@ -16,6 +16,7 @@ import { GAME_NODE } from './sheet/reactivity';
 import { SheetPane } from './ui/SheetPane';
 import { createLab } from './lab';
 import { installAiSurface } from './ai/surface';
+import { installAiChat } from './aichat';
 import { loadSaved, startAutoSave } from './storage';
 import { workspace } from './workspace';
 import { router } from './mcp/router';
@@ -235,4 +236,6 @@ scheduleSave = startAutoSave(view.game, sheet);
 
 // Expose a few handles for tinkering from the browser console / AI chats.
 Object.assign(window as unknown as Record<string, unknown>, { sheet, game: view.game, view, hud, loadExamples, tabs, lab: lab.sheet, labPane: lab.pane, workspace, share, mcpRouter: router });
-installAiSurface({ sheet, view, hud, editor });
+const surface = installAiSurface({ sheet, view, hud, editor });
+// The AI helper (chat, pop-up, "// AI:" watcher): silent until someone chooses a helper in its settings.
+installAiChat({ surface, strip: tabs.strip, say: (text) => hud.say(text, 'info') });

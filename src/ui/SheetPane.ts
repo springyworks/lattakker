@@ -1,3 +1,4 @@
+import { aiBridge } from '../aichat/bridge';
 import { InternalEvent, type Cell, type MaxPopupMenu, type PopupMenuHandler } from '@maxgraph/core';
 import type { Sheet } from '../sheet/Sheet';
 import type { GameView } from '../game/GameView';
@@ -253,6 +254,7 @@ export class SheetPane {
         const isBoard = sheet.isBoardAddress(address);
         if (!isBoard) {
           menu.addItem(`Edit ${address}`, null, () => this.editor.open(address));
+          menu.addItem(`🤖 Ask the AI about ${address}`, null, () => aiBridge.ask({ tab: sheet.id, address }));
           if (sheet.dataAt(address)?.code) menu.addItem(`Clear ${address}`, null, () => sheet.setCode(address, ''));
           const tasks = sheet.taskCount(address);
           if (tasks > 0) {
@@ -368,6 +370,7 @@ export class SheetPane {
       onSelect: hasCode ? () => this.copy(d.uid, 'the id') : undefined,
     });
     items.push({ label: hasCode ? '✏️ Edit code…' : '✏️ Write TypeScript here…', onSelect: () => this.editor.open(address) });
+    items.push({ label: '🤖 Ask the AI about this…', hint: 'Alt+I', onSelect: () => aiBridge.ask({ tab: sheet.id, address }) });
     if (!hasCode) {
       items.push({
         label: '📝 Create an example here…',

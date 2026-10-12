@@ -38,7 +38,7 @@ const LEGEND =
   '~~ = lake (nobody can enter). .. = empty square. Columns A-J left to right, rows 1-10 top to bottom: ' +
   "row 1 is Blue's back row, row 10 is Red's back row. Red (the player, and the AI helping them) moves up the board.";
 
-const HELP = `LATTAKKER SHEET - window.mms guide (everything runs locally in this page; free, no tracking, no network unless the player starts a Share session)
+const HELP = `LATTAKKER SHEET - window.mms guide (everything runs locally in this page; free, no tracking, no network unless the player starts a Share session or sets up the optional built-in helper, the 🤖 AI button)
 
 The page is a Lattakker board that is also a spreadsheet. Red is the child/player, Blue is the computer. Cells below the board (A12, E12, ...) hold TypeScript that runs live.
 Every mms method returns plain JSON. Errors never throw: you get { ok: false, error: "..." }. Success is { ok: true, ... }.
@@ -135,7 +135,7 @@ const ADDR =
   'A cell address like A12 (in the board tab unless `tab` says otherwise; code cells live below the board, row 12 or lower), a path starting with the tab like /lab/J24, or a cell identity like @c-1a2b3c4d (it follows the content when cells move and works from every tab).';
 const TAB_PROP = { type: 'string', description: "Which tab a plain address like J24 belongs to: 'board' (default), 'lab' or 'examples'. Not needed when the address is a path like /lab/J24 or an identity." };
 
-export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps): void {
+export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
   // ------------------------------------------------------------ helpers
 
   const game = () => view.game;
@@ -947,6 +947,8 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps): void {
     mms: { ...api, webmcp, tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })), version: 2 },
   });
   installMcpBridge(tools);
+  // The in-page AI helper (see aichat/) uses the same actions as an outside assistant would.
+  return api;
 }
 
 interface ModelContextLike {

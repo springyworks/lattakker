@@ -26,9 +26,13 @@ export class TabStrip {
   private readonly tabCells = new Map<string, Cell>();
   private pathCell!: Cell;
   private shareCell!: Cell;
+  private aiCell!: Cell;
   private remoteCell!: Cell;
   /** What a click on the share button does (set by whoever owns the share dialog). */
   onShare: () => void = () => {};
+  /** What a click on the 🤖 helper button does. */
+  onAi: () => void = () => {};
+  private aiOn = false;
   private shareText = '🤝 Share';
   private shareOn = false;
   private remoteText = '';
@@ -64,6 +68,7 @@ export class TabStrip {
       tips.delay = 400;
       tips.getTooltipForCell = (cell: Cell) => {
         const id = cell.getId() ?? '';
+        if (id === 'strip:ai') return 'Ask the AI helper (Alt+I). It can look at the cell you are in';
         if (id === 'strip:share') return 'Work together with a tutor or a friend: a direct link between two browsers, no server';
         if (id === 'strip:remote') return 'Where the other person is pointing right now';
         if (id === 'strip:path') return "Where you are, written as a cell path. Click to copy it. Code can use it: at('/lab/J24')";
@@ -94,6 +99,14 @@ export class TabStrip {
         size: [112, PATH_H],
         style: this.shareStyle(),
       });
+      this.aiCell = graph.insertVertex({
+        parent: graph.getDefaultParent(),
+        id: 'strip:ai',
+        value: '🤖 AI',
+        position: [x + 130, (STRIP_H - PATH_H) / 2 + 2],
+        size: [72, PATH_H],
+        style: this.aiStyle(),
+      });
       this.remoteCell = graph.insertVertex({
         parent: graph.getDefaultParent(),
         id: 'strip:remote',
@@ -118,6 +131,7 @@ export class TabStrip {
       const id = cell?.getId() ?? '';
       if (id === 'strip:path') this.copyPath();
       else if (id === 'strip:share') this.onShare();
+      else if (id === 'strip:ai') this.onAi();
       else if (id === 'strip:remote') this.copyRemote();
       else if (id.startsWith('strip:')) this.onSelect(id.slice(6));
     });
@@ -126,7 +140,7 @@ export class TabStrip {
       mouseDown: () => {},
       mouseMove: (_s: unknown, me: { getCell(): Cell | null }) => {
         const id = me.getCell()?.getId() ?? '';
-        const over = id.startsWith('strip:') && !['strip:path', 'strip:share', 'strip:remote'].includes(id) ? id.slice(6) : null;
+        const over = id.startsWith('strip:') && !['strip:path', 'strip:share', 'strip:ai', 'strip:remote'].includes(id) ? id.slice(6) : null;
         if (over !== this.hovered) {
           this.hovered = over;
           this.paintTabs();
@@ -196,6 +210,22 @@ export class TabStrip {
       verticalAlign: 'middle',
       whiteSpace: 'nowrap',
     };
+  }
+
+  private aiStyle(): Record<string, unknown> {
+    return { ...this.shareStyle(), fillColor: this.aiOn ? '#d9e8dd' : '#f6f7f9', strokeColor: this.aiOn ? '#5b9a74' : EDGE };
+  }
+
+  /** Whether the helper's side chat is open. */
+  setAiOpen(open: boolean): void {
+    this.aiOn = open;
+    const model = this.graph.getDataModel();
+    model.beginUpdate();
+    try {
+      model.setStyle(this.aiCell, this.aiStyle());
+    } finally {
+      model.endUpdate();
+    }
   }
 
   private remoteStyle(): Record<string, unknown> {
@@ -284,14 +314,17 @@ export class TabStrip {
     const shareX = lastTab.x + lastTab.width + 12;
     const shareW = widthFor(this.shareText, 112);
     move(this.shareCell, shareX, shareW);
+    const aiX = shareX + shareW + 8;
+    move(this.aiCell, aiX, 72);
+    const rightOfButtons = aiX + 72 + 12;
     const pathText = this.flashing ? 'copied ✓' : `📍 ${this.pathText}`;
     const pathW = widthFor(pathText, 90);
     const available = this.container.clientWidth;
-    const pathX = Math.max(shareX + shareW + 12, available - pathW - 14);
+    const pathX = Math.max(rightOfButtons, available - pathW - 14);
     move(this.pathCell, pathX, pathW);
     if (this.remoteText) {
       const remoteW = widthFor(this.remoteText, 90);
-      move(this.remoteCell, Math.max(shareX + shareW + 12, pathX - remoteW - 8), remoteW);
+      move(this.remoteCell, Math.max(rightOfButtons, pathX - remoteW - 8), remoteW);
     }
   }
 

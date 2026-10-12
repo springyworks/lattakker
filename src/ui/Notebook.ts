@@ -1,3 +1,4 @@
+import { aiBridge } from '../aichat/bridge';
 import { CH, Sheet } from '../sheet/Sheet';
 import { formatAddress } from '../sheet/address';
 import { clickNode } from '../sheet/reactivity';
@@ -308,7 +309,15 @@ export function createNotebook(view: GameView, board: NotebookBoard, examples: R
     reset.title = 'Put the example back as it was written';
     const copy = el('button', 'nb-btn', '⧉ Copy');
     copy.type = 'button';
-    head.append(heading, chip, primary, onBoard, reset, copy);
+    const ask = el('button', 'nb-btn', '🤖 Ask');
+    ask.type = 'button';
+    ask.title = 'Ask the AI helper about this example';
+    ask.addEventListener('click', (ev) => {
+      const r = ask.getBoundingClientRect();
+      aiBridge.ask(e.bound ? { tab: 'board', address: home } : { tab: 'examples', address }, { at: { x: r.left, y: r.bottom } });
+      ev.stopPropagation();
+    });
+    head.append(heading, chip, primary, onBoard, reset, copy, ask);
 
     const codeBox = el('div', 'nb-code');
     const out = el('div', 'nb-out');

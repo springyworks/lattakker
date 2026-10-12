@@ -5,6 +5,7 @@ import { THEME } from '../theme';
 import { isAnswered, requestAt } from '../ai/requests';
 import { createEditor, modelFor, monaco } from './monaco';
 import { installPopupMenu } from './EditorContextMenu';
+import { aiBridge } from '../aichat/bridge';
 
 const FRAME_W = 580;
 const FRAME_H = 360;
@@ -375,12 +376,18 @@ export class CellEditor {
     this.outTimer = window.setInterval(() => this.renderOutput(), 400);
   }
 
+  private askAi(): void {
+    if (this.address) aiBridge.ask({ tab: this.sheet.id, address: this.address });
+  }
+
   /** Right-click on the title bar or the output strip gets the popup menu too, not the browser's. */
   private installWindowMenus(titleBar: HTMLElement, out: HTMLElement, outCell: HTMLElement, tag: HTMLElement): void {
     installPopupMenu(titleBar, () => [
       { label: 'Restart', hint: 'Ctrl+Enter', onSelect: () => this.run() },
       { label: 'Restart & close', hint: 'Esc', onSelect: () => this.close(true) },
       { label: 'Close, keep the old code', danger: true, onSelect: () => this.close(false) },
+      { separator: true },
+      { label: '🤖 Ask the AI about this…', hint: 'Alt+I', onSelect: () => this.askAi() },
     ]);
     installPopupMenu(out, () => {
       const picked = window.getSelection()?.toString() ?? '';
@@ -393,6 +400,8 @@ export class CellEditor {
         },
         { label: this.outOpen ? 'Shrink output' : 'Enlarge output', onSelect: () => tag.click() },
         { label: 'Restart', hint: 'Ctrl+Enter', onSelect: () => this.run() },
+        { separator: true },
+        { label: '🤖 Ask the AI about this…', hint: 'Alt+I', onSelect: () => this.askAi() },
       ];
     });
   }

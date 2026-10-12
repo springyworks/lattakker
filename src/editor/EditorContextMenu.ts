@@ -1,5 +1,7 @@
 import * as monaco from 'monaco-editor';
 import { HoverMenu, type MenuItem } from '../ui/HoverMenu';
+import { aiBridge } from '../aichat/bridge';
+import { parseCellUri } from './monaco';
 
 /**
  * Right-click inside any Monaco editor (or any other part of an editor window, via installPopupMenu)
@@ -77,6 +79,20 @@ function showNote(text: string, x = window.innerWidth / 2, y = 60): void {
   }, 4000);
 }
 
+/** "Ask the AI": about the selected text when there is some, else about the whole cell. */
+function askAi(editor: monaco.editor.ICodeEditor): MenuItem {
+  const model = editor.getModel();
+  const owner = model ? parseCellUri(model.uri) : null;
+  return {
+    label: '🤖 Ask the AI about this…',
+    hint: 'Alt+I',
+    disabled: !owner,
+    onSelect: () => {
+      if (owner) aiBridge.ask({ tab: owner.scope, address: owner.address });
+    },
+  };
+}
+
 function editorItems(editor: monaco.editor.ICodeEditor): MenuItem[] {
   return [
     clipboard(editor, 'editor.action.clipboardCutAction', 'cut', 'Cut', 'Ctrl+X'),
@@ -97,6 +113,8 @@ function editorItems(editor: monaco.editor.ICodeEditor): MenuItem[] {
     action(editor, 'editor.action.quickFix', 'Quick fix', 'Ctrl+.'),
     action(editor, 'editor.action.formatDocument', 'Format code', 'Shift+Alt+F'),
     action(editor, 'editor.action.quickCommand', 'All commands', 'F1'),
+    { separator: true },
+    askAi(editor),
   ];
 }
 
