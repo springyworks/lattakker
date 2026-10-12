@@ -1,3 +1,5 @@
+import { TabStrip } from './TabStrip';
+
 export type TabId = 'board' | 'lab' | 'examples';
 
 interface TabSpec {
@@ -15,11 +17,15 @@ const TABS: TabSpec[] = [
 /**
  * A tab strip above the page. The panels stay in the DOM (just hidden), so the board keeps its
  * state, scroll position and running cells while the player browses the examples.
+ *
+ * What you see is drawn by maxGraph (TabStrip.ts). The <button role="tab"> elements stay in the page,
+ * visually hidden, so the keyboard, screen readers and AI helpers still have real tabs to work with.
  */
 export class Tabs {
   readonly root = document.createElement('nav');
   private readonly buttons = new Map<TabId, HTMLButtonElement>();
   private current: TabId = 'board';
+  readonly strip: TabStrip;
   private readonly listeners: Array<(tab: TabId, previous: TabId) => void> = [];
 
   constructor(private readonly panels: Record<TabId, HTMLElement>) {
@@ -28,7 +34,7 @@ export class Tabs {
     for (const spec of TABS) {
       const b = document.createElement('button');
       b.type = 'button';
-      b.className = 'tab';
+      b.className = 'tab-a11y';
       b.id = `tab-${spec.id}`;
       b.setAttribute('role', 'tab');
       b.setAttribute('aria-controls', panels[spec.id].id);
@@ -43,6 +49,19 @@ export class Tabs {
       });
       this.buttons.set(spec.id, b);
       this.root.append(b);
+    }
+    const drawing = document.createElement('div');
+    drawing.setAttribute('aria-hidden', 'true');
+    this.root.prepend(drawing);
+    this.strip = new TabStrip(
+      drawing,
+      TABS.map((t) => ({ id: t.id, label: t.label, hint: t.hint })),
+      (id) => this.select(id as TabId),
+    );
+    // A keyboard user moving between the hidden buttons sees the focus on the drawn tab.
+    for (const b of this.buttons.values()) {
+      b.addEventListener('focus', () => drawing.classList.add('kbd-focus'));
+      b.addEventListener('blur', () => drawing.classList.remove('kbd-focus'));
     }
     document.body.prepend(this.root);
     document.body.classList.add('has-tabs');
@@ -72,11 +91,17 @@ export class Tabs {
     this.listeners.forEach((h) => h(tab, previous));
   }
 
+  /** The "you are here" path shown at the right of the strip. */
+  setPath(text: string): void {
+    this.strip.setPath(text);
+  }
+
   private apply(): void {
     for (const spec of TABS) {
       const on = spec.id === this.current;
       const b = this.buttons.get(spec.id)!;
       b.classList.toggle('active', on);
+      if (on) this.strip.setActive(spec.id);
       b.setAttribute('aria-selected', String(on));
       b.tabIndex = on ? 0 : -1;
       this.panels[spec.id].hidden = !on;

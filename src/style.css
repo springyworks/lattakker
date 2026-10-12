@@ -522,37 +522,30 @@ body.has-tabs {
 }
 #tabs {
   box-sizing: border-box;
+  position: relative;
   height: var(--tabs-h);
-  display: flex;
-  align-items: flex-end;
-  gap: 4px;
-  padding: 0 12px;
   background: #e4e7eb;
   border-bottom: 1px solid #b8bfc7;
 }
-#tabs .tab {
-  font: 600 14px system-ui, sans-serif;
-  color: #3e4c59;
-  background: #d3d8de;
-  border: 1px solid #b8bfc7;
-  border-bottom: none;
-  border-radius: 8px 8px 0 0;
-  padding: 7px 16px;
-  cursor: pointer;
+/* The drawn strip (maxGraph) fills the bar; the real buttons are hidden but keep keyboard and screen-reader access. */
+#tabs .tab-strip {
+  height: 100%;
 }
-#tabs .tab:hover {
-  background: #e9edf1;
-}
-#tabs .tab.active {
-  color: #1f2933;
-  background: #f1f0ec;
-  box-shadow: 0 1px 0 #f1f0ec;
-  margin-bottom: -1px;
-  padding-bottom: 8px;
-}
-#tabs .tab:focus-visible {
+#tabs .tab-strip.kbd-focus {
   outline: 2px solid #2f4b66;
-  outline-offset: -2px;
+  outline-offset: -3px;
+}
+#tabs .tab-a11y {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  opacity: 0;
+  border: 0;
 }
 body.tab-examples #dock,
 body.tab-lab #dock {

@@ -70,10 +70,19 @@ export function parsePath(input: string): PathParts | { error: string } {
   return { tab: null, cell: text.toUpperCase(), byUid: false, tile };
 }
 
+/** The cell (or tile) the player last pointed at: the answer to "where am I?". */
+export interface Focus {
+  tab: string;
+  address: string;
+  tile: { x: number; y: number } | null;
+}
+
 export class Workspace {
   private readonly tabs = new Map<string, WorkspaceTab>();
   private currentId = 'board';
   private readonly listeners: Array<(id: string) => void> = [];
+  private focusNow: Focus | null = null;
+  private readonly focusListeners: Array<(focus: Focus | null) => void> = [];
 
   register(tab: WorkspaceTab): void {
     this.tabs.set(tab.id, tab);
@@ -103,6 +112,25 @@ export class Workspace {
 
   onCurrentChange(listener: (id: string) => void): void {
     this.listeners.push(listener);
+  }
+
+  get focus(): Focus | null {
+    return this.focusNow;
+  }
+
+  setFocus(tab: string, address: string, tile: Focus['tile'] = null): void {
+    this.focusNow = { tab, address, tile };
+    this.focusListeners.forEach((l) => l(this.focusNow));
+  }
+
+  onFocusChange(listener: (focus: Focus | null) => void): void {
+    this.focusListeners.push(listener);
+  }
+
+  /** What to show for "you are here": the focused cell's absolute path when it is in the tab on screen, else the tab's own path. */
+  hereText(): string {
+    const f = this.focusNow;
+    return f && f.tab === this.currentId ? this.pathOf(f.tab, f.address, f.tile) : `/${this.currentId}`;
   }
 
   /** Which tab owns a sheet, or undefined. */

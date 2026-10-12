@@ -216,8 +216,12 @@ const gallery = new ExamplesGallery(
 );
 lab.root.after(gallery.root);
 const tabs = new Tabs({ board: container, lab: lab.root, examples: gallery.root });
+// The strip always says where you are, as a cell path: click a cell (or a tile) and it follows.
+const showHere = (): void => tabs.setPath(workspace.hereText());
+workspace.onFocusChange(showHere);
 tabs.onChange((tab) => {
   workspace.setCurrent(tab);
+  showHere();
   popups.closeAll();
   pane.cellMenu.closeMenu();
   pane.navigator.root.hidden = tab !== 'board';
@@ -227,6 +231,7 @@ tabs.onChange((tab) => {
   else if (tab === 'board') sheet.container.focus({ preventScroll: true });
 });
 tabs.select(tabs.fromHash());
+showHere();
 
 if (restored && saved) {
   while (sheet.rowCount < saved.rows && sheet.rowCount < 500) sheet.insertRow(sheet.rowCount - 1);

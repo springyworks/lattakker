@@ -13,6 +13,7 @@ import { THEME } from '../theme';
 import { CellMenu } from './CellMenu';
 import type { MenuItem } from './HoverMenu';
 import { Navigator } from './Navigator';
+import { workspace } from '../workspace';
 
 export type Tone = 'info' | 'good' | 'bad';
 export type Say = (text: string, tone?: Tone) => void;
@@ -125,6 +126,7 @@ export class SheetPane {
     const { sheet, hooks } = this;
     sheet.setListeners({
       onCellClick: (address) => {
+        workspace.setFocus(sheet.id, address, sheet.takeTileClick(address));
         sheet.pulse(clickNode(address));
         if (sheet.isBoardAddress(address)) {
           this.lastSheetCell = address;
@@ -393,7 +395,8 @@ export class SheetPane {
       label: '⧉ Copy',
       children: [
         { label: `address  ${address}`, onSelect: () => this.copy(address, 'the address') },
-        { label: `id  ${hasCode ? d.uid : '(no code yet)'}`, disabled: !hasCode, onSelect: () => this.copy(d.uid, 'the id') },
+        { label: `path  ${workspace.pathOf(sheet.id, address)}`, title: 'Works from every tab, for example at(\'/lab/J24\')', onSelect: () => this.copy(workspace.pathOf(sheet.id, address), 'the path') },
+        { label: `id  ${hasCode ? '@' + d.uid : '(no code yet)'}`, title: 'Follows the code when the cell moves', disabled: !hasCode, onSelect: () => this.copy('@' + d.uid, 'the identity') },
         { label: 'code', disabled: !hasCode, onSelect: () => this.copy(d.code, 'the code') },
       ],
     });
