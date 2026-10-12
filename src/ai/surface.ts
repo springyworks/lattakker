@@ -37,7 +37,7 @@ const LEGEND =
   '~~ = lake (nobody can enter). .. = empty square. Columns A-J left to right, rows 1-10 top to bottom: ' +
   "row 1 is Blue's back row, row 10 is Red's back row. Red (the player, and the AI helping them) moves up the board.";
 
-const HELP = `LATTAKKER SHEET - window.mms guide (everything runs locally in this page; free, no network, no tracking)
+const HELP = `LATTAKKER SHEET - window.mms guide (everything runs locally in this page; free, no tracking, no network unless the player starts a Share session)
 
 The page is a Lattakker board that is also a spreadsheet. Red is the child/player, Blue is the computer. Cells below the board (A12, E12, ...) hold TypeScript that runs live.
 Every mms method returns plain JSON. Errors never throw: you get { ok: false, error: "..." }. Success is { ok: true, ... }.

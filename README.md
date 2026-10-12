@@ -24,6 +24,8 @@ Live demo: https://springyworks.github.io/lattakker/
 - [6 The sheet](#6-the-sheet)
   - [6.1 Code follows the cells it names](#61-code-follows-the-cells-it-names)
   - [6.2 Long sheets](#62-long-sheets)
+  - [6.3 Tabs and cell paths: where am I?](#63-tabs-and-cell-paths-where-am-i)
+  - [6.4 Working together (Share)](#64-working-together-share)
 - [7 Your first program (start here)](#7-your-first-program-start-here)
 - [8 Programmer's manual: the cell API](#8-programmers-manual-the-cell-api)
   - [8.1 Output and looks](#81-output-and-looks)
@@ -34,6 +36,7 @@ Live demo: https://springyworks.github.io/lattakker/
   - [8.6 Events: size, code, click, sheet](#86-events-size-code-click-sheet)
   - [8.7 Known limits (what is still missing)](#87-known-limits-what-is-still-missing)
   - [8.8 Examples](#88-examples)
+  - [8.9 Cells in other tabs: at('/lab/J24')](#89-cells-in-other-tabs-atlabj24)
 - [9 How the cell code is run (internals)](#9-how-the-cell-code-is-run-internals)
   - [9.1 When does a cell run?](#91-when-does-a-cell-run)
   - [9.2 Is this reactive programming?](#92-is-this-reactive-programming)
@@ -95,7 +98,8 @@ and play, or double-click a cell below the board and write some TypeScript.
 
 - *It is the same page you get from `npm run dev`.* There is no server behind
   it: the browser downloads a set of static files and everything runs inside
-  your tab. Nothing you type or play is sent anywhere.
+  your tab. Nothing you type or play is sent anywhere, unless you start a
+  **Share** session yourself ([6.4](#64-working-together-share)).
 - *The first load is a few megabytes,* because the Monaco editor and the
   TypeScript compiler come with the page. Later visits are usually faster,
   because the browser can keep those files.
@@ -265,6 +269,85 @@ cell's timers and runs its code again from the top, and **Restart & close**
 latest output. A click on that strip counts as a click on the cell (so code
 that waits with `on(cell, 'click', ...)` reacts); the small **enlarge / shrink**
 button in its corner makes the strip bigger.
+
+### 6.3 Tabs and cell paths: where am I?
+
+[↑ Contents](#contents)
+
+The strip at the top of the page is drawn by maxGraph, like the rest of the
+page: **🎲 Game board**, **🧪 Lab** and **📚 Examples**. Two tabs (the board
+and the Lab) hold a sheet with code cells, and both have cells named `A1`,
+`J24` and so on. So a bare address only makes sense *inside one tab*. To name a
+cell from anywhere, use a **cell path**, written like a file path, where `/`
+means "inside":
+
+| Written | Means |
+|---|---|
+| `J24` | the cell J24 of the tab you are in (what code normally writes) |
+| `J24/3,4` | tile x=3, y=4 of the grid inside block J24 (see `grid()` in [8.1](#81-output-and-looks)) |
+| `/lab/J24` | absolute: tab first, so it works from every tab |
+| `/lab/J24/3,4` | the same tile, absolute |
+| `@c-1a2b3c4d` | a cell by its **identity** (its `uid`), which follows the code when the cell moves |
+| `lattakker:///lab/J24` | an absolute path as a URI (what tools use) |
+
+The path uses only letters, digits and `/ , @ -`, so it needs no escaping in
+JSON or in a URL, and in code it is an ordinary string: `at('/lab/J24')`.
+TypeScript needs no new syntax. A plain address keeps working exactly as before.
+
+At the right of the strip, **📍** always shows where you are: click a cell (or a
+tile of a grid) and the path follows, for example `📍 /lab/A17/3,4`. Click the
+path to copy it. The ⋮ menu of a cell has **Copy → path** and **Copy → id**.
+
+The strip is a small maxGraph drawing, but the real tab buttons are still in
+the page, hidden. They keep the keyboard (arrow keys between tabs), screen
+readers and AI helpers working: the model is the source of truth and HTML is
+only a thin adapter where a browser needs it (the editor, the text mirror).
+
+### 6.4 Working together (Share)
+
+[↑ Contents](#contents)
+
+A learner and a tutor (or two friends) can work on the same cells from two
+computers. Click **🤝 Share** in the strip:
+
+1. The person who shares ("I want to share my sheets") types a name and clicks
+   *Create my invitation*. A short code appears (it starts with `lk1.`). They
+   send it to the other person through any chat.
+2. The other person ("I was invited") pastes it, clicks *Create my reply* and
+   sends the reply code back.
+3. The first person pastes the reply and clicks *Connect*. The strip now says
+   `🤝 Name 👁` on both sides.
+
+What happens next:
+
+- *The guest sees the host's cells.* The host's code cells and sizes are copied
+  to the guest, in both tabs. The guest's **own** cells are not touched: while
+  connected, saving is switched off for the guest, so the guest's own work is
+  still in the browser when they leave (the page reloads to bring it back).
+- *Each side runs the cells itself.* Only code, sizes, pointers and chat
+  travel; moving cells, the game and what cells print are not shared. A demo
+  that uses random numbers (the Game of Life) therefore looks different on the
+  two screens.
+- *View-only is the default.* The host can switch **"Let X change my code"** on
+  and off at any time. Only then do edits travel, in both directions (the last
+  edit to a cell wins, so take turns). This switch matters: code runs in the
+  page, so a person who may write code there can do anything a cell can do.
+  Only allow it for someone you trust.
+- *Pointers.* A click on a cell or tile shows on the other screen: the cell
+  flashes purple and a **🧑 /lab/J24** badge appears in the strip (click it to
+  copy the path). The guest can **follow the host between tabs**.
+- *Chat.* A line of text in the Share window shows as a notice on the other side.
+- *Stopping.* Either side can stop at any time (**Stop sharing** / **Leave**).
+
+How it connects, and what it costs in privacy: the two browsers talk
+**directly** over a WebRTC data channel; the two codes are the whole
+handshake, there is no server and no account. Without anything else it works
+between computers on the **same network** and nothing leaves that network. To
+connect across the internet the Share window has an opt-in tick box, *Connect
+across the internet*, which uses a public STUN server (a helper that tells each
+browser how it looks from outside); that is the only time the page contacts
+another server, and only if you tick the box. The page never shares anything
+unless a session is running.
 
 ## 7 Your first program (start here)
 
@@ -601,6 +684,32 @@ print('three seconds later')
 The default sheet has a stopwatch in `N12` and a watcher in `N15` to copy from.
 More patterns are in [8.5 Watching things](#85-watching-things-on) and [8.6 Events](#86-events-size-code-click-sheet).
 
+### 8.9 Cells in other tabs: at('/lab/J24')
+
+[↑ Contents](#contents)
+
+`at()` and `on()` accept a cell path ([6.3](#63-tabs-and-cell-paths-where-am-i)),
+so a cell in the Lab can read the board and the other way round:
+
+```ts
+// In the Lab: show what the board's cell A12 says, and wake up whenever it changes
+show('board A12 says: ' + at('/board/A12').text)
+```
+
+- *Reading works and is reactive:* the cell runs again when the other cell
+  changes. `.text`, `.code`, `.cols`, `.rows`, `.piece` and a tile's `.fill` and
+  `.text` can be read. `at('@c-1a2b3c4d')` finds a cell by its identity.
+- *Writing is not allowed:* `print`, `show`, `color`, `span(4, 2)` and a tile's
+  `color()` on a cell in another tab throw a clear error ("only its own tab's
+  code can change it"). A cell that writes into another tab could not clean up
+  after itself when it runs again.
+- *Paths follow moves:* insert a row or move a block in the Lab and every
+  `'/lab/J24'` written in the board's code is rewritten (and the other way
+  round), just like plain addresses within one tab.
+- Every cell reference has `cell.tab` (`'lab'`) and `cell.path` (`'/lab/J24'`);
+  a tile has the same, plus its own `x` and `y`.
+- `range()` only covers the tab the code is in.
+
 ## 9 How the cell code is run (internals)
 
 [↑ Contents](#contents)
@@ -743,7 +852,8 @@ Good to know:
 [↑ Contents](#contents)
 
 There is **no chat or AI service built into the page**. By design the page
-makes no network calls and needs no API key. Instead the page is made easy
+makes no network calls on its own (the only exception is the Share
+session of [6.4](#64-working-together-share), which you start yourself) and needs no API key. Instead the page is made easy
 to *read and drive* by an AI assistant that you run yourself, for example
 one that can use your browser or a coding assistant next to your editor:
 
@@ -782,6 +892,12 @@ Reading, no risk:
 
 - *The cells:* `mms.cells()` lists every cell that has code, with its saved
   code, its printed output and its error. `mms.getCell('E24')` gives one cell.
+  Cells are named by *paths* ([6.3](#63-tabs-and-cell-paths-where-am-i)):
+  `mms.tabs()` lists the tabs, `mms.cells('lab')` (or `'all'`) lists another
+  tab's cells, and every cell comes back with `tab`, `address`, `path` and
+  `uid`. Calls accept a path (`mms.getCell('/lab/J24')`) or a tab
+  (`mms.getCell('J24', 'lab')`); the MCP tools take a `tab` argument and there
+  is a `list_tabs` tool. A bare `J24` still means the board tab.
   *Identity:* every code cell has a `uid` such as `c-1a2b3c4d`. The address is
   only where the content sits right now. The uid is made when code is first
   written, is kept through edits, moves, swaps, row inserts, saving and
@@ -972,7 +1088,7 @@ To check by hand without any AI:
 
 The tools are the ones in `mms.help()`: `get_state`, `get_board`,
 `legal_moves`, `make_move`, `shuffle_army`, `start_battle`, `pause_battle`,
-`resume_battle`, `undo_move`, `new_game`, `list_cells`, `get_cell`,
+`resume_battle`, `undo_move`, `new_game`, `list_tabs`, `list_cells`, `get_cell`,
 `resolve_cell`, `set_cell_code`, `write_code_live`, `get_requests`,
 `wait_for_request`, `reply_to_request`, `run_cell`, `set_mode`, `say_to_player`
 and `export_svg`. The assistant gets the list from the page itself, so it is
@@ -1117,7 +1233,9 @@ the shift. The rules are the same as for moved cells, see
 src/sheet/        Sheet model: cells, addresses, dependency tracking (reactivity.ts), run contexts and timers (tasks.ts), the cell API (api.ts)
 src/editor/       Monaco integration, popup editor, inline per-cell editor
 src/game/     Game rules, board state, AI move suggestions
-src/ui/           Control panel, phone dock, touch gestures, the tab strip (Tabs.ts), the Examples tab (ExamplesGallery.ts), SheetPane.ts (everything one sheet needs; used by the board and the Lab) and the ⋮ menu (CellMenu.ts, HoverMenu.ts)
+src/ui/           Control panel, phone dock, touch gestures, the tab strip (Tabs.ts, drawn by TabStrip.ts), the Share window (ShareDialog.ts), the Examples tab (ExamplesGallery.ts), SheetPane.ts (everything one sheet needs; used by the board and the Lab) and the ⋮ menu (CellMenu.ts, HoverMenu.ts)
+src/workspace.ts  The workspace: every tab, cell paths (/lab/J24, @uid), where you and the other person are
+src/share/        Sharing: link.ts (the WebRTC link and its copy-paste codes), session.ts (what travels, and the checks on it)
 src/lab.ts        The Lab tab: a second sheet, its toolbar and saving; labDemos.ts holds its demo cells
 src/storage.ts    Saves and restores the game and cells in localStorage
 src/ai/           window.mms, WebMCP tools, the text copy for AI helpers, and bridge.ts (the page end of /mcp)
