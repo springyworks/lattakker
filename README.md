@@ -17,6 +17,8 @@ Live demo: https://springyworks.github.io/lattakker/
 - [1 Lattakker Sheet](#1-lattakker-sheet) (this introduction)
 - [2 Requirements](#2-requirements)
 - [3 Running locally](#3-running-locally)
+  - [3.1 The live demo (nothing to install)](#31-the-live-demo-nothing-to-install)
+  - [3.2 How the demo got to github.io](#32-how-the-demo-got-to-githubio)
 - [4 Playing Lattakker](#4-playing-lattakker)
 - [5 Saved in your browser](#5-saved-in-your-browser)
 - [6 The sheet](#6-the-sheet)
@@ -60,7 +62,7 @@ Live demo: https://springyworks.github.io/lattakker/
 
 [↑ Contents](#contents)
 
-- Node.js 18 or later
+- Node.js 20.19 or later (or 22.12 or later), which is what Vite requires
 - npm
 
 ## 3 Running locally
@@ -82,6 +84,82 @@ npm run build       # type-check, then produce a production build in dist/
 npm run preview      # serve the production build locally
 npm run typecheck    # type-check only, no build output
 ```
+
+### 3.1 The live demo (nothing to install)
+
+[↑ Contents](#contents)
+
+The latest version of the page is always running at
+**https://springyworks.github.io/lattakker/**. Open it in any current browser
+and play, or double-click a cell below the board and write some TypeScript.
+
+- *It is the same page you get from `npm run dev`.* There is no server behind
+  it: the browser downloads a set of static files and everything runs inside
+  your tab. Nothing you type or play is sent anywhere.
+- *The first load is a few megabytes,* because the Monaco editor and the
+  TypeScript compiler come with the page. Later visits are usually faster,
+  because the browser can keep those files.
+- *Your game and your cells are saved in your own browser* (local storage, see
+  [5](#5-saved-in-your-browser)), separately for each address. The demo at
+  `springyworks.github.io` and a copy on `localhost` do not share anything.
+  Clearing the site data of your browser starts you from scratch.
+- *`window.mms` and the WebMCP tools work there too.* The one thing that does
+  not exist on the demo is the `/mcp` endpoint of
+  [11.3](#113-connect-an-external-ai-chat-mcp): that is part of the dev server,
+  so to connect an outside AI chat you run `npm run dev` yourself.
+- *Every change to `main` shows up on the demo* about a minute or two after it
+  is pushed (see below).
+
+### 3.2 How the demo got to github.io
+
+[↑ Contents](#contents)
+
+GitHub Pages is a free service that serves the files of a repository as a
+website, at `https://<user>.github.io/<repository>/`. Lattakker only needs
+files (HTML, JavaScript, CSS), so there are four small pieces:
+
+1. **A static build.** `npm run build` type-checks the code and writes the
+   finished site into `dist/`.
+2. **The right base path.** A project site lives in a sub-folder
+   (`/lattakker/`), not at the root, so every link inside the page must start
+   with that folder. [`vite.config.ts`](vite.config.ts) does this: when the
+   environment variable `GITHUB_PAGES` is set, `base` is `/lattakker/`,
+   otherwise `/` (what `npm run dev` wants).
+3. **A workflow that builds and publishes.**
+   [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) runs on every
+   push to `main` (and by hand from the *Actions* tab, "Run workflow"). One job
+   checks out the code, installs Node 20, runs `npm ci` and `npm run build`
+   with `GITHUB_PAGES=true`, and uploads `dist/` as a Pages artifact. A second
+   job hands that artifact to GitHub with `actions/deploy-pages`. It needs the
+   permissions `pages: write` and `id-token: write`, and a newer push cancels an
+   older deploy that is still running.
+4. **One setting in the repository.** *Settings → Pages → Build and
+   deployment → Source* is set to **GitHub Actions** (not "Deploy from a
+   branch"). That is why no `gh-pages` branch exists. On a free account the
+   repository has to be public.
+
+Watching a deploy: open the *Actions* tab of the repository (the run is called
+`deploy`), or in a terminal `gh run list --limit 3`. A normal run takes
+between half a minute and two minutes. When it is green, the demo is updated.
+
+To see exactly what GitHub will publish, before pushing:
+
+```
+GITHUB_PAGES=true npm run build
+GITHUB_PAGES=true npm run preview
+```
+
+then open `http://localhost:4173/lattakker/` (note the sub-folder; plain
+`http://localhost:4173/` just redirects there). Set `GITHUB_PAGES=true` for
+the preview as well: without it the preview looks for the files in the wrong
+folder and the page stays blank.
+
+To publish **your own copy**: fork the repository, turn on *Settings → Pages →
+Source: GitHub Actions*, and push to `main` (or run the workflow by hand). Your
+copy appears at `https://<your-name>.github.io/<repository>/`. If you rename
+the repository, change `/lattakker/` in `vite.config.ts` to `/<new-name>/`,
+otherwise the page loads blank because its scripts are looked up in the wrong
+folder.
 
 ## 4 Playing Lattakker
 
@@ -1044,7 +1122,7 @@ src/lab.ts        The Lab tab: a second sheet, its toolbar and saving; labDemos.
 src/storage.ts    Saves and restores the game and cells in localStorage
 src/ai/           window.mms, WebMCP tools, the text copy for AI helpers, and bridge.ts (the page end of /mcp)
 src/theme.ts      The colour palette
-src/examples.ts   The code cells shown on first load
+src/examples.ts   The code cells shown on first load. Like labDemos.ts and recipes.ts, every line is explained by a // comment above it in plain words for beginners: keep it that way when you add or change a cell
 public/llms.txt   Plain-words guide for AI helpers
 resources/        Piece icons (original) and reference files, see its README
 scripts/          make-piece-svgs.mjs writes resources/pieces/; mcp-bridge.ts is the dev-server /mcp endpoint; mcp-smoke.mjs plays a scripted outside AI against it
@@ -1068,7 +1146,9 @@ framework), Monaco for code editing, Vite for the dev server and build.
 [↑ Contents](#contents)
 
 The `deploy` GitHub Actions workflow builds the project and publishes
-`dist/` to GitHub Pages on every push to `main`.
+`dist/` to GitHub Pages on every push to `main`. How that works, how to watch
+it and how to publish your own copy is explained in
+[3.2](#32-how-the-demo-got-to-githubio).
 
 ## 17 Source
 
