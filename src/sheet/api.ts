@@ -1,13 +1,17 @@
-import type { Sheet, SheetCellData } from './Sheet';
+import type { Sheet, SheetCellData, TileGrid } from './Sheet';
 import { COLS } from './Sheet';
 import type { GameView } from '../game/GameView';
 import { isLake } from '../game/model';
 import { GAME_NODE, MODE_NODE, describeNode, ROWS_NODE, clickNode, codeNode, sizeNode } from './reactivity';
+import { parseTilePath } from './address';
 import { CancelError, parseInterval, type RunContext } from './tasks';
 import { makePlot, type PlotOptions } from './plot';
 
 const MIN_INTERVAL_MS = 10;
 const MAX_OUTPUT_LINES = 300;
+/** Most tiles one block's grid may hold, and the most along one side. */
+const MAX_TILES = 10000;
+const MAX_TILE_SIDE = 200;
 /** An on() handler that wakes up more often than this is stuck in a loop and gets stopped. */
 const MAX_FIRES_PER_SECOND = 50;
 
@@ -40,7 +44,7 @@ export function buildApi(
   /** What a cell looks like, to tell afterwards whether a write really changed it. */
   const signature = (address: string): string => {
     const d = sheet.dataAt(address);
-    return d ? JSON.stringify([d.output, d.plot, d.viewText, d.codeVisual, d.error, d.span]) : '';
+    return d ? JSON.stringify([d.output, d.plot, d.tiles, d.viewText, d.codeVisual, d.error, d.span]) : '';
   };
   const markWrite = (target: string): void => {
     ctx.guard();
@@ -104,6 +108,7 @@ export function buildApi(
         markWrite(address);
         d.output = [];
         d.plot = null;
+        d.tiles = null;
         sheet.refreshCell(address);
         return ref;
       },
@@ -163,8 +168,134 @@ export function buildApi(
     return ref;
   };
 
+
+  // ------------------------------------------------------------ tiles inside a block
+
+  const newTiles = (cols: number, rows: number): TileGrid => ({
+    cols,
+    rows,
+    fills: new Array<string | null>(cols * rows).fill(null),
+    texts: new Array<string | null>(cols * rows).fill(null),
+  });
+
+  /** One tile of a block's grid: it is addressed by its own x,y inside the block, never by a sheet address. */
+  const makeTile = (block: SheetCellData, x: number, y: number, ensure: () => TileGrid) => {
+    const grid = ensure();
+    if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0 || x >= grid.cols || y >= grid.rows) {
+      throw new Error(`Tile ${x},${y} is outside the ${grid.cols}×${grid.rows} grid in ${block.address} (x goes 0 to ${grid.cols - 1}, y goes 0 to ${grid.rows - 1})`);
+    }
+    const i = y * grid.cols + x;
+    const read = (): TileGrid => {
+      if (block.address !== data.address) track(block.address);
+      return ensure();
+    };
+    const write = (): TileGrid => {
+      markWrite(block.address);
+      return ensure();
+    };
+    const tile = {
+      x,
+      y,
+      block: block.address,
+      address: `${block.address}/${x},${y}`,
+      get fill() {
+        return read().fills[i];
+      },
+      get text() {
+        return read().texts[i] ?? '';
+      },
+      color(fill: string | null) {
+        write().fills[i] = fill === null || fill === undefined ? null : String(fill);
+        sheet.refreshSoon(block.address);
+        return tile;
+      },
+      show(...values: unknown[]) {
+        write().texts[i] = values.length ? values.map(fmt).join(' ') : null;
+        sheet.refreshSoon(block.address);
+        return tile;
+      },
+      clear() {
+        const g = write();
+        g.fills[i] = null;
+        g.texts[i] = null;
+        sheet.refreshSoon(block.address);
+        return tile;
+      },
+      toString() {
+        return tile.address;
+      },
+    };
+    return tile;
+  };
+
+  /** grid(cols, rows) gives this cell's block a tile grid of its own; tiles are reached with g.at(x, y). */
+  const grid = (cols: number, rows?: number) => {
+    ctx.guard();
+    const c = Math.floor(Number(cols));
+    const r = Math.floor(Number(rows ?? cols));
+    if (!(c >= 1 && r >= 1) || c > MAX_TILE_SIDE || r > MAX_TILE_SIDE || c * r > MAX_TILES) {
+      throw new Error(`grid(${cols}, ${rows ?? cols}): use whole numbers from 1 up to ${MAX_TILE_SIDE} (at most ${MAX_TILES} tiles)`);
+    }
+    // If something cleared the block meanwhile, a tile write quietly makes the grid again at this size.
+    const ensure = (): TileGrid => (data.tiles ??= newTiles(c, r));
+    markWrite(data.address);
+    data.tiles = newTiles(c, r);
+    sheet.refreshSoon(data.address);
+    const tileAt = (x: number, y: number) => makeTile(data, x, y, ensure);
+    const g = {
+      isGrid: true,
+      address: data.address,
+      cols: c,
+      rows: r,
+      at: tileAt,
+      each(fn: (tile: ReturnType<typeof tileAt>) => void) {
+        for (let y = 0; y < r; y++) for (let x = 0; x < c; x++) fn(tileAt(x, y));
+        return g;
+      },
+      /** paint((x, y) => colour): one colour per tile in a single pass; null or undefined leaves a tile blank. */
+      paint(fn: (x: number, y: number) => string | null | undefined) {
+        markWrite(data.address);
+        const tiles = ensure();
+        for (let y = 0; y < r; y++) {
+          for (let x = 0; x < c; x++) {
+            const fill = fn(x, y);
+            tiles.fills[y * c + x] = fill === null || fill === undefined ? null : String(fill);
+          }
+        }
+        sheet.refreshSoon(data.address);
+        return g;
+      },
+      fill(color: string | null) {
+        return g.paint(() => color);
+      },
+      clear() {
+        markWrite(data.address);
+        const tiles = ensure();
+        tiles.fills.fill(null);
+        tiles.texts.fill(null);
+        sheet.refreshSoon(data.address);
+        return g;
+      },
+    };
+    return g;
+  };
+
+  /** at('A16/3,4'): a tile of another block's grid, reached through the block's address and the tile's own x,y. */
+  const tileByPath = (path: { block: string; x: number; y: number }) => {
+    const block = sheet.resolve(path.block);
+    const blockData = block ? sheet.dataAt(block) : undefined;
+    if (!block || !blockData) throw new Error(`"${path.block}" is not a cell address`);
+    if (block !== data.address) track(block);
+    return makeTile(blockData, path.x, path.y, () => {
+      if (!blockData.tiles) throw new Error(`${block} has no grid yet (its code calls grid(cols, rows))`);
+      return blockData.tiles;
+    });
+  };
+
   const at = (address: string) => {
     ctx.guard();
+    const path = parseTilePath(String(address));
+    if (path) return tileByPath(path);
     const resolved = sheet.resolve(String(address));
     if (!resolved) throw new Error(`"${address}" is not a cell address (try something like B7)`);
     track(resolved);
@@ -354,7 +485,12 @@ export function buildApi(
     if (typeof fn !== 'function') throw new Error("on needs a function: on('B7', (cell) => { ... }) or on('B7', 'size', (cell) => { ... })");
     let nodes: string[];
     let label: string;
-    if (target === 'sheet') {
+    const gridBlock = typeof target === 'object' && target !== null && (target as { isGrid?: boolean }).isGrid ? (target as { address: string }).address : null;
+    if (gridBlock) {
+      label = `${gridBlock} grid`;
+      if (event !== 'click') throw new Error("on(grid, ...) only has the 'click' event: on(g, 'click', (tile) => { ... })");
+      nodes = [clickNode(gridBlock)];
+    } else if (target === 'sheet') {
       label = 'sheet';
       if (event === 'rows') nodes = [ROWS_NODE];
       else if (event === 'mode') nodes = [MODE_NODE];
@@ -396,7 +532,11 @@ export function buildApi(
         sheet.notifyChanged(data.address);
         return;
       }
-      if (node === GAME_NODE) void run(trackedGame);
+      if (gridBlock) {
+        const t = sheet.takeTileClick(gridBlock);
+        const blockData = sheet.dataAt(gridBlock);
+        if (t && blockData?.tiles) void run(makeTile(blockData, t.x, t.y, () => blockData.tiles ?? newTiles(t.x + 1, t.y + 1)));
+      } else if (node === GAME_NODE) void run(trackedGame);
       else if (node === ROWS_NODE || node === MODE_NODE) void run(sheetApi);
       else void run(makeRef(node.includes(':') ? node.slice(node.indexOf(':') + 1) : node));
     });
@@ -415,6 +555,7 @@ export function buildApi(
     clear: () => void self.clear(),
     show: (...values: unknown[]) => void self.show(...values),
     span: (cols?: number, rows?: number) => self.span(cols, rows),
+    grid,
     every,
     after,
     on,

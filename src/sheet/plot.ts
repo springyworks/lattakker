@@ -1,3 +1,4 @@
+import type { TileGrid } from './Sheet';
 /** XY plots for cells: turns what plot(...) was given into numbers, and the numbers into an SVG that fits the cell. */
 export interface PlotSeries {
   name: string;
@@ -184,4 +185,27 @@ export function plotSvg(spec: PlotSpec, width: number, height: number): string {
     });
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${f(w)} ${f(h)}" width="100%" height="100%" font-family="system-ui, sans-serif">${parts.join('')}</svg>`;
+}
+
+/** A block's tile grid as an SVG stretched over the block; blank tiles let the block's own colour show. */
+export function tilesSvg(tiles: TileGrid, width: number, height: number): string {
+  const w = Math.max(1, width);
+  const h = Math.max(1, height);
+  const tw = w / tiles.cols;
+  const th = h / tiles.rows;
+  const fs = Math.max(6, Math.min(th * 0.6, tw * 0.6, 22));
+  const parts: string[] = [];
+  for (let y = 0; y < tiles.rows; y++) {
+    for (let x = 0; x < tiles.cols; x++) {
+      const i = y * tiles.cols + x;
+      const fill = tiles.fills[i];
+      const text = tiles.texts[i];
+      if (fill) parts.push(`<rect x="${(x * tw).toFixed(2)}" y="${(y * th).toFixed(2)}" width="${tw.toFixed(2)}" height="${th.toFixed(2)}" fill="${esc(fill)}" stroke="#ffffff" stroke-opacity="0.6" stroke-width="0.6"/>`);
+      if (text) parts.push(`<text x="${((x + 0.5) * tw).toFixed(2)}" y="${((y + 0.5) * th).toFixed(2)}" font-size="${fs.toFixed(1)}" text-anchor="middle" dominant-baseline="central" fill="#1f2933">${esc(text)}</text>`);
+    }
+  }
+  // The label box shrinks to its content, so percentages would collapse to a default size: use the block's real size, less the label's padding.
+  const pw = Math.max(1, w - 8);
+  const ph = Math.max(1, h - 6);
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w.toFixed(1)} ${h.toFixed(1)}" preserveAspectRatio="none" width="${pw.toFixed(0)}" height="${ph.toFixed(0)}" font-family="system-ui, sans-serif">${parts.join('')}</svg>`;
 }

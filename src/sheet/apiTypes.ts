@@ -111,6 +111,42 @@ interface GameApi {
   say(text: string): void;
 }
 
+/** One tile in a block's grid. Tiles have their own coordinates (x across, y down, from 0) and no sheet address. */
+interface Tile {
+  readonly x: number;
+  readonly y: number;
+  /** The block this tile lives in, e.g. 'A16'. */
+  readonly block: string;
+  /** The tile's full path, e.g. 'A16/3,4'. at('A16/3,4') gets it from anywhere. */
+  readonly address: string;
+  /** Its colour, or null when blank. */
+  readonly fill: string | null;
+  /** Its text ('' when none). */
+  readonly text: string;
+  /** Colour the tile; color(null) makes it blank again. */
+  color(fill: string | null): Tile;
+  /** Put a short text (a number, an emoji) on the tile; show() with nothing removes it. */
+  show(...values: unknown[]): Tile;
+  clear(): Tile;
+}
+
+/** The tiles inside this cell's block. */
+interface Grid {
+  readonly cols: number;
+  readonly rows: number;
+  readonly address: string;
+  /** The tile in column x, row y (both start at 0). */
+  at(x: number, y: number): Tile;
+  /** Run fn for every tile, row by row. */
+  each(fn: (tile: Tile) => void): Grid;
+  /** Colour every tile in one pass: g.paint((x, y) => alive(x, y) ? 'green' : null). */
+  paint(fn: (x: number, y: number) => string | null | undefined): Grid;
+  /** Colour every tile the same (null blanks them). */
+  fill(color: string | null): Grid;
+  /** Blank every tile and remove their text. */
+  clear(): Grid;
+}
+
 interface SheetApi {
   /** 'run' or 'view'. Reading it makes the cell re-run when the mode changes. */
   readonly mode: 'run' | 'view';
@@ -130,6 +166,16 @@ declare function view(text: string): void;
 declare function color(fill: string): void;
 /** Short for cell.span(cols, rows). span(4) keeps the rows; span() just returns the current size. */
 declare function span(cols?: number, rows?: number): { cols: number; rows: number };
+/**
+ * Give this cell's block a grid of tiles, whatever its size: span(4, 2) then grid(10, 8) makes 80 tiles that fill the block.
+ * Tiles are addressed inside the block (x across, y down, from 0), so the code keeps working when the block moves.
+ * const g = grid(10, 8)
+ * g.at(3, 4).color('green')                 paint one tile
+ * g.paint((x, y) => (x + y) % 2 ? '#333' : '#eee')   paint them all
+ * on(g, 'click', (tile) => tile.color('red'))          which tile was clicked
+ * Other cells reach a tile by its path: at('A16/3,4').fill
+ */
+declare function grid(cols: number, rows?: number): Grid;
 /** Short for cell.show(...): replaces the output instead of adding a line. */
 declare function show(...values: unknown[]): void;
 /**
@@ -163,6 +209,7 @@ type CellEventName = 'change' | 'size' | 'code' | 'click';
  */
 declare function on(target: string | CellRef, fn: (changed: CellRef) => unknown): () => void;
 declare function on(target: string | CellRef, event: CellEventName, fn: (changed: CellRef) => unknown): () => void;
+declare function on(target: Grid, event: 'click', fn: (tile: Tile) => unknown): () => void;
 declare function on(target: 'game', fn: (game: GameApi) => unknown): () => void;
 declare function on(target: 'sheet', event: 'rows' | 'mode', fn: (sheet: SheetApi) => unknown): () => void;
 /** This cell's notebook: survives re-runs and moves with the cell's code. Use it for counters and "what did I see last time". */
@@ -171,6 +218,8 @@ declare const memory: Record<string, any>;
 declare const run: { readonly reason: 'edit' | 'moved' | 'update'; readonly count: number };
 /** Stop all timers and watchers this cell started. */
 declare function stop(): void;
+/** A tile inside another block's grid, by path: at('A16/3,4') is the tile in column 3, row 4 of the grid in A16. */
+declare function at(path: \`\${string}/\${number},\${number}\`): Tile;
 /** Another cell by address, e.g. at('A1') */
 declare function at(address: string): CellRef;
 /** A range of cells, e.g. range('A1:J10') or range('C32-55') */

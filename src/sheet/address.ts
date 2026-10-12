@@ -45,6 +45,15 @@ export function parseAddress(text: string): CellPos | null {
   return { col: lettersToCol(m[1]), row: parseInt(m[2], 10) - 1 };
 }
 
+// No spaces inside: the address rewriter only follows the exact form, so a looser one would silently stop following its block.
+const TILE_PATH_RE = /^\s*([a-z]{1,3}\d{1,3})\/(\d+),(\d+)\s*$/i;
+
+/** "A16/3,4": the tile in column 3, row 4 (counting from 0) of the grid inside block A16. */
+export function parseTilePath(text: string): { block: string; x: number; y: number } | null {
+  const m = TILE_PATH_RE.exec(text);
+  return m ? { block: m[1], x: Number(m[2]), y: Number(m[3]) } : null;
+}
+
 /** Accepts "A1", "A1:B3", "B3:A1" (normalised), and "C32-55" (same column span). */
 export function parseRange(text: string): RangePos | null {
   const t = text.trim();
@@ -123,7 +132,8 @@ interface ParsedLiteral {
   ends: End[];
 }
 
-const SINGLE_RE = /^(\s*)(\$?)([a-z]{1,3})(\$?)(\d{1,3})(\s*)$/i;
+// A tile path such as "A16/3,4" (tile x,y inside block A16) moves with its block, so it counts as that cell's address too.
+const SINGLE_RE = /^(\s*)(\$?)([a-z]{1,3})(\$?)(\d{1,3})((?:\/\d+,\d+)?\s*)$/i;
 const COLON_RE = /^(\s*)(\$?)([a-z]{1,3})(\$?)(\d{1,3})(\s*:\s*)(\$?)([a-z]{1,3})(\$?)(\d{1,3})(\s*)$/i;
 const DASH_RE = /^(\s*)([a-z]{1,3})(\d{1,3})(\s*-\s*)(\d{1,3})(\s*)$/i;
 

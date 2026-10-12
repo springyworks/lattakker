@@ -288,12 +288,13 @@ every('90ms', (n) => {
   ],
   [
     'A16',
-    String.raw`// Conway's Game of Life, painted onto the cells F16:O23. A live cell is green.
-// Click this cell to start a new random world.
-span(4, 2)
-color('#dbe2ec')
-const W = 10, H = 8, COL0 = 5
-const name = (x, y) => String.fromCharCode(65 + COL0 + x) + (16 + y)
+    String.raw`// Conway's Game of Life on a tile grid that lives inside this block.
+// Tiles have their own coordinates (x across, y down), not sheet addresses,
+// so you can move or resize this block and nothing breaks. Click a tile to flip it.
+span(10, 8)
+color('#eef3ee')
+const g = grid(10, 8)
+const W = g.cols, H = g.rows
 const seed = () => {
   memory.grid = Array.from({ length: H }, () => Array.from({ length: W }, () => Math.random() < 0.35))
   memory.gen = 0
@@ -301,30 +302,29 @@ const seed = () => {
 if (!memory.grid) seed()
 const paint = () => {
   let alive = 0
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      if (memory.grid[y][x]) alive++
-      at(name(x, y)).color(memory.grid[y][x] ? '#3f8f5a' : '#eef3ee')
-    }
-  }
-  show('Life: generation ' + memory.gen + '\n' + alive + ' alive · click to restart')
+  g.paint((x, y) => {
+    if (!memory.grid[y][x]) return null
+    alive++
+    return '#3f8f5a'
+  })
+  show('Life: generation ' + memory.gen + ' · ' + alive + ' alive')
 }
 const step = () => {
-  const g = memory.grid
-  memory.grid = g.map((row, y) => row.map((on, x) => {
+  const cells = memory.grid
+  memory.grid = cells.map((row, y) => row.map((on, x) => {
     let n = 0
     for (let dy = -1; dy <= 1; dy++) {
       for (let dx = -1; dx <= 1; dx++) {
-        if (dx || dy) n += g[(y + dy + H) % H][(x + dx + W) % W] ? 1 : 0
+        if (dx || dy) n += cells[(y + dy + H) % H][(x + dx + W) % W] ? 1 : 0
       }
     }
     return on ? n === 2 || n === 3 : n === 3
   }))
   memory.gen++
-  if (memory.gen > 80) seed()
+  if (memory.gen > 80 || !memory.grid.flat().some(Boolean)) seed()
 }
-on(cell, 'click', () => {
-  seed()
+on(g, 'click', (tile) => {
+  memory.grid[tile.y][tile.x] = !memory.grid[tile.y][tile.x]
   paint()
 })
 paint()

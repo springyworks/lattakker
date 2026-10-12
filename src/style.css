@@ -130,6 +130,22 @@ body.grab-armed .sheet-pane {
   text-align: center;
 }
 
+/* A block with a tile grid: the SVG fills it, printed text floats over the top-left corner */
+.cell-tiles {
+  position: relative;
+}
+.cell-tiles svg {
+  display: block;
+}
+.cell-tiles .tiles-caption {
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  max-width: 100%;
+  pointer-events: none;
+  text-shadow: 0 0 3px #ffffff, 0 0 3px #ffffff;
+}
+
 /* Monaco editor, hosted as a real maxGraph label (foreignObject) on the "ed:frame" vertex */
 .cell-editor-host {
   width: 100%;

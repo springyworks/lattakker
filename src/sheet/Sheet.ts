@@ -33,7 +33,7 @@ import { THEME } from '../theme';
 import { DependencyGraph, MODE_NODE, ROWS_NODE, codeNode, sizeNode } from './reactivity';
 import { CancelError, RunContext } from './tasks';
 import { Spring } from './spring';
-import { plotSvg, type PlotSpec } from './plot';
+import { plotSvg, tilesSvg, type PlotSpec } from './plot';
 
 /** A cell that takes longer than this is moved to the background so the others can run. */
 const RUN_SLICE_MS = 150;
@@ -74,6 +74,15 @@ export interface ReferenceReport {
   warnings: string[];
 }
 
+/** A grid of tiles that lives inside one cell block: its own coordinates (x across, y down, from 0). */
+export interface TileGrid {
+  cols: number;
+  rows: number;
+  /** Row-major; null leaves the block's own colour showing. */
+  fills: Array<string | null>;
+  texts: Array<string | null>;
+}
+
 export interface SheetCellData {
   address: string;
   col: number;
@@ -84,6 +93,8 @@ export interface SheetCellData {
   output: string[];
   /** An XY plot drawn in the cell (plot(...)), or null. */
   plot: PlotSpec | null;
+  /** A tile grid painted inside this block (grid(w, h) in the cell's code), or null. */
+  tiles: TileGrid | null;
   viewText: string | null;
   codeVisual: CellVisual;
   span: { cols: number; rows: number };
@@ -211,6 +222,8 @@ export class Sheet {
   private depGraph = new DependencyGraph();
   /** cell id -> a live DOM node to host as that cell's label (e.g. the Monaco editor frame). */
   private nodeLabels = new Map<string, HTMLElement>();
+  private refreshQueue = new Set<string>();
+  private lastTileClick: { address: string; x: number; y: number; time: number } | null = null;
 
   /** Only the main tab has the Lattakker board (A1:J10) and the reserved rows below it. */
   private readonly board: boolean;
@@ -304,6 +317,8 @@ export class Sheet {
       const isDouble = !!this.lastClickInfo && this.lastClickInfo.id === id && now - this.lastClickInfo.time < 400;
       this.lastClickInfo = isDouble ? null : { id, time: now };
       if (id.startsWith('sheet:')) {
+        const tile = this.tileAt(id.slice(6), me);
+        this.lastTileClick = tile && { address: id.slice(6), ...tile, time: performance.now() };
         this.listeners.onCellClick(id.slice(6), me);
         if (isDouble) this.listeners.onCellDoubleClick(id.slice(6));
       } else {
@@ -458,6 +473,7 @@ export class Sheet {
       code: '',
       output: [],
       plot: null,
+      tiles: null,
       viewText: null,
       codeVisual: {},
       span: { cols: 1, rows: 1 },
@@ -766,10 +782,37 @@ export class Sheet {
       const caption = d.output.length ? `<div class="cell-text out plot-caption">${escapeHtml(d.output.join('\n'))}</div>` : '';
       return `<div class="cell-plot">${plotSvg(d.plot, w, h)}${caption}</div>`;
     }
+    if (d.tiles && !d.error && !showCode) {
+      const geo = this.cells.get(address)?.getGeometry();
+      const w = size?.width ?? geo?.width ?? 200;
+      const h = size?.height ?? geo?.height ?? 100;
+      const caption = d.output.length ? `<div class="cell-text out tiles-caption">${escapeHtml(d.output.join('\n'))}</div>` : '';
+      return `<div class="cell-tiles">${tilesSvg(d.tiles, w, h)}${caption}</div>`;
+    }
     const text = forceOutput ? (d.error ? `⚠ ${d.error}` : d.output.join('\n')) : this.displayText(d);
     if (!text) return base?.label ? `<div class="cell-text out">${escapeHtml(base.label)}</div>` : '';
     const cls = showCode && d.viewText === null ? 'cell-text code' : 'cell-text out';
     return `<div class="${cls}">${escapeHtml(text)}</div>`;
+  }
+
+  /** Which tile of a block's grid a mouse event landed on (x across, y down, from 0), or null. */
+  tileAt(address: string, evt: MouseEvent): { x: number; y: number } | null {
+    const tiles = this.data.get(address)?.tiles;
+    const cell = this.cells.get(address);
+    const state = cell ? this.graph.getView().getState(cell) : null;
+    if (!tiles || !state || state.width <= 0 || state.height <= 0) return null;
+    const c = this.container;
+    const rect = c.getBoundingClientRect();
+    const fx = (evt.clientX - rect.left + c.scrollLeft - state.x) / state.width;
+    const fy = (evt.clientY - rect.top + c.scrollTop - state.y) / state.height;
+    if (fx < 0 || fy < 0 || fx >= 1 || fy >= 1) return null;
+    return { x: Math.floor(fx * tiles.cols), y: Math.floor(fy * tiles.rows) };
+  }
+
+  /** The tile of the latest click on a block, if it was that recent (the click event reads it as it fires). */
+  takeTileClick(address: string): { x: number; y: number } | null {
+    const t = this.lastTileClick;
+    return t && t.address === address && performance.now() - t.time < 1000 ? { x: t.x, y: t.y } : null;
   }
 
   /** The fill a cell is drawn with right now (error, its own colour, or the plain code fill). */
@@ -835,6 +878,18 @@ export class Sheet {
       this.graph.getDataModel().setValue(cell, (cell.getValue() ?? 0) === 0 ? 1 : 0);
     }
     this.applyStyle(address);
+  }
+
+  /** Redraws a cell once after the current burst of writes (painting 80 tiles is one redraw, not 80). */
+  refreshSoon(address: string): void {
+    if (this.refreshQueue.size === 0) {
+      queueMicrotask(() => {
+        const addresses = [...this.refreshQueue];
+        this.refreshQueue.clear();
+        this.graph.batchUpdate(() => addresses.forEach((a) => this.refreshCell(a)));
+      });
+    }
+    this.refreshQueue.add(address);
   }
 
   /** Hosts (or clears) a live DOM node as the label of an arbitrary cell id, e.g. an editor frame. */
@@ -1180,6 +1235,7 @@ export class Sheet {
       from.runCount = 0;
       from.output = [];
       from.plot = null;
+      from.tiles = null;
       from.viewText = null;
       from.error = null;
       this.setSpan(fromAddress, 1, 1);
@@ -1189,6 +1245,7 @@ export class Sheet {
       to.codeVisual = visual;
       to.output = [];
       to.plot = null;
+      to.tiles = null;
       to.viewText = null;
       to.error = null;
       this.setSpan(toAddress, cols, rows);
@@ -1250,6 +1307,7 @@ export class Sheet {
       to.runCount = fromRuns;
       to.output = [];
       to.plot = null;
+      to.tiles = null;
       to.viewText = null;
       to.error = null;
       from.code = toCode;
@@ -1259,6 +1317,7 @@ export class Sheet {
       from.runCount = toRuns;
       from.output = [];
       from.plot = null;
+      from.tiles = null;
       from.viewText = null;
       from.error = null;
       this.refreshCell(fromAddress);
@@ -1404,6 +1463,7 @@ export class Sheet {
           code: '',
           output: [],
           plot: null,
+          tiles: null,
           viewText: null,
           codeVisual: {},
           span: { cols: 1, rows: 1 },
@@ -1453,6 +1513,7 @@ export class Sheet {
           const d = this.data.get(addr)!;
           d.output = [];
           d.plot = null;
+          d.tiles = null;
           d.viewText = null;
           d.codeVisual = {};
           d.span = { cols: 1, rows: 1 };
@@ -1508,6 +1569,7 @@ export class Sheet {
       d.memory = {};
       d.output = [];
       d.plot = null;
+      d.tiles = null;
       d.viewText = null;
       d.codeVisual = {};
       this.setSpan(address, 1, 1);
@@ -1651,6 +1713,7 @@ export class Sheet {
             if (!d) continue;
             d.output = [];
             d.plot = null;
+            d.tiles = null;
             if (d.code) d.viewText = null;
             d.error = null;
             d.codeVisual = {};

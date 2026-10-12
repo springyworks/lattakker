@@ -87,6 +87,7 @@ CELL CODE (TypeScript, async allowed, re-runs when things it reads change)
   sheet.mode sheet.cols sheet.rows   mode   sleep(ms|'2s')   log(...)
   show(...) replace output   clear()   span() read size, span(4) keep rows
   plot(Math.sin, {from:0,to:6.28,title:'wave'})  XY plot as output; also plot([1,4,9]), plot([[0,1],[1,3]]), plot({a: f, b: g})
+  grid(10, 8) tiles inside this block (after span(10, 8)): g.at(x,y).color('#3f8f5a') .show('7'), g.paint((x,y) => colour|null), g.fill(c), on(g,'click', tile => ...); tiles use their own x,y from 0, other cells read at('A16/3,4').fill
   every('1s', n => ...)  after('5s', fn)  on('B7' | 'A1:J10' | 'game', fn)  stop()   (timers die when the cell re-runs)
   on('I18', 'size' | 'code' | 'click', fn)  on('sheet', 'rows' | 'mode', fn)   events; also cell.cols/rows, at(x).code, sheet.rows/mode are reactive when read at top level
   memory (notebook that survives re-runs)  run.reason ('edit'|'moved'|'update')  run.count
