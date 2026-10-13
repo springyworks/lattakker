@@ -1895,6 +1895,7 @@ src/workspace.ts  The workspace: every tab, cell paths (/lab/J24, @uid), where y
 src/share/        Sharing: link.ts (the WebRTC link and its copy-paste codes), session.ts (what travels, and the checks on it)
 src/sheetTab.ts   A tab with a sheet of its own (toolbar, saving), used by the Lab, the Monitor and every tab you add; lab.ts and labDemos.ts (the Lab), monitorDemos.ts (the Monitor)
 src/tabManager.ts Tabs that come and go: the ＋ and the right-click menu, tabs.* in cells, MCP server `tabs` (services/tabsServer.ts)
+src/sheet/overlays.ts   Small pictures over the cells (rubber band, address tags, id badges, the glide of blocks making room) drawn by maxGraph itself on the UI layer: no loose HTML on top of the board
 src/sheet/svgScene.ts, svgAssets.ts   The animated-SVG engine (the svg global) and the drawings that come with the app
 src/services/system.ts + scripts/system-stats.ts   How this computer is doing (the system global; the dev server reads /proc, /sys, nvidia-smi)
 src/storage.ts    Saves and restores the game and cells in localStorage

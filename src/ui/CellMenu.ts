@@ -1,4 +1,4 @@
-import { InternalEvent, InternalMouseEvent, type TooltipHandler } from '@maxgraph/core';
+import { InternalEvent, InternalMouseEvent, type Cell, type TooltipHandler } from '@maxgraph/core';
 import { HDR_H, HDR_W, type Sheet } from '../sheet/Sheet';
 import { HoverMenu, type MenuItem } from './HoverMenu';
 
@@ -28,7 +28,7 @@ export class CellMenu {
   private address: string | null = null;
   private overIcon = false;
   private hideTimer = 0;
-  private badges = new Map<string, HTMLElement>();
+  private badges = new Map<string, Cell>();
   private showIds = false;
   private placeQueued = false;
 
@@ -275,35 +275,35 @@ export class CellMenu {
   private syncBadges(): void {
     const wanted = new Set<string>();
     if (this.showIds) for (const d of this.sheet.codeCells()) wanted.add(d.address);
-    for (const [address, el] of [...this.badges]) {
+    for (const [address, cell] of [...this.badges]) {
       if (!wanted.has(address)) {
-        el.remove();
+        this.sheet.overlays.remove(cell);
         this.badges.delete(address);
       }
     }
     for (const address of wanted) {
-      let el = this.badges.get(address);
-      if (!el) {
-        el = document.createElement('div');
-        el.className = 'cell-id-badge';
-        this.sheet.container.append(el);
-        this.badges.set(address, el);
+      const uid = this.sheet.dataAt(address)?.uid ?? '';
+      const rect = this.badgeRect(address, uid);
+      let cell = this.badges.get(address);
+      if (!cell && rect) {
+        cell = this.sheet.overlays.add(rect, { fillColor: '#ffffff', fillOpacity: 70, strokeColor: 'none', rounded: true, arcSize: 20, fontColor: '#7b8794', fontSize: 8, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' }, uid);
+        this.badges.set(address, cell);
       }
-      el.textContent = this.sheet.dataAt(address)?.uid ?? '';
+      if (cell) this.sheet.overlays.setValue(cell, uid);
     }
     this.queuePlace();
   }
 
+  /** Bottom-left corner of the cell, in the sheet's own coordinates. */
+  private badgeRect(address: string, uid: string): { x: number; y: number; width: number; height: number } | null {
+    const g = this.sheet.geometryOf(address);
+    return g ? { x: g.x + 2, y: g.y + g.height - 11, width: Math.round(uid.length * 5 + 6), height: 10 } : null;
+  }
+
   private placeBadges(): void {
-    for (const [address, el] of this.badges) {
-      const box = this.boxOf(address);
-      if (!box) {
-        el.hidden = true;
-        continue;
-      }
-      el.hidden = false;
-      el.style.left = `${Math.round(box.x + 2)}px`;
-      el.style.top = `${Math.round(box.y + box.height - 11)}px`;
+    for (const [address, cell] of this.badges) {
+      const rect = this.badgeRect(address, String(cell.getValue() ?? ''));
+      if (rect) this.sheet.overlays.place(cell, rect);
     }
   }
 }

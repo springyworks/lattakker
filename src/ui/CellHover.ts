@@ -1,4 +1,4 @@
-import { InternalEvent, type InternalMouseEvent } from '@maxgraph/core';
+import type { Cell, InternalMouseEvent } from '@maxgraph/core';
 import type { Sheet } from '../sheet/Sheet';
 import { cellHints } from './hints';
 
@@ -10,8 +10,11 @@ const TRAIL = 5;
 
 interface Tag {
   address: string;
-  el: HTMLDivElement;
-  timer: number;
+  cell: Cell;
+  /** 0 to 1, what is drawn now. */
+  alpha: number;
+  /** Fading out: how far along (0 to 1). Null while the pointer is on the cell. */
+  fade: number | null;
 }
 
 /**
@@ -50,9 +53,6 @@ export class CellHover {
     });
     container.addEventListener('pointerleave', () => this.move(null));
     container.addEventListener('scroll', () => this.hideHint(true), { passive: true });
-    const reposition = (): void => this.tags.forEach((t) => this.place(t));
-    graph.getView().addListener(InternalEvent.SCALE, reposition);
-    graph.getView().addListener(InternalEvent.SCALE_AND_TRANSLATE, reposition);
     cellHints.onChange((on) => {
       if (!on) this.hideHint(true);
     });
@@ -81,27 +81,28 @@ export class CellHover {
     this.current = null;
     const tag = was ? this.tags.find((t) => t.address === was) : undefined;
     if (!tag) return;
-    tag.el.classList.remove('live');
-    tag.el.classList.add('fading');
-    window.clearTimeout(tag.timer);
-    tag.timer = window.setTimeout(() => this.drop(tag), FADE_MS + 400);
+    tag.fade = 0;
+    this.animate();
   }
 
   private makeLive(tag: Tag): void {
-    window.clearTimeout(tag.timer);
-    tag.el.classList.remove('fading');
-    tag.el.classList.add('live');
-    this.place(tag);
+    tag.fade = null;
+    this.animate();
     // The most recently touched one goes to the end of the list.
     this.tags.splice(this.tags.indexOf(tag), 1);
     this.tags.push(tag);
   }
 
   private drop(tag: Tag): void {
-    window.clearTimeout(tag.timer);
-    tag.el.remove();
+    this.sheet.overlays.remove(tag.cell);
     const at = this.tags.indexOf(tag);
     if (at >= 0) this.tags.splice(at, 1);
+  }
+
+  /** The cell's box in the sheet's own coordinates (what a picture drawn by maxGraph needs). */
+  private geoOf(address: string): { x: number; y: number; width: number; height: number } | null {
+    const g = this.sheet.geometryOf(address);
+    return g ? { x: g.x, y: g.y, width: g.width, height: g.height } : null;
   }
 
   private rectOf(address: string): { x: number; y: number; width: number; height: number } | null {
@@ -110,26 +111,49 @@ export class CellHover {
     return state ? { x: state.x, y: state.y, width: state.width, height: state.height } : null;
   }
 
-  private place(tag: Tag): void {
-    const r = this.rectOf(tag.address);
-    tag.el.hidden = !r;
-    if (!r) return;
-    tag.el.style.left = `${Math.round(r.x) + 3}px`;
-    tag.el.style.top = `${Math.round(r.y) + 3}px`;
+  private showLabel(address: string): void {
+    const g = this.geoOf(address);
+    if (this.current !== address || !g) return;
+    const cell = this.sheet.overlays.add(
+      { x: g.x + 3, y: g.y + 3, width: Math.round(address.length * 6.4 + 8), height: 14 },
+      { fillColor: '#ffffff', fillOpacity: 82, strokeColor: 'none', rounded: true, arcSize: 25, fontColor: '#52606d', fontSize: 10, fontStyle: 1, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', opacity: 0, textOpacity: 0 },
+      address,
+    );
+    this.tags.push({ address, cell, alpha: 0, fade: null });
+    while (this.tags.length > TRAIL) this.drop(this.tags[0]);
+    this.animate();
   }
 
-  private showLabel(address: string): void {
-    if (this.current !== address || !this.rectOf(address)) return;
-    const el = document.createElement('div');
-    el.className = 'cell-address-tag';
-    el.textContent = address;
-    el.setAttribute('aria-hidden', 'true');
-    this.sheet.container.append(el);
-    const tag: Tag = { address, el, timer: 0 };
-    this.tags.push(tag);
-    this.place(tag);
-    while (this.tags.length > TRAIL) this.drop(this.tags[0]);
-    requestAnimationFrame(() => el.classList.add('live'));
+  private ticking = 0;
+
+  /** One loop for all the tags: the one under the pointer fades in quickly, the others fade out slowly (slow at first, then faster). */
+  private animate(): void {
+    if (this.ticking) return;
+    let last = performance.now();
+    const tick = (now: number): void => {
+      const dt = now - last;
+      last = now;
+      let busy = false;
+      for (const tag of [...this.tags]) {
+        if (tag.fade === null) {
+          if (tag.alpha < 1) {
+            tag.alpha = Math.min(1, tag.alpha + dt / 250);
+            busy = true;
+          }
+        } else {
+          tag.fade = Math.min(1, tag.fade + dt / FADE_MS);
+          tag.alpha = 1 - tag.fade * tag.fade;
+          if (tag.fade >= 1) {
+            this.drop(tag);
+            continue;
+          }
+          busy = true;
+        }
+        this.sheet.overlays.setOpacity(tag.cell, tag.alpha);
+      }
+      this.ticking = busy ? requestAnimationFrame(tick) : 0;
+    };
+    this.ticking = requestAnimationFrame(tick);
   }
 
   // ------------------------------------------------------------------ the yellow hint

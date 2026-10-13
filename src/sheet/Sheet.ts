@@ -36,6 +36,7 @@ import { CancelError, RunContext } from './tasks';
 import { Spring } from './spring';
 import { decideSpan, emptyShape, readSpanCall, rewriteSpanCall, type ShapeState, type Size } from './shape';
 import { SheetCellHandler } from './cellHandler';
+import { Overlays } from './overlays';
 import { plotSvg, tilesSvg, type PlotSpec } from './plot';
 import type { SvgScene } from './svgScene';
 
@@ -207,6 +208,8 @@ export class Sheet {
   readonly sheetLayer: Cell;
   readonly pieceLayer: Cell;
   readonly uiLayer: Cell;
+  /** Pictures drawn over the cells by maxGraph itself: the rubber band, address tags, id badges, the glide of blocks making room. */
+  readonly overlays: Overlays;
   readonly cells = new Map<string, Cell>();
   /** Set by whoever draws the hover hint of a cell itself (CellHover), so maxGraph's own tooltip stays out of the way. */
   externalCellHints = false;
@@ -242,7 +245,7 @@ export class Sheet {
   /** Where a Shift-click range starts. */
   private pickAnchor: string | null = null;
   private pickHandlers: Array<(picked: string[]) => void> = [];
-  private rubber: { startX: number; startY: number; active: boolean; additive: boolean; base: Set<string>; box: HTMLElement | null } | null = null;
+  private rubber: { startX: number; startY: number; active: boolean; additive: boolean; base: Set<string>; box: Cell | null } | null = null;
   /** When the last rubber band ended: the click that follows it is not a click on a cell. */
   private rubberEndedAt = 0;
   /** Asked before the code of a cell is rewritten (its editor may be open on it). */
@@ -333,6 +336,7 @@ export class Sheet {
     this.sheetLayer = root.getChildAt(0);
     this.pieceLayer = model.add(root, new Cell())!;
     this.uiLayer = model.add(root, new Cell())!;
+    this.overlays = new Overlays(graph, this.uiLayer);
 
     graph.getLabel = (cell?: Cell | null) => this.labelFor(cell ?? null);
     graph.isHtmlLabel = (cell: Cell) => {
@@ -1525,59 +1529,43 @@ export class Sheet {
    */
   private playShifts(ghosts: ShiftGhost[], landing: { c1: number; r1: number; c2: number; r2: number }): void {
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    const view = this.graph.getView();
-    const scale = view.getScale();
-    const t = view.getTranslate();
-    const toPx = (b: { x: number; y: number; width: number; height: number }) => ({
-      x: (b.x + t.x) * scale,
-      y: (b.y + t.y) * scale,
-      width: b.width * scale,
-      height: b.height * scale,
-    });
-    const place = (el: HTMLElement, b: { x: number; y: number; width: number; height: number }): void => {
-      el.style.left = `${b.x}px`;
-      el.style.top = `${b.y}px`;
-      el.style.width = `${b.width}px`;
-      el.style.height = `${b.height}px`;
-    };
-
+    const total = SHIFT_MS + SHIFT_STAGGER_MS * ghosts.length;
     const first = this.geometryOf(formatAddress(landing.c1, landing.r1));
     if (first) {
-      const drop = document.createElement('div');
-      drop.className = 'room-landing';
-      place(drop, toPx({ x: first.x, y: first.y, width: (landing.c2 - landing.c1 + 1) * CW, height: (landing.r2 - landing.r1 + 1) * CH }));
-      this.container.append(drop);
-      drop.animate([{ opacity: 0.9 }, { opacity: 0.9, offset: 0.6 }, { opacity: 0 }], { duration: SHIFT_MS + SHIFT_STAGGER_MS * ghosts.length, easing: 'ease-out' }).finished.then(() => drop.remove(), () => drop.remove());
+      // The square the dropped block lands on pulses, then fades.
+      const spot = this.overlays.add(
+        { x: first.x, y: first.y, width: (landing.c2 - landing.c1 + 1) * CW, height: (landing.r2 - landing.r1 + 1) * CH },
+        { fillColor: '#2e7d32', fillOpacity: 12, strokeColor: '#2e7d32', strokeWidth: 3, dashed: true, rounded: true, arcSize: 4 },
+      );
+      this.overlays.play(spot, total, 0, (p) => ({ opacity: p < 0.6 ? 0.9 : 0.9 * (1 - (p - 0.6) / 0.4) }));
     }
 
     ghosts.forEach((g, i) => {
       if (!g.dest) return;
-      const a = toPx(g.box);
-      const b = toPx(g.dest);
-      const el = document.createElement('div');
-      el.className = 'room-ghost';
-      el.style.background = g.fill;
-      place(el, a);
-      const label = document.createElement('div');
-      label.className = 'room-ghost-label';
-      label.textContent = `${g.from} → ${g.to}`;
-      const note = document.createElement('div');
-      note.className = 'room-ghost-text';
-      note.textContent = g.text;
-      el.append(label, note);
-      this.container.append(el);
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const anim = el.animate(
-        [
-          { transform: 'translate(0, 0) scale(1)', opacity: 0.95 },
-          { transform: `translate(0, 0) scale(1.04)`, opacity: 1, offset: 0.15 },
-          { transform: `translate(${dx}px, ${dy}px) scale(1.04)`, opacity: 1, offset: 0.85 },
-          { transform: `translate(${dx}px, ${dy}px) scale(1)`, opacity: 0 },
-        ],
-        { duration: Math.min(1500, SHIFT_MS + Math.hypot(dx, dy) * 0.5), delay: i * SHIFT_STAGGER_MS, easing: 'cubic-bezier(0.3, 0, 0.2, 1)', fill: 'both' },
-      );
-      anim.finished.then(() => el.remove(), () => el.remove());
+      const from = g.box;
+      const to = g.dest;
+      const picture = this.overlays.add(from, {
+        fillColor: g.fill === 'none' || !g.fill ? '#ffffff' : g.fill,
+        strokeColor: '#d19a2a',
+        strokeWidth: 2,
+        rounded: true,
+        arcSize: 6,
+        fontColor: '#1f2933',
+        fontSize: 11,
+        align: 'left',
+        verticalAlign: 'top',
+        spacingLeft: 4,
+        spacingTop: 3,
+      }, `${g.from} → ${g.to}${g.text ? `\n${g.text.slice(0, 36)}` : ''}`);
+      const dx = to.x - from.x;
+      const dy = to.y - from.y;
+      const ms = Math.min(1500, SHIFT_MS + Math.hypot(dx, dy) * 0.5);
+      // Ease in and out along the way, then fade at the end (the cells themselves are already in their new places).
+      const ease = (p: number): number => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
+      this.overlays.play(picture, ms, i * SHIFT_STAGGER_MS, (p) => {
+        const m = ease(Math.max(0, Math.min(1, (p - 0.15) / 0.7)));
+        return { rect: { x: from.x + dx * m, y: from.y + dy * m, width: from.width, height: from.height }, opacity: p < 0.85 ? 1 : 1 - (p - 0.85) / 0.15 };
+      });
       this.flash(g.to, THEME.flash, SHIFT_MS + 400);
     });
   }
@@ -1805,19 +1793,17 @@ export class Sheet {
     if (!band.active) {
       if (Math.hypot(gx - band.startX, gy - band.startY) < DRAG_THRESHOLD) return;
       band.active = true;
-      band.box = document.createElement('div');
-      band.box.className = 'rubber-band';
-      this.container.append(band.box);
+      band.box = this.overlays.add({ x: 0, y: 0, width: 1, height: 1 }, { fillColor: '#c58b1f', fillOpacity: 12, strokeColor: '#c58b1f', strokeWidth: 1, dashed: true });
     }
     const x1 = Math.min(band.startX, gx);
     const y1 = Math.min(band.startY, gy);
-    Object.assign(band.box!.style, { left: `${x1}px`, top: `${y1}px`, width: `${Math.abs(gx - band.startX)}px`, height: `${Math.abs(gy - band.startY)}px` });
     const view = this.graph.getView();
     const toModel = (v: number, t: number): number => v / view.scale - t;
     const mx1 = toModel(x1, view.translate.x);
     const my1 = toModel(y1, view.translate.y);
     const mx2 = toModel(Math.max(band.startX, gx), view.translate.x);
     const my2 = toModel(Math.max(band.startY, gy), view.translate.y);
+    this.overlays.place(band.box!, { x: mx1, y: my1, width: Math.max(1, mx2 - mx1), height: Math.max(1, my2 - my1) });
     const hit = this.ownersIn(Math.floor((mx1 - ORIGIN_X) / CW), Math.floor((my1 - ORIGIN_Y) / CH), Math.floor((mx2 - ORIGIN_X) / CW), Math.floor((my2 - ORIGIN_Y) / CH));
     this.pick(band.additive ? [...band.base, ...hit] : hit);
     me.consume();
@@ -1827,7 +1813,7 @@ export class Sheet {
     const band = this.rubber;
     if (!band) return;
     this.rubber = null;
-    band.box?.remove();
+    this.overlays.remove(band.box);
     if (!band.active) return; // a plain click: the normal CLICK path handles it
     this.rubberEndedAt = performance.now();
     me.consume();
@@ -1835,7 +1821,7 @@ export class Sheet {
 
   /** Stops a rubber band that the browser took away (a cancelled pointer, a lost focus). */
   private cancelRubber(): void {
-    this.rubber?.box?.remove();
+    this.overlays.remove(this.rubber?.box);
     this.rubber = null;
   }
 
