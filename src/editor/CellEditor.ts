@@ -248,27 +248,32 @@ export class CellEditor {
       this.setFrameGeometry(pending.x, pending.y, g.width, g.height);
       pending = null;
     };
-    bar.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0 || !this.frame) return;
-      const g = this.frame.getGeometry()!;
-      start = { px: e.clientX, py: e.clientY, gx: g.x, gy: g.y, id: e.pointerId };
-      bar.setPointerCapture(e.pointerId);
-      e.preventDefault();
-    });
-    bar.addEventListener('pointermove', (e) => {
+    // Moving the frame makes maxGraph put the bar's DOM node back into the page, and a node that was taken out loses its
+    // pointer capture: a quick drag would stop following the pointer. So the drag listens on the window, which never goes away.
+    const move = (e: PointerEvent): void => {
       if (!start || e.pointerId !== start.id) return;
       const s = this.sheet.graph.getView().getScale();
       pending = { x: start.gx + (e.clientX - start.px) / s, y: start.gy + (e.clientY - start.py) / s };
       if (!raf) raf = requestAnimationFrame(apply);
-    });
-    const end = (e: PointerEvent) => {
+    };
+    const end = (e: PointerEvent): void => {
       if (!start || e.pointerId !== start.id) return;
+      window.removeEventListener('pointermove', move, true);
+      window.removeEventListener('pointerup', end, true);
+      window.removeEventListener('pointercancel', end, true);
       if (raf) cancelAnimationFrame(raf);
       apply();
       start = null;
     };
-    bar.addEventListener('pointerup', end);
-    bar.addEventListener('pointercancel', end);
+    bar.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || !this.frame) return;
+      const g = this.frame.getGeometry()!;
+      start = { px: e.clientX, py: e.clientY, gx: g.x, gy: g.y, id: e.pointerId };
+      window.addEventListener('pointermove', move, true);
+      window.addEventListener('pointerup', end, true);
+      window.addEventListener('pointercancel', end, true);
+      e.preventDefault();
+    });
     bar.addEventListener('dblclick', () => this.toggleMaximize());
   }
 
@@ -405,7 +410,6 @@ export class CellEditor {
     split.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 || !this.outBox) return;
       e.preventDefault();
-      split.setPointerCapture(e.pointerId);
       const startY = e.clientY;
       const startH = this.outBox.getBoundingClientRect().height;
       // The editor lives inside the zoomed graph: a screen pixel is 1/scale of a pixel of the editor.
@@ -417,14 +421,15 @@ export class CellEditor {
         this.layoutOutput();
         this.editor?.layout();
       };
+      // On the window, not on the separator: a node that maxGraph re-hosts loses its pointer capture.
       const up = (): void => {
-        split.removeEventListener('pointermove', move);
-        split.removeEventListener('pointerup', up);
-        split.removeEventListener('pointercancel', up);
+        window.removeEventListener('pointermove', move, true);
+        window.removeEventListener('pointerup', up, true);
+        window.removeEventListener('pointercancel', up, true);
       };
-      split.addEventListener('pointermove', move);
-      split.addEventListener('pointerup', up);
-      split.addEventListener('pointercancel', up);
+      window.addEventListener('pointermove', move, true);
+      window.addEventListener('pointerup', up, true);
+      window.addEventListener('pointercancel', up, true);
     });
     split.addEventListener('dblclick', () => {
       this.outH = null;
