@@ -85,6 +85,8 @@ export class SheetPane {
       },
       onOpen: (address) => {
         this.openedAddress = address;
+        // However the editor was opened (menu, Enter, helper, link), the cell under it wears the pick frame, as after a click.
+        if (!sheet.isPicked(address)) sheet.pick([address], address);
         hooks.onEditorOpen?.(address);
       },
       onClose: () => {
