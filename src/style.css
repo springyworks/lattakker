@@ -479,6 +479,13 @@ body.grab-armed .sheet-pane {
   }
 }
 
+/* Pulling the sheet by its column letters or row numbers: the hand stays closed wherever it goes. */
+body.hdr-pull,
+body.hdr-pull * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+
 /* The way back out of "zoom in on this cell", top right of the sheet. */
 .zoom-back {
   position: fixed;

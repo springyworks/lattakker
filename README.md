@@ -422,7 +422,8 @@ You do not need to know any programming to begin. The game works as it is:
 the page opens zoomed in on the red flag (H10); click anywhere and the view glides out
 to the board. A new battle is already running every time the page opens: click a red
 piece, click a dot. (**New game** brings back the setup, with **Shuffle** and
-**Start the battle!**.) A cell's 🔍 zooms in on it; **🔍 Zoom back out**, top right, goes back. Below the board
+**Start the battle!**.) A cell's 🔍 zooms in on it; **🔍 Zoom back out**, top right, goes back.
+Press the column letters or row numbers (the borders with A1, B7 ...) with the left mouse button and pull: the whole sheet follows the pointer in both directions, anywhere on the screen, and glides on a little when you let go. A plain click on them still flashes the column or row. Below the board
 are some grey-green cells that already do things: one counts the pieces, one
 paints the board, one tells whose turn it is. They update by themselves after
 every move. They are small programs, written in **TypeScript**.

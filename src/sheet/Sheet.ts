@@ -348,6 +348,7 @@ export class Sheet {
       if (id.startsWith('piece:') || id.startsWith('btn:') || id.startsWith('ed:btn') || id === 'hdr:corner' || id.startsWith('ctx:row:') || id.startsWith('ctx:livebar:')) return 'pointer';
       if (id.startsWith('sheet:')) return 'cell';
       if (id === 'ed:frame') return 'move';
+      if (id.startsWith('hdr:')) return 'grab';
       return null;
     };
     const tooltips = graph.getPlugin<TooltipHandler>('TooltipHandler');
