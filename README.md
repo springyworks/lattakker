@@ -66,6 +66,8 @@ Live demo: https://springyworks.github.io/lattakker/
     - [11.4.4 What the helper can and cannot do](#1144-what-the-helper-can-and-cannot-do)
     - [11.4.5 Memory, and outside AIs asking the helper](#1145-memory-and-outside-ais-asking-the-helper)
     - [11.4.6 What is going on? The status service](#1146-what-is-going-on-the-status-service)
+    - [11.4.7 Help and “show me”, everywhere](#1147-help-and-show-me-everywhere)
+    - [11.4.8 Documents for AIs: rules, API, examples, README](#1148-documents-for-ais-rules-api-examples-readme)
 - [12 Rows](#12-rows)
 - [13 Project layout](#13-project-layout)
 - [14 Licence and artwork](#14-licence-and-artwork)
@@ -1536,16 +1538,39 @@ nobody answers twice. Without a helper set up you only get a one-time hint.
 #### 11.4.4 What the helper can and cannot do
 
 It can: look at the cell you are in, list and read cells in any tab, read the
-game, read the guide, make a cell blink, speak **raw MCP** to any tab
-(`mcp_call`: `resources/list`, `resources/read`, `tools/list`, `tools/call` for
-`get_cell`, `list_cells`, `run_cell`, `click`, `flash`, `signal`), and **suggest** code. A suggestion
+game, read the guide, make a cell blink, **take you to a cell** (`goto_cell`:
+it opens the tab, flies there and blinks the cell), **run a cell** and tell you
+what it printed or why it failed (`run_cell`), find an empty spot
+(`find_free_cell`), speak **raw MCP** to any tab (`mcp_call`: `resources/list`,
+`resources/read`, `tools/list`, `tools/call` for `get_cell`, `list_cells`,
+`run_cell`, `click`, `flash`, `signal`), and **suggest** code. A suggestion
 is a card with the code and the button *✍ Type it into A13*: only if you press
 it, the code is typed slowly into the cell where you watch, and you keep it
 with Esc or **Restart & close**.
 
-It cannot: change a cell by itself (`set_code` is refused for it), move pieces,
-or start or end games. Text inside cells is treated as data, never as orders,
-and what the model writes is shown as plain text (no markup is ever
+A bare cell name such as `A16` exists in every tab. When it is empty in the tab
+you are in and exactly one other tab has code there, the helper's tools use that
+one and say so (`/lab/A16`); when two tabs qualify it asks which. Cell names in
+the chat (`/lab/A16`, or `A16` when it holds code) are blue links that fly to the
+cell.
+
+**Small models** (a model on this computer whose name says under 14B, such as
+`qwen3.5:4b`) get a shorter list of ten tools and shorter instructions, because a
+long list makes them fumble. Bigger models and Gemini get everything.
+
+**Writing by itself** is off by default. A grown-up can switch on *Let the helper
+write code in empty cells by itself* in the helper settings (⚙, "Other"). The
+helper then uses `write_code`: it picks (or is given) an **empty** cell, the code
+is typed where you watch, it is kept and run, and the helper sees what it printed
+or its error and may fix it. Every such write gets a card with *👀 Show me* and
+*↶ Undo* (undo only removes the code if nobody changed the cell since). It never
+touches a cell that already has code, only writes in the board and Lab tabs, and
+does so at most six times per conversation. No single tool call keeps the chat
+waiting longer than 40 seconds, and Stop ends it at once.
+
+It cannot: change a cell that already has code (`set_code` is refused for it),
+move pieces, or start or end games. Text inside cells is treated as data, never
+as orders, and what the model writes is shown as plain text (no markup is ever
 executed). The code is in `src/aichat/` (providers, tools, the agent loop,
 the chat window, the watcher).
 
@@ -1642,6 +1667,83 @@ showed a sign of life, and one that is quiet for too long is marked
 The same list is an MCP server named `status`: **🔎 Status** in the chat asks it, a
 cell can (`mcp.call('status', 'tools/call', { name: 'jobs' })`), and so can an outside
 AI (`mms.mcp('status', 'tools/call', { name: 'jobs' })`). **Stop** cancels the whole chain.
+
+*Why am I waiting, and where?* While the helper works, a line above the list says in
+plain words what is being waited for (“The model is being loaded into this computer's
+memory”, “The helper is using a tool: write_code”), the **chain** that leads there
+(`chat › local-model qwen3.5:4b`) and, when there is something to try, a 💡 hint.
+Nothing is guessed: `src/aichat/diagnose.ts` only rephrases what the jobs reported. If
+Ollama is busy holding another model, it says which and how to free it
+(`ollama stop <model>`).
+
+*Ammunition: the model's memory.* A model can only hold so many tokens in mind (its
+context window). Ollama's own default is 4096, which is less than the helper's
+instructions plus its tool descriptions plus one `read_guide` answer; the server then
+silently drops the oldest part, which is the instructions, and the answers turn
+strange. So: for Ollama the page uses its native `/api/chat` and asks for `num_ctx`
+itself (**⚙ › Memory of the chat**, 16k by default); the header shows a measured
+**🔋 4.9k of 16k tokens in use** (the server's own count); before every question
+old, long tool answers are shortened to fit, and a model with a tiny memory gets the
+shortest tool list, each with a note in the chat. Other servers (LM Studio ...) keep
+the OpenAI-style door and show no gauge. The code is `src/aichat/ammo.ts`.
+
+#### 11.4.7 Help and “show me”, everywhere
+
+**F1** opens a small help card for whatever you are pointing at: the picked cell
+(it reads the cell's own comments, shows what it prints and offers *👀 Show me this
+cell*, *✏️ Edit*, *▶ Run again*, *🤖 Ask the helper*), the helper, the Inputs panel,
+the tabs or the code editor. Inside a code editor F1 stays Monaco's list of
+commands and **Shift+F1** is the help. A tiny **?** sits in the tab strip, the
+Lab and Examples bars, the Inputs panel and the helper's headers, and every cell's
+menu (hover ⋮, or right-click) has *❓ Help for this cell*. *👀 Show me around*
+is a five-step tour that lights up the tabs, the cell path, the AI button, the
+cells and the **?** with a pulsing ring. The code is in `src/ui/help.ts`.
+
+**Links that follow.** A blue cell link (in the chat, the help card, the Inputs panel)
+remembers its cell by identity, not by address. When the cell is moved, shifted by a
+new row, or made room for, the link's words, tooltip and target update by themselves
+and flash once; when the cell's code is cleared the link turns grey and struck
+through. The focused cell (the path chip in the tab strip, the highlighted cell) and
+the ◀ ▶ history follow in the same way. The sheets report moves through
+`workspace.onCellsChanged` (`src/workspace.ts`), once per burst of changes.
+
+**The cell under attention** (the one you clicked, or were taken to by a link, “go to”
+or the helper) has a see-through amber frame, so its own content stays readable.
+**The chat's width** is changed by dragging the thin bar at its left edge (it sticks
+softly at 380, 480 and 600 px), with the arrow keys, or by double-click to reset; it is
+remembered.
+
+#### 11.4.8 Documents for AIs: rules, API, examples, README
+
+An AI helps best the way a human coder does: with the rules, the API and examples.
+Everything is published next to the page (and by the dev server) as plain files, made
+from the real sources by `scripts/ai-docs.ts`, so they cannot drift from the code the
+children play with:
+
+| File | What it is |
+| --- | --- |
+| `ai/index.md` | what exists and where; start here |
+| `ai/rules.md` | how to behave with children, how to work like a coder, the rules of cell code (source: `ai-docs/rules.md`) |
+| `ai/cell-api.d.ts` | the TypeScript declarations of everything a cell can use (from `src/sheet/apiTypes.ts`) |
+| `ai/examples.md`, `ai/lab-demos.md` | every example cell and Lab demo with its comments, headed by its cell path (from `src/examples.ts`, `src/labDemos.ts`) |
+| `ai/README.md` | this README |
+| `ai/everything.md`, `ai/manifest.json` | all of it in one file; the same list for programs |
+
+On GitHub the sources are
+[README.md](https://github.com/springyworks/lattakker/blob/main/README.md),
+[src/sheet/apiTypes.ts](https://github.com/springyworks/lattakker/blob/main/src/sheet/apiTypes.ts),
+[src/examples.ts](https://github.com/springyworks/lattakker/blob/main/src/examples.ts) and
+[src/labDemos.ts](https://github.com/springyworks/lattakker/blob/main/src/labDemos.ts).
+
+- **Outside AIs** find the addresses in `llms.txt` (“Read these first”), in the page's
+  `<head>`, in `mms.help()` and with `mms.docs()` (also the WebMCP tool `get_docs`).
+- **The built-in helper** gets the same rules in its instructions (one file, so it
+  cannot disagree with the published one) and the tool `read_docs`: `doc: "api"` with a
+  query (“plot”, “CellRef flash”) gives exact signatures, `doc: "examples"` with a few
+  words finds working cells (or `path: "/lab/A16"` returns one whole), `doc: "readme"`
+  finds a topic. Answers are cut to fit the model's memory (🔋). The helper is told never
+  to invent a function or a cell path; a path that a tool returned can be opened with
+  `goto_cell`. The code is in `src/aichat/docs.ts`.
 
 ## 12 Rows
 

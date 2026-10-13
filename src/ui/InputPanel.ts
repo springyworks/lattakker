@@ -10,6 +10,7 @@
  */
 
 import { cellLink } from '../nav';
+import { helpButton } from './help';
 
 export type ControlKind = 'slider' | 'number' | 'text' | 'checkbox' | 'select' | 'button';
 
@@ -263,7 +264,7 @@ class InputPanel {
     this.title.title = 'The controls that the cells of this page made. Click to fold them.';
     this.title.onclick = () => root.classList.toggle('folded');
     this.body = el('div', 'input-body');
-    root.append(this.title, this.body);
+    root.append(this.title, helpButton('inputs', 'help-icon input-help'), this.body);
     document.body.append(root);
     this.root = root;
   }

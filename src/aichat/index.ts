@@ -3,6 +3,7 @@ import type { installAiSurface } from '../ai/surface';
 import type { TabStrip } from '../ui/TabStrip';
 import { parseCellUri } from '../editor/monaco';
 import { workspace } from '../workspace';
+import { nav } from '../nav';
 import { Conversation } from './agent';
 import { aiBridge, type AskOptions } from './bridge';
 import { loadSettings, onSettingsChange } from './config';
@@ -15,7 +16,7 @@ import { LocalAiServer, probeLocal } from './localAi';
 import { router } from '../mcp/router';
 import { AiChatUi } from './ui';
 import { startWatcher } from './watcher';
-import type { AiContext } from './tools';
+import type { AiContext, RunReport } from './tools';
 
 type Surface = ReturnType<typeof installAiSurface>;
 
@@ -62,6 +63,12 @@ function addBelowLine(path: string, code: string, line: number): { ok: boolean; 
   return { ok: true };
 }
 
+/** What the page's own run/write calls answer, in the shape the tools use. */
+function toReport(result: unknown): RunReport {
+  const r = result as { ok: boolean; error?: string; output?: string; text?: string; uid?: string | null };
+  return { ok: r.ok, error: r.error, output: r.output, text: r.text, uid: r.uid };
+}
+
 /**
  * Sets up the helper: settings from this browser, the chat, the doors into it (the 🤖 button, Alt+I, the
  * `aiBridge` used by menus) and the watcher for "// AI:" lines. Nothing is sent anywhere until a helper has
@@ -78,6 +85,16 @@ export function installAiChat(deps: { surface: Surface; strip: TabStrip; say: (t
     liveText: (tab, address) => {
       const editor = workspace.get(tab)?.editor;
       return editor?.isOpen && editor.address === address ? editor.valueText : null;
+    },
+    run: async (path) => toReport(await surface.runCell(path)),
+    write: async (path, code) => {
+      const typed = (await surface.writeCodeLive(path, code)) as { ok: boolean; error?: string };
+      if (!typed.ok) return { ok: false, error: typed.error };
+      // A moment to read what was typed, then keep it (this also restarts the cell) and see how it ran.
+      await new Promise((r) => window.setTimeout(r, 1500));
+      const hit = workspace.resolve(path);
+      if (!('error' in hit) && hit.tab.editor.isOpen && hit.tab.editor.address === hit.address) hit.tab.editor.close(true);
+      return toReport(await surface.runCell(path));
     },
   });
 
@@ -99,6 +116,15 @@ export function installAiChat(deps: { surface: Surface; strip: TabStrip; say: (t
       const result = (await surface.writeCodeLive(path, code)) as { ok: boolean; error?: string };
       return result.ok ? { ok: true } : { ok: false, error: result.error };
     },
+    clearCell: (path, code) => {
+      const hit = workspace.resolve(path);
+      if ('error' in hit) return { ok: false, error: hit.error };
+      // Only the helper's own code is taken back: if the person changed the cell since, it is left alone.
+      if (hit.tab.sheet.dataAt(hit.address)?.code.trim() !== code.trim()) return { ok: false, error: `${path} was changed after the helper wrote it, so it is left as it is.` };
+      const result = surface.clearCell(path) as { ok: boolean; error?: string };
+      return result.ok ? { ok: true } : { ok: false, error: result.error };
+    },
+    goTo: (path) => nav.goTo(path),
   });
   strip.onAi = () => ui.toggleSide();
 

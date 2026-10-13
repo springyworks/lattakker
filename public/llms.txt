@@ -4,6 +4,19 @@
 
 Red is the player (bottom of the board, rows 7-10). Blue is the computer (top, rows 1-4), its pieces face down until they fight. Capture the enemy flag to win. The board is squares A1:J10; every cell from row 12 down can hold code.
 
+## Read these first (like a human coder joining the project)
+
+An AI that can open links should read, in this order. They are made from the real sources, so they match the code the children play with:
+
+1. Rules for helpers (how to behave with children, how to work like a coder, the rules of cell code): ai/rules.md
+2. The API of the code a cell can use, as TypeScript declarations: ai/cell-api.d.ts
+3. Every example cell and every Lab demo, with its comments: ai/examples.md and ai/lab-demos.md
+4. The README: https://github.com/springyworks/lattakker/blob/main/README.md (raw: https://raw.githubusercontent.com/springyworks/lattakker/main/README.md)
+5. Everything in one file: ai/everything.md. Index and manifest: ai/index.md, ai/manifest.json
+6. On GitHub, the sources: src/sheet/apiTypes.ts, src/examples.ts, src/labDemos.ts (https://github.com/springyworks/lattakker/tree/main/src). Published copy: https://springyworks.github.io/lattakker/ai/index.md
+
+Then: look up the exact names in the API, find a similar example and follow its style, write a small piece, run it, fix the exact error.
+
 ## How to read the page
 
 - `window.mms.help()` returns the full guide as text. Start there.

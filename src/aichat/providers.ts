@@ -1,4 +1,5 @@
 import { getKey, getSettings, type AiSettings } from './config';
+import { ammo } from './ammo';
 import { jobs, type JobHandle } from './jobs';
 
 /**
@@ -60,6 +61,8 @@ export interface ModelProvider {
 
 const GEMINI = 'https://generativelanguage.googleapis.com/v1beta';
 const MAX_OUTPUT_TOKENS = 1400;
+/** Servers already recognised as Ollama (or not), by address. */
+const ollamaSeen = new Map<string, { ok: boolean; at: number }>();
 
 const wait = (ms: number, signal?: AbortSignal): Promise<void> =>
   new Promise((resolve, reject) => {
@@ -146,12 +149,34 @@ export class OpenAiCompatProvider implements ModelProvider {
     private readonly baseUrl: string,
     private readonly model: string,
     private readonly apiKey: string,
+    /** The memory (num_ctx) to ask Ollama for; only used when the server turns out to be Ollama. */
+    private readonly context = 16384,
   ) {
     this.label = model || 'the local model';
   }
 
   private url(path: string): string {
     return `${this.baseUrl.replace(/\/+$/, '')}${path}`;
+  }
+
+  /** The server's own address without the "/v1" of the OpenAI-style door (Ollama's native API lives there). */
+  private root(): string {
+    return this.baseUrl.replace(/\/+$/, '').replace(/\/v1$/, '');
+  }
+
+  /** Is this Ollama? Then its own API is used, because only that one lets the page ask for a bigger memory (num_ctx). Looked up once, a "no" is re-checked after half a minute. */
+  private async isOllama(): Promise<boolean> {
+    const known = ollamaSeen.get(this.root());
+    if (known && (known.ok || performance.now() - known.at < 30000)) return known.ok;
+    let ok = false;
+    try {
+      const res = await fetch(`${this.root()}/api/version`, { signal: AbortSignal.timeout(1500) });
+      ok = res.ok && typeof ((await res.json()) as { version?: unknown }).version === 'string';
+    } catch {
+      ok = false;
+    }
+    ollamaSeen.set(this.root(), { ok, at: performance.now() });
+    return ok;
   }
 
   private headers(): Record<string, string> {
@@ -188,24 +213,31 @@ export class OpenAiCompatProvider implements ModelProvider {
     }
   }
 
-  /** Ollama's list of models that are in memory (null for servers that do not have it). */
-  private async inMemory(): Promise<boolean | null> {
+  /** What Ollama says about its memory right now: is our model in it, which other models are, and how big a window ours has (null for servers without /api/ps). */
+  private async ps(): Promise<{ loaded: boolean | null; others: string[]; window: number | null }> {
     try {
-      const res = await fetch(`${this.baseUrl.replace(/\/v1\/?$/, '')}/api/ps`, { signal: AbortSignal.timeout(1500) });
-      if (!res.ok) return null;
-      const data = (await res.json()) as { models?: Array<{ name?: string; model?: string }> };
-      return (data.models ?? []).some((m) => m.name === this.model || m.model === this.model);
+      const res = await fetch(`${this.root()}/api/ps`, { signal: AbortSignal.timeout(1500) });
+      if (!res.ok) return { loaded: null, others: [], window: null };
+      const data = (await res.json()) as { models?: Array<{ name?: string; model?: string; context_length?: number }> };
+      const list = data.models ?? [];
+      const mine = list.find((m) => m.name === this.model || m.model === this.model);
+      return { loaded: !!mine, others: list.filter((m) => m !== mine).map((m) => m.name ?? m.model ?? '').filter(Boolean), window: mine?.context_length ?? null };
     } catch {
-      return null;
+      return { loaded: null, others: [], window: null };
     }
   }
 
   private async send(job: JobHandle, system: string, messages: ChatMsg[], tools: ToolDecl[], signal: AbortSignal): Promise<ModelReply> {
+    const native = await this.isOllama();
     const wire: Array<Record<string, unknown>> = [{ role: 'system', content: system }];
     for (const m of messages) {
       if (m.role === 'user') wire.push({ role: 'user', content: m.text ?? '' });
-      else if (m.role === 'tool') wire.push({ role: 'tool', tool_call_id: m.toolCallId, content: m.text ?? '' });
-      else {
+      else if (m.role === 'tool') wire.push(native ? { role: 'tool', tool_name: m.toolName, content: m.text ?? '' } : { role: 'tool', tool_call_id: m.toolCallId, content: m.text ?? '' });
+      else if (native) {
+        const msg: Record<string, unknown> = { role: 'assistant', content: m.text ?? '' };
+        if (m.toolCalls?.length) msg.tool_calls = m.toolCalls.map((c) => ({ function: { name: c.name, arguments: c.args } }));
+        wire.push(msg);
+      } else {
         const msg: Record<string, unknown> = { role: 'assistant', content: m.text || null };
         if (m.toolCalls?.length) {
           msg.tool_calls = m.toolCalls.map((c) => ({ id: c.id, type: 'function', function: { name: c.name, arguments: JSON.stringify(c.args) } }));
@@ -214,18 +246,31 @@ export class OpenAiCompatProvider implements ModelProvider {
       }
     }
     const withTools = tools.length > 0 && this.toolsOk;
-    const body: Record<string, unknown> = { model: this.model, messages: wire, temperature: 0.4, stream: true, max_tokens: MAX_OUTPUT_TOKENS };
-    // A child should not wait while a model thinks out loud; servers that do not know the setting ignore it.
-    if (this.thinkingOff) body.reasoning_effort = 'none';
-    if (withTools) {
-      body.tools = tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } }));
-      body.tool_choice = 'auto';
+    const declared = tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } }));
+    let body: Record<string, unknown>;
+    if (native) {
+      // Ollama's own door: the memory (num_ctx) is ours to choose here, the OpenAI-style door always uses the server's default.
+      body = { model: this.model, messages: wire, stream: true, options: { num_ctx: this.context, temperature: 0.4, num_predict: MAX_OUTPUT_TOKENS } };
+      // A child should not wait while a model thinks out loud.
+      if (this.thinkingOff) body.think = false;
+      if (withTools) body.tools = declared;
+      ammo.setWindow(this.context);
+    } else {
+      body = { model: this.model, messages: wire, temperature: 0.4, stream: true, max_tokens: MAX_OUTPUT_TOKENS };
+      // A child should not wait while a model thinks out loud; servers that do not know the setting ignore it.
+      if (this.thinkingOff) body.reasoning_effort = 'none';
+      if (withTools) {
+        body.tools = declared;
+        body.tool_choice = 'auto';
+      }
+      ammo.setWindow(null);
     }
     // What is really going on while the first word has not come yet: ask the server whether the model is in memory.
     const ctl = new AbortController();
     const relay = (): void => ctl.abort();
     signal.addEventListener('abort', relay);
     let words = 0;
+    let askedWindow = false;
     let waitingForFirst = true;
     let stuck = '';
     job.state('waiting');
@@ -233,10 +278,11 @@ export class OpenAiCompatProvider implements ModelProvider {
     const watch = window.setInterval(() => {
       if (!waitingForFirst) return;
       const quiet = Math.round((performance.now() - sentAt) / 1000);
-      void this.inMemory().then((loaded) => {
+      void this.ps().then(({ loaded, others }) => {
         if (!waitingForFirst) return;
         if (loaded === false) {
-          job.say(`the server has not answered and the model is not in memory yet: it is most likely still loading (a big model can take minutes). Waiting ${quiet} s so far`, false);
+          const busy = others.length ? ` Ollama is also holding ${others.join(', ')} in memory: it has to make room first (to free it: ollama stop ${others[0]}).` : '';
+          job.say(`the server has not answered and the model is not in memory yet: it is most likely still loading (a big model can take minutes). Waiting ${quiet} s so far.${busy}`, false);
           // Loading is slow but allowed; a model that never shows up in memory is given up on after 20 minutes.
           if (quiet > 1200) {
             stuck = 'The model did not finish loading within 20 minutes.';
@@ -254,7 +300,7 @@ export class OpenAiCompatProvider implements ModelProvider {
     const sentAt = performance.now();
     let res: Response;
     try {
-      res = await fetch(this.url('/chat/completions'), { method: 'POST', headers: this.headers(), body: JSON.stringify(body), signal: ctl.signal });
+      res = await fetch(native ? `${this.root()}/api/chat` : this.url('/chat/completions'), { method: 'POST', headers: this.headers(), body: JSON.stringify(body), signal: ctl.signal });
     } catch (err) {
       window.clearInterval(watch);
       signal.removeEventListener('abort', relay);
@@ -266,7 +312,7 @@ export class OpenAiCompatProvider implements ModelProvider {
       window.clearInterval(watch);
       signal.removeEventListener('abort', relay);
       const message = await errorMessage(res);
-      if (res.status === 400 && this.thinkingOff && /reasoning/i.test(message)) {
+      if (res.status === 400 && this.thinkingOff && /reasoning|think/i.test(message)) {
         this.thinkingOff = false;
         return this.send(job, system, messages, tools, signal);
       }
@@ -282,7 +328,8 @@ export class OpenAiCompatProvider implements ModelProvider {
     let text = '';
     let finish = '';
     const calls = new Map<number, { id: string; name: string; args: string }>();
-    const take = (chunk: { choices?: Array<{ finish_reason?: string | null; delta?: { content?: string | null; reasoning?: string | null; reasoning_content?: string | null; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> }; message?: { content?: string | null; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: unknown } }> } }> }): void => {
+    const take = (chunk: { usage?: { prompt_tokens?: number; completion_tokens?: number }; choices?: Array<{ finish_reason?: string | null; delta?: { content?: string | null; reasoning?: string | null; reasoning_content?: string | null; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> }; message?: { content?: string | null; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: unknown } }> } }> }): void => {
+      if (chunk.usage?.prompt_tokens) ammo.record(chunk.usage.prompt_tokens, chunk.usage.completion_tokens ?? 0);
       const choice = chunk.choices?.[0];
       if (!choice) return;
       const d = choice.delta;
@@ -300,11 +347,34 @@ export class OpenAiCompatProvider implements ModelProvider {
       if (choice.finish_reason) finish = choice.finish_reason;
       words++;
       waitingForFirst = false;
+      if (!askedWindow) {
+        askedWindow = true;
+        // The model is in memory now: ask how big a window it really got (measured, not hoped for).
+        if (native) void this.ps().then((p) => p.window && ammo.setWindow(p.window));
+      }
       job.state('running');
       job.alive(d?.reasoning || d?.reasoning_content ? `the model is thinking (${words} pieces received)` : calls.size ? `the model is writing a tool call (${words} pieces received)` : `receiving the answer: ${text.length} characters so far`);
     };
+    // Ollama's own door speaks one JSON object per line; its pieces are turned into the shape `take` knows.
+    let nativeCalls = 0;
+    const takeNative = (c: { message?: { content?: string; thinking?: string; tool_calls?: Array<{ function?: { name?: string; arguments?: unknown } }> }; done?: boolean; done_reason?: string; prompt_eval_count?: number; eval_count?: number; error?: string }): void => {
+      if (c.error) throw new AiError('server', c.error);
+      take({
+        choices: [
+          {
+            finish_reason: c.done ? (c.done_reason === 'length' ? 'length' : 'stop') : null,
+            delta: {
+              content: c.message?.content,
+              reasoning: c.message?.thinking,
+              tool_calls: (c.message?.tool_calls ?? []).map((t) => ({ index: nativeCalls++, id: '', function: { name: t.function?.name, arguments: JSON.stringify(t.function?.arguments ?? {}) } })),
+            },
+          },
+        ],
+      });
+      if (c.done && c.prompt_eval_count) ammo.record(c.prompt_eval_count, c.eval_count ?? 0);
+    };
     try {
-      if (!(res.headers.get('content-type') ?? '').includes('event-stream')) {
+      if (!native && !(res.headers.get('content-type') ?? '').includes('event-stream')) {
         take((await res.json()) as Parameters<typeof take>[0]);
       } else {
         const reader = res.body!.getReader();
@@ -318,19 +388,21 @@ export class OpenAiCompatProvider implements ModelProvider {
           while ((nl = buffer.indexOf('\n')) >= 0) {
             const line = buffer.slice(0, nl).trim();
             buffer = buffer.slice(nl + 1);
-            if (!line.startsWith('data:')) continue;
-            const payload = line.slice(5).trim();
+            const payload = native ? line : line.startsWith('data:') ? line.slice(5).trim() : '';
             if (!payload || payload === '[DONE]') continue;
+            let parsed: unknown;
             try {
-              take(JSON.parse(payload) as Parameters<typeof take>[0]);
+              parsed = JSON.parse(payload);
             } catch {
-              // a half line: the next piece completes it
+              continue; // a half line: the next piece completes it
             }
+            if (native) takeNative(parsed as Parameters<typeof takeNative>[0]);
+            else take(parsed as Parameters<typeof take>[0]);
           }
         }
       }
     } catch (err) {
-      if (signal.aborted) throw err;
+      if (signal.aborted || err instanceof AiError) throw err;
       throw new AiError('network', `The answer was cut off after ${text.length} characters: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       window.clearInterval(watch);
@@ -506,7 +578,7 @@ function parseJsonOr(text: string): unknown {
 /** The provider the settings ask for, or null when it is not set up. */
 export function makeProvider(settings: AiSettings = getSettings()): ModelProvider | null {
   if (settings.provider === 'local') {
-    return settings.local.baseUrl && settings.local.model ? new OpenAiCompatProvider(settings.local.baseUrl, settings.local.model, getKey('local')) : null;
+    return settings.local.baseUrl && settings.local.model ? new OpenAiCompatProvider(settings.local.baseUrl, settings.local.model, getKey('local'), settings.local.context) : null;
   }
   return getKey('gemini') && settings.gemini.adultAck ? new GeminiProvider(settings.gemini.model, getKey('gemini')) : null;
 }

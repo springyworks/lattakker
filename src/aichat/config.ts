@@ -10,7 +10,7 @@ export type ProviderId = 'local' | 'gemini';
 export interface AiSettings {
   provider: ProviderId;
   /** An OpenAI-compatible server, for example Ollama (http://localhost:11434/v1) or LM Studio (http://localhost:1234/v1). */
-  local: { baseUrl: string; model: string };
+  local: { baseUrl: string; model: string; /** How many tokens the model may remember at once (Ollama's num_ctx). More is smarter but uses more memory. */ context: number };
   gemini: { model: string; adultAck: boolean };
   /** Keep the key in this browser (localStorage) instead of only until the page is closed. */
   remember: boolean;
@@ -21,17 +21,20 @@ export interface AiSettings {
   allowOutside: boolean;
   /** Let cells and the helper look up the weather (the place name is sent to open-meteo.com). */
   allowWeather: boolean;
+  /** Let the helper write code into an EMPTY cell on its own (the person watches it being typed and can undo it). */
+  allowWrite: boolean;
 }
 
 export const DEFAULT_SETTINGS: AiSettings = {
   provider: 'local',
-  local: { baseUrl: 'http://localhost:11434/v1', model: '' },
+  local: { baseUrl: 'http://localhost:11434/v1', model: '', context: 16384 },
   gemini: { model: 'gemini-flash-latest', adultAck: false },
   remember: false,
   autoPopup: true,
   autoSeconds: 3,
   allowOutside: false,
   allowWeather: true,
+  allowWrite: false,
 };
 
 const SETTINGS_KEY = 'lattakker:ai:v1';
@@ -48,12 +51,13 @@ function merge(base: AiSettings, saved: Partial<AiSettings> | null): AiSettings 
   const seconds = (saved as { v?: number }).v === 2 || Number(saved.autoSeconds) !== 22 ? Number(saved.autoSeconds) : base.autoSeconds;
   return {
     provider: saved.provider === 'gemini' ? 'gemini' : 'local',
-    local: { baseUrl: String(saved.local?.baseUrl || base.local.baseUrl), model: String(saved.local?.model ?? '') },
+    local: { baseUrl: String(saved.local?.baseUrl || base.local.baseUrl), model: String(saved.local?.model ?? ''), context: [4096, 8192, 16384, 32768].includes(Number(saved.local?.context)) ? Number(saved.local?.context) : base.local.context },
     gemini: { model: String(saved.gemini?.model || base.gemini.model), adultAck: saved.gemini?.adultAck === true },
     remember: saved.remember === true,
     autoPopup: saved.autoPopup !== false,
     allowOutside: saved.allowOutside === true,
     allowWeather: saved.allowWeather !== false,
+    allowWrite: saved.allowWrite === true,
     autoSeconds: Number.isFinite(seconds) ? Math.min(600, Math.max(3, Math.round(seconds))) : base.autoSeconds,
   };
 }

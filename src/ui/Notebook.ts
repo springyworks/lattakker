@@ -10,6 +10,7 @@ import { loadExamplesSaved, startExamplesAutoSave } from '../storage';
 import type { GameView } from '../game/GameView';
 import { MAX_COLS } from '../sheet/Sheet';
 import { SheetPane, type Tone } from './SheetPane';
+import { helpButton } from './help';
 import { installGrabGesture, installPinchZoom } from './touch';
 
 /**
@@ -134,7 +135,7 @@ export function createNotebook(view: GameView, board: NotebookBoard, examples: R
   const modeBtn = el('button', '', 'Show code');
   modeBtn.type = 'button';
   modeBtn.title = 'For your own blocks: switch between what they print and their TypeScript';
-  bar.append(title, say, search, newBtn, modeBtn);
+  bar.append(title, say, search, newBtn, modeBtn, helpButton('start'));
 
   const container = el('div', 'sheet-pane');
   container.id = 'examples-sheet';

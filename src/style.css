@@ -1111,6 +1111,34 @@ body.ai-open #examples-panel {
   color: #52606d;
   font-style: italic;
 }
+.ai-why {
+  margin: 6px 0 2px;
+  padding: 5px 8px;
+  border-left: 3px solid #3f8f5a;
+  border-radius: 4px;
+  background: #eef6f0;
+  color: #1f2933;
+  font-style: normal;
+  font-weight: 600;
+}
+.ai-why.slow {
+  border-left-color: #d19a00;
+  background: #fff7de;
+}
+.ai-why.stuck {
+  border-left-color: #b42318;
+  background: #fdecea;
+}
+.ai-why-hint {
+  margin: 2px 0;
+  font-style: normal;
+  font-size: 12px;
+}
+.ai-why-chain {
+  margin: 0 0 4px;
+  font: 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: #616e7c;
+}
 .ai-hello p {
   margin: 0 0 8px;
 }
@@ -1362,6 +1390,60 @@ body.ai-open #examples-panel {
   color: #0b4f96;
   text-decoration-style: solid;
 }
+.cell-link-dead {
+  color: #8a94a0;
+  text-decoration: line-through;
+  cursor: not-allowed;
+}
+.cell-link-moved {
+  animation: cell-link-follow 1.4s ease-out;
+}
+@keyframes cell-link-follow {
+  0% {
+    background: rgba(245, 158, 11, 0.55);
+    border-radius: 4px;
+  }
+  100% {
+    background: rgba(245, 158, 11, 0);
+  }
+}
+.ai-grip {
+  position: absolute;
+  left: -5px;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  z-index: 3;
+  cursor: ew-resize;
+  touch-action: none;
+}
+.ai-grip::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  width: 3px;
+  height: 44px;
+  margin-top: -22px;
+  border-radius: 3px;
+  background: #b8bfc7;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.ai-grip:hover::after,
+.ai-grip:focus-visible::after,
+body.ai-resizing .ai-grip::after {
+  opacity: 0.9;
+  background: #c58b1f;
+}
+body.ai-resizing {
+  user-select: none;
+  cursor: ew-resize;
+}
+body.ai-resizing iframe,
+body.ai-resizing .monaco-editor {
+  pointer-events: none;
+}
 .input-owner {
   margin: 6px 0 2px;
   font-size: 10.5px;
@@ -1445,4 +1527,192 @@ body.ai-open #examples-panel {
   flex-wrap: wrap;
   gap: 6px;
   justify-content: flex-end;
+}
+
+/* Help and "show me": a tiny ? in every header, the help card and the pulsing ring */
+.help-icon {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid #9aa5b1;
+  border-radius: 50%;
+  background: #f6f7f9;
+  color: #3e4c59;
+  font: 700 11px/1 system-ui, sans-serif;
+  cursor: pointer;
+  opacity: 0.75;
+}
+.help-icon:hover,
+.help-icon:focus-visible {
+  opacity: 1;
+  background: #fff4cf;
+  border-color: #d19a00;
+}
+.ai-icon.help-q {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  margin: 0 3px;
+  border: 1px solid #9aa5b1;
+  border-radius: 50%;
+  font: 700 11px/1 system-ui, sans-serif;
+}
+.input-help {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+}
+.lab-bar .help-icon {
+  margin-left: 4px;
+}
+.help-card {
+  position: fixed;
+  top: calc(var(--tabs-h, 40px) + 8px);
+  right: 12px;
+  z-index: 100050;
+  width: min(360px, calc(100vw - 24px));
+  max-height: calc(100vh - 70px);
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 10px 14px 12px;
+  background: #fffdf5;
+  border: 1px solid #d19a00;
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+  font: 13px/1.45 system-ui, sans-serif;
+  color: #1f2933;
+}
+body.ai-open .help-card {
+  right: calc(var(--ai-w, 380px) + 12px);
+}
+.help-head {
+  font: 700 15px system-ui, sans-serif;
+  padding-right: 26px;
+  margin-bottom: 6px;
+}
+.help-x {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  border: 0;
+  background: transparent;
+  border-radius: 5px;
+  padding: 2px 7px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.help-x:hover {
+  background: #f0e3b4;
+}
+.help-body p,
+.help-body ul {
+  margin: 6px 0;
+}
+.help-body ul {
+  padding-left: 18px;
+}
+.help-path {
+  font-weight: 600;
+}
+.help-error {
+  color: #b42318;
+}
+.help-keys {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  margin: 8px 0;
+  align-items: center;
+}
+.help-keys kbd {
+  justify-self: start;
+  padding: 1px 6px;
+  border: 1px solid #b8bfc7;
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: #ffffff;
+  font: 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.help-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+.help-do {
+  padding: 4px 10px;
+  border: 1px solid #2f6f4f;
+  border-radius: 7px;
+  background: #3f8f5a;
+  color: #ffffff;
+  font: 600 12px system-ui, sans-serif;
+  cursor: pointer;
+}
+.help-do:hover {
+  background: #2f7448;
+}
+.help-small {
+  margin-top: 10px;
+  font-size: 11px;
+  color: #616e7c;
+}
+.help-more {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.help-chip {
+  padding: 2px 8px;
+  border: 1px solid #d3d8de;
+  border-radius: 999px;
+  background: #ffffff;
+  font: 11px system-ui, sans-serif;
+  cursor: pointer;
+}
+.help-chip:hover {
+  background: #fff4cf;
+  border-color: #d19a00;
+}
+.help-spot {
+  position: fixed;
+  z-index: 100060;
+  box-sizing: border-box;
+  border: 3px solid #f59e0b;
+  border-radius: 12px;
+  pointer-events: none;
+  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.3);
+  animation: help-pulse 0.9s ease-in-out infinite;
+}
+.help-spot-text {
+  position: fixed;
+  z-index: 100061;
+  max-width: 280px;
+  padding: 7px 11px;
+  border-radius: 9px;
+  background: #1f2933;
+  color: #ffffff;
+  font: 13px/1.4 system-ui, sans-serif;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+.help-spot-text .help-do {
+  margin-top: 4px;
+  background: #f59e0b;
+  border-color: #d98200;
+  color: #1f2933;
+}
+@keyframes help-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 9px rgba(245, 158, 11, 0.15);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .help-spot {
+    animation: none;
+  }
 }

@@ -31,6 +31,9 @@ export class TabStrip {
   private backCell!: Cell;
   private forwardCell!: Cell;
   private remoteCell!: Cell;
+  private helpCell!: Cell;
+  /** What a click on the little ? does: open the help. */
+  onHelp: () => void = () => {};
   /** What a click on the share button does (set by whoever owns the share dialog). */
   onShare: () => void = () => {};
   /** What a click on the 🤖 helper button does. */
@@ -82,6 +85,7 @@ export class TabStrip {
         if (id === 'strip:share') return 'Work together with a tutor or a friend: a direct link between two browsers, no server';
         if (id === 'strip:remote') return 'Where the other person is pointing right now';
         if (id === 'strip:path') return "Where you are, written as a cell path. Click to copy it. Code can use it: at('/lab/J24')";
+        if (id === 'strip:help') return 'Help and show me (F1)';
         return this.tabs.find((t) => `strip:${t.id}` === id)?.hint ?? '';
       };
     }
@@ -141,6 +145,14 @@ export class TabStrip {
         size: [120, PATH_H],
         style: this.remoteStyle(),
       });
+      this.helpCell = graph.insertVertex({
+        parent: graph.getDefaultParent(),
+        id: 'strip:help',
+        value: '?',
+        position: [x + 210 + NAV_W * 2 + 8, (STRIP_H - PATH_H) / 2 + 2],
+        size: [NAV_W, PATH_H],
+        style: this.navStyle(true),
+      });
       graph.getDataModel().setVisible(this.remoteCell, false);
       this.pathCell = graph.insertVertex({
         parent: graph.getDefaultParent(),
@@ -158,6 +170,7 @@ export class TabStrip {
       if (id === 'strip:path') this.copyPath();
       else if (id === 'strip:share') this.onShare();
       else if (id === 'strip:ai') this.onAi();
+      else if (id === 'strip:help') this.onHelp();
       else if (id === 'strip:back') {
         if (this.canBack) this.onBack();
       } else if (id === 'strip:forward') {
@@ -171,7 +184,7 @@ export class TabStrip {
       mouseDown: () => {},
       mouseMove: (_s: unknown, me: { getCell(): Cell | null }) => {
         const id = me.getCell()?.getId() ?? '';
-        const over = id.startsWith('strip:') && !['strip:path', 'strip:share', 'strip:ai', 'strip:remote', 'strip:back', 'strip:forward'].includes(id) ? id.slice(6) : null;
+        const over = id.startsWith('strip:') && !['strip:path', 'strip:share', 'strip:ai', 'strip:remote', 'strip:back', 'strip:forward', 'strip:help'].includes(id) ? id.slice(6) : null;
         if (over !== this.hovered) {
           this.hovered = over;
           this.paintTabs();
@@ -187,6 +200,21 @@ export class TabStrip {
     });
     new ResizeObserver(() => this.placePath()).observe(container);
     this.placePath();
+  }
+
+  /** Where a control of the strip is on screen: 'tabs' (all the tabs), 'ai', 'share', 'back', 'forward', 'help' or 'path'. */
+  rectOf(id: string): DOMRect | null {
+    const named: Record<string, Cell | undefined> = { ai: this.aiCell, share: this.shareCell, back: this.backCell, forward: this.forwardCell, help: this.helpCell, path: this.pathCell };
+    const cells = id === 'tabs' ? [...this.tabCells.values()] : named[id] ? [named[id]!] : [];
+    const view = this.graph.getView();
+    const boxes = cells.map((c) => view.getState(c)).filter((s): s is NonNullable<typeof s> => !!s);
+    if (!boxes.length) return null;
+    const left = Math.min(...boxes.map((s) => s.x));
+    const top = Math.min(...boxes.map((s) => s.y));
+    const right = Math.max(...boxes.map((s) => s.x + s.width));
+    const bottom = Math.max(...boxes.map((s) => s.y + s.height));
+    const origin = this.container.getBoundingClientRect();
+    return new DOMRect(origin.left + left, origin.top + top, right - left, bottom - top);
   }
 
   private tabStyle(active: boolean, hover: boolean): Record<string, unknown> {
@@ -367,7 +395,8 @@ export class TabStrip {
     move(this.aiCell, aiX, 72);
     move(this.backCell, aiX + 72 + 8, NAV_W);
     move(this.forwardCell, aiX + 72 + 8 + NAV_W + 4, NAV_W);
-    const rightOfButtons = aiX + 72 + 8 + NAV_W * 2 + 4 + 12;
+    move(this.helpCell, aiX + 72 + 8 + NAV_W * 2 + 4 + 8, NAV_W);
+    const rightOfButtons = aiX + 72 + 8 + NAV_W * 3 + 4 + 8 + 12;
     const pathText = this.flashing ? 'copied ✓' : `📍 ${this.pathText}`;
     const pathW = widthFor(pathText, 90);
     const available = this.container.clientWidth;

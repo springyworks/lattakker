@@ -5,6 +5,29 @@
 
 import { CELL_PATH, cellLink } from '../nav';
 import { workspace } from '../workspace';
+import { resolveSmart } from './cellPaths';
+
+/**
+ * Cell names written in plain text become links. A full path (/lab/A16) always does when the cell exists. A bare
+ * name (A16) does when it points at a cell that holds code, in the tab on screen or, if that one is empty, the
+ * one other tab that has code there; so "A1" or "I5" in ordinary words are left alone.
+ */
+const MENTION = /(\/[a-z][a-z0-9-]*\/[A-Za-z]\d{1,3}(?:\/\d+,\d+)?|(?<![\w/@-])[A-Z]\d{1,3}(?:\/\d+,\d+)?)(?![\w/])/g;
+
+export function linkify(parent: HTMLElement, text: string): void {
+  let last = 0;
+  for (const m of text.matchAll(MENTION)) {
+    const name = m[1];
+    const hit = resolveSmart(name, workspace.current);
+    const target = 'error' in hit ? null : hit;
+    const wanted = target && (name.startsWith('/') || target.tab.sheet.dataAt(target.address)?.code.trim());
+    if (!target || !wanted) continue;
+    parent.appendChild(document.createTextNode(text.slice(last, m.index)));
+    parent.appendChild(cellLink(workspace.pathOf(target.tab.id, target.address, target.tile), name));
+    last = m.index! + name.length;
+  }
+  parent.appendChild(document.createTextNode(text.slice(last)));
+}
 
 function inline(parent: HTMLElement, text: string): void {
   const parts = text.split(/(`[^`\n]+`|\*\*[^*\n]+\*\*)/g);
@@ -21,10 +44,10 @@ function inline(parent: HTMLElement, text: string): void {
       parent.appendChild(code);
     } else if (part.length > 4 && part.startsWith('**') && part.endsWith('**')) {
       const b = document.createElement('strong');
-      b.textContent = part.slice(2, -2);
+      linkify(b, part.slice(2, -2));
       parent.appendChild(b);
     } else {
-      parent.appendChild(document.createTextNode(part));
+      linkify(parent, part);
     }
   }
 }

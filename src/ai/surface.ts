@@ -9,6 +9,7 @@ import { BOARD_COLS, BOARD_ROWS, isLake, rankGlyph, type Piece } from '../game/m
 import { installMcpBridge } from './bridge';
 import { workspace, type WorkspaceTab } from '../workspace';
 import { McpError, router } from '../mcp/router';
+import { docUrls } from '../aichat/docs';
 
 /**
  * Makes the page usable by external AI agents: a visually-hidden text mirror of the game, window.mms,
@@ -54,6 +55,7 @@ CELL PATHS (tabs: board, lab, examples). Cells are named like files, with / mean
 
 READ
   mms.help()                 this guide
+  mms.docs()                 { ok, urls: {...} } where to read the rules, the API typings (cell-api.d.ts), every example cell, and the README; fetch them like a coder reads a project
   mms.mcp('lab', 'resources/list' | 'tools/call' ..., params) (async)   send an MCP request to a tab's server through the page's router; mms.mcpLog(20) shows the last messages that crossed it
   mms.tabs()                 { current, tabs: [{ id, title, path, mode, codeCells, rows, columns }], paths } the tabs that hold code cells and which one the player sees
   mms.state()                { phase: 'setup'|'play'|'over', turn, winner, moveCount, lastMove, message, busy, redPieces, bluePieces }
@@ -399,6 +401,7 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
 
   const api = {
     help: (): string => HELP,
+    docs: (): Result => ok({ urls: docUrls(), order: ['rules', 'api', 'examples', 'labDemos', 'readme'], howTo: 'Read rules first, look up exact names in api, find a similar cell in examples or labDemos and follow its style. The urls under "index" and "everything" bundle them.' }),
 
     state: (): Result => ok(stateData()),
 
@@ -697,6 +700,13 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
   // ------------------------------------------------------- WebMCP tools
 
   const tools: ToolDef[] = [
+    {
+      name: 'get_docs',
+      description: 'Where to read the documents like a human coder: the rules for helpers, the TypeScript API a cell can use (cell-api.d.ts), every example cell and Lab demo with comments, and the README on GitHub. Returns the addresses (URLs). Read them before writing cell code.',
+      inputSchema: obj({}),
+      readOnly: true,
+      run: () => api.docs(),
+    },
     {
       name: 'get_state',
       description:

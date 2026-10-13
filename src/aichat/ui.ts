@@ -1,14 +1,17 @@
 import { workspace } from '../workspace';
 import { cellLink } from '../nav';
+import { helpButton } from '../ui/help';
 import { router } from '../mcp/router';
 import { jobs, onJobsChange, type JobNode } from './jobs';
 import { installPopupMenu } from '../editor/EditorContextMenu';
 import type { Conversation, Entry } from './agent';
 import { destination, forgetAll, getKey, getSettings, isConfigured, setKey, updateSettings } from './config';
 import { localAssistantReady, localState, localWarning, onLocalChange } from './localAi';
-import { renderMarkdown } from './markdown';
+import { renderMarkdown, linkify } from './markdown';
 import { allNotes, exportJson, forget, importJson, isKeptSafe, keepSafe, memoryInfo, onMemoryChange, wipe } from './memory';
 import { describeModel } from './modelInfo';
+import { ammo, gaugeText } from './ammo';
+import { diagnose } from './diagnose';
 import { memoryFileState } from './memorySync';
 import { GeminiProvider, OpenAiCompatProvider, friendly, type ModelProvider } from './providers';
 import type { AiContext } from './tools';
@@ -28,6 +31,10 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, props: Partial<HTMLEl
 export interface UiHost {
   /** Types code into a cell where the person can watch (the "Type it into the cell" button). */
   typeIn(path: string, code: string, afterLine: number | null): Promise<{ ok: boolean; error?: string }>;
+  /** Empties a cell the helper wrote in, if it still holds exactly that code (the undo button). */
+  clearCell(path: string, code: string): { ok: boolean; error?: string };
+  /** Takes the person to a cell. */
+  goTo(path: string): boolean;
   /** Where the person is pointing right now. */
   contextNow(): AiContext;
   onSideChange(open: boolean): void;
@@ -35,6 +42,32 @@ export interface UiHost {
 
 const TERMS_URL = 'https://ai.google.dev/gemini-api/terms';
 const KEY_URL = 'https://aistudio.google.com/apikey';
+
+const DEFAULT_WIDTH = 380;
+const MIN_WIDTH = 300;
+const WIDTH_KEY = 'lattakker:ai:width';
+/** Widths the chat likes to stop at: when the drag comes near one it sticks to it. */
+const SNAPS = [DEFAULT_WIDTH, 480, 600];
+
+const clampWidth = (px: number): number => Math.round(Math.max(MIN_WIDTH, Math.min(px, Math.max(MIN_WIDTH, window.innerWidth * 0.7))));
+const snapWidth = (px: number): number => SNAPS.find((s) => Math.abs(px - s) <= 10) ?? px;
+
+function loadWidth(): number {
+  try {
+    const saved = Number(localStorage.getItem(WIDTH_KEY));
+    return Number.isFinite(saved) && saved > 0 ? saved : DEFAULT_WIDTH;
+  } catch {
+    return DEFAULT_WIDTH;
+  }
+}
+
+function saveWidth(px: number): void {
+  try {
+    localStorage.setItem(WIDTH_KEY, String(px));
+  } catch {
+    // storage blocked: the width simply lasts until the page is closed
+  }
+}
 
 function link(href: string, text: string): HTMLAnchorElement {
   return el('a', { href, textContent: text, target: '_blank', rel: 'noopener noreferrer' });
@@ -85,6 +118,7 @@ export class AiChatUi {
     convo.onChange(() => this.render());
     onJobsChange(() => this.convo.busy && this.render());
     onLocalChange(() => this.render());
+    ammo.onChange(() => this.render());
     onMemoryChange(() => this.settingsOpen && this.render());
     void isKeptSafe().then((v) => (this.kept = v));
     workspace.onFocusChange(() => this.paintChip());
@@ -116,7 +150,7 @@ export class AiChatUi {
     settings.onclick = () => this.showSettings(!this.settingsOpen);
     clear.onclick = () => this.convo.clear();
     close.onclick = () => this.closeSide();
-    const head = el('div', { className: 'ai-head' }, title, settings, clear, close);
+    const head = el('div', { className: 'ai-head' }, title, helpButton('ai', 'ai-icon help-q'), settings, clear, close);
     const send = el('button', { className: 'ai-send', textContent: 'Ask' });
     send.onclick = () => this.submit(this.sideInput, () => this.host.contextNow());
     this.sideInput.addEventListener('keydown', (e) => {
@@ -129,8 +163,65 @@ export class AiChatUi {
     sent.dataset.role = 'sent';
     const form = el('div', { className: 'ai-form' }, this.sideInput, send);
     this.sideBody.append(this.sideLog);
-    this.side.append(head, modelLine(), this.sideBody, sent, form);
+    this.side.append(this.makeGrip(), head, modelLine(), this.sideBody, sent, form);
+    this.applyWidth(loadWidth());
   }
+
+  /** The separator between the page and the chat: drag it, or use the arrow keys; it snaps softly to a few good widths; double-click resets. */
+  private makeGrip(): HTMLElement {
+    const grip = el('div', { className: 'ai-grip', tabIndex: 0, title: 'Drag to change the width of the chat. Double-click: back to normal. Arrow keys also work.' });
+    grip.setAttribute('role', 'separator');
+    grip.setAttribute('aria-orientation', 'vertical');
+    grip.setAttribute('aria-label', 'Width of the chat');
+    grip.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      grip.setPointerCapture(e.pointerId);
+      document.body.classList.add('ai-resizing');
+      const move = (ev: PointerEvent): void => this.applyWidth(snapWidth(window.innerWidth - ev.clientX));
+      const up = (): void => {
+        grip.removeEventListener('pointermove', move);
+        grip.removeEventListener('pointerup', up);
+        grip.removeEventListener('pointercancel', up);
+        document.body.classList.remove('ai-resizing');
+        saveWidth(this.width);
+      };
+      grip.addEventListener('pointermove', move);
+      grip.addEventListener('pointerup', up);
+      grip.addEventListener('pointercancel', up);
+    });
+    grip.addEventListener('dblclick', () => {
+      this.applyWidth(DEFAULT_WIDTH);
+      saveWidth(DEFAULT_WIDTH);
+    });
+    grip.addEventListener('keydown', (e) => {
+      const step = e.shiftKey ? 80 : 20;
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Home') return;
+      e.preventDefault();
+      this.applyWidth(e.key === 'Home' ? DEFAULT_WIDTH : this.width + (e.key === 'ArrowLeft' ? step : -step));
+      saveWidth(this.width);
+    });
+    return grip;
+  }
+
+  private width = DEFAULT_WIDTH;
+
+  /** Sets the width of the chat; the page gives up exactly that much (see body.ai-open in style.css), and the sheets are told their room changed. */
+  private applyWidth(px: number): void {
+    this.width = clampWidth(px);
+    document.body.style.setProperty('--ai-w', `${this.width}px`);
+    this.side.querySelector('.ai-grip')?.setAttribute('aria-valuenow', String(this.width));
+    // Sheets and the editor measure their box when the window changes size.
+    if (!this.resizeQueued) {
+      this.resizeQueued = true;
+      requestAnimationFrame(() => {
+        this.resizeQueued = false;
+        window.dispatchEvent(new Event('resize'));
+      });
+    }
+  }
+
+  private resizeQueued = false;
 
   openSide(focusInput = true): void {
     this.side.hidden = false;
@@ -177,7 +268,7 @@ export class AiChatUi {
       this.openSide();
     };
     close.onclick = () => this.closeMini();
-    const head = el('div', { className: 'ai-head ai-drag' }, el('span', { className: 'ai-mini-title-wrap' }, '🤖 ', title), more, close);
+    const head = el('div', { className: 'ai-head ai-drag' }, el('span', { className: 'ai-mini-title-wrap' }, '🤖 ', title), helpButton('ai', 'ai-icon help-q'), more, close);
     head.title = 'Drag here to move this little chat';
     this.makeDraggable(head);
     this.miniInput.addEventListener('keydown', (e) => {
@@ -267,9 +358,11 @@ export class AiChatUi {
       const model = node.querySelector<HTMLElement>('[data-role=model]');
       if (model) {
         const warning = localWarning();
-        model.textContent = configured ? `${info.line}${localAssistantReady() ? ` · 🧠 second brain: ${localState.model}` : ''}${warning ? ` · ${warning}` : ''}` : '';
-        model.classList.toggle('ai-warn', configured && !!warning);
-        model.title = 'Who answers, and how well it probably writes code. This is a guess from the model\'s name: how smart a model feels depends on the task and on who asks.';
+        const gauge = gaugeText();
+        const full = ammo.fullness();
+        model.textContent = configured ? `${info.line}${localAssistantReady() ? ` · 🧠 second brain: ${localState.model}` : ''}${gauge ? ` · ${gauge}` : ''}${warning ? ` · ${warning}` : ''}` : '';
+        model.classList.toggle('ai-warn', configured && (!!warning || (full !== null && full >= 0.85)));
+        model.title = 'Who answers, and how well it probably writes code (a guess from the model\'s name). The 🔋 number is measured by the server: how much of the model\'s memory the last question used. When it is nearly full, old answers are shortened.';
       }
     }
     const busy = this.convo.busy;
@@ -306,7 +399,15 @@ export class AiChatUi {
       ask.onclick = () => void this.askStatus();
       const tree = el('div', { className: 'ai-progress' });
       this.drawJobs(tree, jobs.tree(), 0);
-      log.append(el('div', { className: 'ai-status' }, '🤖 working… ', stop, ' ', ask, tree));
+      const status = el('div', { className: 'ai-status' }, '🤖 working… ', stop, ' ', ask);
+      const why = diagnose(jobs.tree());
+      if (why) {
+        status.append(el('div', { className: `ai-why ${why.level}`, textContent: `${why.level === 'stuck' ? '⚠' : '⏳'} ${why.line}` }));
+        if (why.hint) status.append(el('div', { className: 'ai-why-hint', textContent: `💡 ${why.hint}` }));
+        status.append(el('div', { className: 'ai-why-chain', textContent: `Where: ${why.chain}` }));
+      }
+      status.append(tree);
+      log.append(status);
     }
     if (stick) log.scrollTop = log.scrollHeight;
   }
@@ -347,20 +448,60 @@ export class AiChatUi {
 
   private entryNode(entry: Entry): HTMLElement {
     switch (entry.kind) {
-      case 'user':
-        return el('div', { className: 'ai-msg user' }, el('div', { className: 'ai-who' }, 'You · ', entry.path ? cellLink(entry.path, entry.where) : entry.where), el('div', { textContent: entry.text }));
+      case 'user': {
+        const said = el('div');
+        linkify(said, entry.text);
+        return el('div', { className: 'ai-msg user' }, el('div', { className: 'ai-who' }, 'You · ', entry.path ? cellLink(entry.path, entry.where) : entry.where), said);
+      }
       case 'ai': {
         const body = el('div', { className: 'ai-text' });
         body.append(renderMarkdown(entry.text));
         return el('div', { className: 'ai-msg bot' }, el('div', { className: 'ai-who', textContent: '🤖 Helper' }), body, el('div', { className: 'ai-via', textContent: `via ${entry.via}` }));
       }
-      case 'note':
-        return el('div', { className: 'ai-note', textContent: entry.text });
-      case 'error':
-        return el('div', { className: 'ai-msg error', textContent: entry.text });
+      case 'note': {
+        const note = el('div', { className: 'ai-note' });
+        linkify(note, entry.text);
+        return note;
+      }
+      case 'error': {
+        const error = el('div', { className: 'ai-msg error' });
+        linkify(error, entry.text);
+        return error;
+      }
       case 'proposal':
         return this.proposalNode(entry);
+      case 'wrote':
+        return this.wroteNode(entry);
     }
+  }
+
+  /** The card for code the helper wrote by itself: where, how it ran, and a way to look at it or take it back. */
+  private wroteNode(entry: Extract<Entry, { kind: 'wrote' }>): HTMLElement {
+    const undone = entry.state === 'undone';
+    const card = el('div', { className: 'ai-proposal ai-wrote' }, el('div', { className: 'ai-who' }, entry.ok ? '🧪 The helper wrote code in ' : '⚠ The helper wrote code in ', cellLink(entry.path), entry.ok ? ' and ran it ✓' : ' but it stopped with a problem'));
+    if (entry.error) {
+      const problem = el('div', { className: 'ai-note' });
+      linkify(problem, entry.error);
+      card.append(problem);
+    } else if (entry.printed) card.append(el('div', { className: 'ai-note', textContent: `It printed: ${entry.printed}` }));
+    card.append(el('details', { className: 'ai-help' }, el('summary', { textContent: 'The code' }), el('pre', {}, el('code', { textContent: entry.code }))));
+    if (undone) {
+      card.append(el('div', { className: 'ai-note', textContent: 'Undone: the cell is empty again.' }));
+      return card;
+    }
+    const show = el('button', { className: 'ai-send', textContent: '👀 Show me' });
+    show.title = 'Fly to the cell and make it blink';
+    show.onclick = () => this.host.goTo(entry.path);
+    const undo = el('button', { className: 'ai-stop', textContent: '↶ Undo' });
+    undo.title = 'Empty the cell again. Only the helper’s own code is removed.';
+    undo.onclick = () => {
+      const r = this.host.clearCell(entry.path, entry.code);
+      if (r.ok) entry.state = 'undone';
+      else this.convo.note(`Could not undo: ${r.error ?? 'unknown problem'}`);
+      this.render();
+    };
+    card.append(el('div', { className: 'ai-actions' }, show, undo));
+    return card;
   }
 
   private proposalNode(entry: Extract<Entry, { kind: 'proposal' }>): HTMLElement {
@@ -441,9 +582,12 @@ export class AiChatUi {
     outside.onchange = () => updateSettings((x) => (x.allowOutside = outside.checked));
     const weatherBox = el('input', { type: 'checkbox', checked: s.allowWeather });
     weatherBox.onchange = () => updateSettings((x) => (x.allowWeather = weatherBox.checked));
+    const writeBox = el('input', { type: 'checkbox', checked: s.allowWrite });
+    writeBox.onchange = () => updateSettings((x) => (x.allowWrite = writeBox.checked));
     root.append(this.knowsPanel(), this.memorySettings());
     root.append(
       el('h3', { textContent: 'Other' }),
+      el('label', { className: 'ai-row' }, writeBox, ' Let the helper write code in empty cells by itself (“Let the helper write code in empty cells”). You watch it being typed, it runs, and every card has an undo button. It never changes a cell that already has code, and it may do this at most 6 times per conversation. Off by default.'),
       el('label', { className: 'ai-row' }, weatherBox, ' Let cells and the helper look up the weather (weather.now(...), the MCP server “weather”). A lookup sends the place name to open-meteo.com, nothing else.'),
       el('label', { className: 'ai-row' }, outside, ' Let an outside AI (one connected over MCP, see the README) put questions to this helper. It then uses your helper, so with Gemini it uses your key and quota. Off by default.'),
       el('label', { className: 'ai-row' }, remember, ' Remember the key on this computer (otherwise it is forgotten when the page closes). Code in a cell could read a remembered key, so only do this on your own computer.'),
@@ -614,16 +758,20 @@ export class AiChatUi {
     url.onchange = () => updateSettings((x) => (x.local.baseUrl = url.value.trim()));
     const key = el('input', { type: 'password', value: getKey('local'), className: 'ai-wide', placeholder: 'usually empty', autocomplete: 'off' });
     key.onchange = () => setKey('local', key.value);
+    const memory = el('select', { className: 'ai-wide' });
+    for (const n of [4096, 8192, 16384, 32768]) memory.append(el('option', { value: String(n), textContent: `${n / 1024}k tokens${n === 16384 ? ' (recommended)' : n === 4096 ? ' (too small for the helper)' : ''}`, selected: s.local.context === n }));
+    memory.onchange = () => updateSettings((x) => (x.local.context = Number(memory.value)));
     return el(
       'div',
       { className: 'ai-group' },
       el('div', { className: 'ai-field' }, el('label', { textContent: 'Server address (OpenAI-compatible)' }), url),
       this.modelPicker(
         'local',
-        () => new OpenAiCompatProvider(getSettings().local.baseUrl, getSettings().local.model, getKey('local')),
+        () => new OpenAiCompatProvider(getSettings().local.baseUrl, getSettings().local.model, getKey('local'), getSettings().local.context),
         s.local.model,
         (m) => updateSettings((x) => (x.local.model = m)),
       ),
+      el('div', { className: 'ai-field' }, el('label', { textContent: 'Memory of the chat (Ollama only)' }), memory, el('div', { className: 'ai-note', textContent: 'How much the model can keep in mind at once. Ollama’s own default is 4k, which is too small for the helper’s instructions and tools: they would silently fall out. More memory uses more RAM; a model that will not load may need a smaller number. The 🔋 line under the title shows what is really used.' })),
       el('div', { className: 'ai-field' }, el('label', { textContent: 'Key (only if your server wants one)' }), key),
       el(
         'details',

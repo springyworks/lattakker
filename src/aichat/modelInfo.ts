@@ -64,3 +64,11 @@ export function describeModel(): ModelInfo {
   const short = `${company} · ${model}`;
   return { company, model, where, skill, short, line: `${company} · ${model} · ${where} · ${skill} (a guess from the name)` };
 }
+
+/** A model on this computer whose name says it has fewer than 14 billion parameters: it gets a shorter list of tools and plainer instructions. */
+export function isSmallModel(): boolean {
+  const s = getSettings();
+  if (s.provider !== 'local') return false;
+  const size = /(\d+(?:\.\d+)?)\s*b\b/.exec(s.local.model.toLowerCase());
+  return !!size && Number(size[1]) < 14;
+}

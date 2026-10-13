@@ -24,6 +24,7 @@ import { TabServer } from './mcp/tabServer';
 import { installServices } from './services';
 import { nav } from './nav';
 import { ShareDialog } from './ui/ShareDialog';
+import { installHelp, toggleHelp } from './ui/help';
 
 const HELP = `How to play Lattakker
 • Both armies have 40 pieces. Yours is RED. Blue's pieces are face down.
@@ -205,6 +206,8 @@ workspace.register({ id: 'examples', title: 'Examples', sheet: notebook.sheet, e
 for (const tab of workspace.list()) new TabServer(tab, router);
 installServices();
 const tabs = new Tabs({ board: container, lab: lab.root, examples: notebook.root });
+installHelp({ stripRect: (id) => tabs.strip.rectOf(id) });
+tabs.strip.onHelp = () => toggleHelp();
 const share = new ShareDialog(tabs.strip);
 
 // The strip always says where you are, as a cell path: click a cell (or a tile) and it follows.

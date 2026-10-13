@@ -850,6 +850,8 @@ export class Sheet {
     if (merged.fill) style.fillColor = merged.fill;
     if (merged.stroke) style.strokeColor = merged.stroke;
     if (merged.strokeWidth) style.strokeWidth = merged.strokeWidth;
+    // The cell under attention: its frame is see-through, so the cell's own content stays readable beneath it.
+    if (sel.stroke) style.strokeOpacity = 55;
     if (merged.fontColor) style.fontColor = merged.fontColor;
     if (merged.fontSize) style.fontSize = merged.fontSize;
     if (merged.align) style.align = merged.align;
@@ -1102,6 +1104,20 @@ export class Sheet {
       }
     }
     return true;
+  }
+
+  /**
+   * The top-left cell of the first empty cols x rows spot, looking row by row from `fromRow` (0-based). It never
+   * touches a cell that holds code, a merged block or a board square, so a helper writing on its own cannot
+   * land on the person's work. Null when nothing fits.
+   */
+  findFreeBlock(cols: number, rows: number, fromRow = 0): string | null {
+    const w = Math.max(1, Math.min(Math.floor(cols), this.colCount));
+    const h = Math.max(1, Math.floor(rows));
+    for (let r = Math.max(0, fromRow); r + h <= this.rowCount; r++) {
+      for (let c = 0; c + w <= this.colCount; c++) if (this.rectFree(c, r, w, h, [])) return formatAddress(c, r);
+    }
+    return null;
   }
 
   /** First free spot for a cols x rows block on `row`, scanning right from `startCol` (columns beyond the sheet are always free). */

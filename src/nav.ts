@@ -14,6 +14,8 @@ import type { SheetView } from './sheet/Sheet';
 interface Place {
   tab: string;
   address: string | null;
+  /** The identity of the cell's code, so "back" still finds the cell after it moved. */
+  uid: string | null;
   view: SheetView | null;
 }
 
@@ -22,7 +24,9 @@ const MAX_PLACES = 60;
 /** A cell path as written in text: /lab/A41, A41 or /lab/A41/3,4 (a bare address needs a capital letter, so "x2" is not a link). */
 export const CELL_PATH = /^(?:\/[a-z][a-z0-9-]*\/[A-Za-z]\d{1,3}(?:\/\d+,\d+)?|[A-Z]\d{1,3}(?:\/\d+,\d+)?)$/;
 
-const places: Place[] = [{ tab: 'board', address: null, view: null }];
+const uidAt = (tab: string, address: string | null): string | null => (address ? workspace.get(tab)?.sheet.dataAt(address)?.uid || null : null);
+
+const places: Place[] = [{ tab: 'board', address: null, uid: null, view: null }];
 let index = 0;
 let installed = false;
 /** True while this module itself switches tabs, so that the switch is not recorded a second time. */
@@ -46,7 +50,7 @@ function add(tab: string, address: string | null): void {
   const place = here();
   if (place.tab === tab && place.address === address) return;
   places.splice(index + 1);
-  places.push({ tab, address, view: null });
+  places.push({ tab, address, uid: uidAt(tab, address), view: null });
   if (places.length > MAX_PLACES) places.shift();
   index = places.length - 1;
   changed();
@@ -64,7 +68,8 @@ function select(id: string): void {
 function install(): void {
   if (installed) return;
   installed = true;
-  places[0] = { tab: workspace.current, address: workspace.focus?.tab === workspace.current ? workspace.focus.address : null, view: null };
+  const startAddress = workspace.focus?.tab === workspace.current ? workspace.focus.address : null;
+  places[0] = { tab: workspace.current, address: startAddress, uid: uidAt(workspace.current, startAddress), view: null };
   // Switching tabs is a new place; the cell that was pointed at in that tab comes along.
   workspace.onCurrentChange((id) => {
     if (quiet) return;
@@ -80,6 +85,11 @@ function install(): void {
 async function show(place: Place): Promise<void> {
   const tab = workspace.get(place.tab);
   if (!tab) return;
+  // The cell may have moved since this place was visited: its identity says where it is now.
+  if (place.uid) {
+    const now = tab.sheet.addressOfUid(place.uid);
+    if (now) place.address = now;
+  }
   select(place.tab);
   if (place.address) workspace.setFocus(place.tab, place.address);
   if (place.view) await tab.sheet.flyTo(place.view);
@@ -149,10 +159,59 @@ export function cellLink(path: string, label?: string): HTMLAnchorElement {
   a.className = 'cell-link';
   a.href = '#';
   a.textContent = label ?? path;
-  a.title = `Go to ${path}`;
+  const hit = workspace.resolve(path, workspace.current);
+  const here = 'error' in hit ? null : hit;
+  a.dataset.path = here ? workspace.pathOf(here.tab.id, here.address, here.tile) : path;
+  // A link to a cell that holds code follows that code (its identity) when the cell moves; text typed by hand does not.
+  const uid = here?.tab.sheet.dataAt(here.address)?.uid;
+  if (uid) {
+    a.dataset.uid = uid;
+    a.dataset.tile = here!.tile ? `${here!.tile.x},${here!.tile.y}` : '';
+    a.dataset.tab = here!.tab.id;
+    // The words of the link follow too when they were just the path (or the bare address of it).
+    if (label === undefined || label === path) a.dataset.follow = label?.startsWith('/') || label === undefined ? 'path' : 'address';
+    links.add(a);
+    // The chat is redrawn all the time: links that never made it onto the page, or left it, must not pile up.
+    if (links.size > 400) for (const l of links) if (!l.isConnected && l !== a) links.delete(l);
+  }
+  a.title = `Go to ${a.dataset.path}`;
   a.addEventListener('click', (e) => {
     e.preventDefault();
-    nav.goTo(path);
+    if (!a.classList.contains('cell-link-dead')) nav.goTo(a.dataset.path ?? path);
   });
   return a;
 }
+
+/** The links that are on screen and know their cell by identity. Dead ones (their element left the page) are dropped on the next look. */
+const links = new Set<HTMLAnchorElement>();
+
+/** Re-reads where every watched link's cell is now: moved cells keep their links working and their words up to date. */
+function refreshLinks(): void {
+  for (const a of links) {
+    if (!a.isConnected) {
+      // A link that is not in the page right now (the chat is redrawn all the time) is kept only while its element lives on.
+      if (!a.dataset.seen) links.delete(a);
+      continue;
+    }
+    a.dataset.seen = '1';
+    const hit = workspace.resolve(`@${a.dataset.uid}`);
+    if ('error' in hit) {
+      a.classList.add('cell-link-dead');
+      a.title = 'This cell is gone (its code was cleared or replaced)';
+      continue;
+    }
+    const tile = a.dataset.tile ? { x: Number(a.dataset.tile.split(',')[0]), y: Number(a.dataset.tile.split(',')[1]) } : null;
+    const next = workspace.pathOf(hit.tab.id, hit.address, tile);
+    a.classList.remove('cell-link-dead');
+    if (next === a.dataset.path) continue;
+    a.dataset.path = next;
+    a.title = `Go to ${next}`;
+    if (a.dataset.follow) a.textContent = a.dataset.follow === 'path' ? next : `${hit.address}${tile ? `/${tile.x},${tile.y}` : ''}`;
+    // A short flash, so the person sees that this link just followed its cell.
+    a.classList.remove('cell-link-moved');
+    void a.offsetWidth;
+    a.classList.add('cell-link-moved');
+  }
+}
+
+workspace.onCellsChanged(refreshLinks);

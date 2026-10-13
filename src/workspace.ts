@@ -87,15 +87,51 @@ export class Workspace {
   private currentId = 'board';
   private readonly listeners: Array<(id: string) => void> = [];
   private focusNow: Focus | null = null;
+  /** The identity of the focused cell's code, so the focus follows the cell when it moves. */
+  private focusUid: string | null = null;
   private readonly focusListeners: Array<(focus: Focus | null) => void> = [];
   private remoteNow: RemotePresence | null = null;
   private readonly remoteListeners: Array<(remote: RemotePresence | null) => void> = [];
+  private readonly changedListeners: Array<() => void> = [];
+  private changedQueued = false;
 
   register(tab: WorkspaceTab): void {
     this.tabs.set(tab.id, tab);
     tab.sheet.setForeignRewriter((rewrite) => {
       for (const other of this.tabs.values()) if (other.sheet !== tab.sheet) other.sheet.rewriteForeign(tab.id, rewrite);
     });
+    // Whatever moves, shifts or empties a cell changes where its path points: everything that shows a path is told, once per burst.
+    const bump = (): void => this.cellsChanged();
+    tab.sheet.onContentMoved(bump);
+    tab.sheet.onRowsInserted(bump);
+    tab.sheet.onRoomMade(bump);
+    tab.sheet.onCodeChanged(bump);
+  }
+
+  /** Called after cells moved, shifted or changed: paths that were handed out may point somewhere else now. Runs once per burst of changes. */
+  private cellsChanged(): void {
+    if (this.changedQueued) return;
+    this.changedQueued = true;
+    queueMicrotask(() => {
+      this.changedQueued = false;
+      this.followFocus();
+      this.changedListeners.forEach((l) => l());
+    });
+  }
+
+  /** Listens for "some cells moved or changed": links and path chips use it to re-read where their cell is now. */
+  onCellsChanged(listener: () => void): void {
+    this.changedListeners.push(listener);
+  }
+
+  private followFocus(): void {
+    const f = this.focusNow;
+    if (!f || !this.focusUid) return;
+    const address = this.tabs.get(f.tab)?.sheet.addressOfUid(this.focusUid);
+    if (address && address !== f.address) {
+      this.focusNow = { ...f, address };
+      this.focusListeners.forEach((l) => l(this.focusNow));
+    }
   }
 
   list(): WorkspaceTab[] {
@@ -127,6 +163,7 @@ export class Workspace {
 
   setFocus(tab: string, address: string, tile: Focus['tile'] = null): void {
     this.focusNow = { tab, address, tile };
+    this.focusUid = this.tabs.get(tab)?.sheet.dataAt(address)?.uid || null;
     this.focusListeners.forEach((l) => l(this.focusNow));
   }
 

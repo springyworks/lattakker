@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import { readFileSync } from 'node:fs';
 import { mcpBridge } from './scripts/mcp-bridge';
 import { memoryFile } from './scripts/memory-file';
+import { aiDocs } from './scripts/ai-docs';
 
 const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string };
 
@@ -11,7 +12,7 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(pkg.version),
     __APP_DATE__: JSON.stringify(new Date().toISOString().slice(0, 10)),
   },
-  plugins: [mcpBridge(), memoryFile()],
+  plugins: [mcpBridge(), memoryFile(), aiDocs()],
   server: { port: 5178 },
   build: {
     target: 'es2022',

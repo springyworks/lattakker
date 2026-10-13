@@ -21,7 +21,7 @@ import { DB_DECLS, LIBRARIAN_TOOLS, runTool, TOOL_DECLS, type ToolHost } from '.
 /** The local model, whatever the main provider is. */
 export function makeLocalProvider(): ModelProvider | null {
   const { local } = getSettings();
-  return local.baseUrl && local.model ? new OpenAiCompatProvider(local.baseUrl, local.model, getKey('local')) : null;
+  return local.baseUrl && local.model ? new OpenAiCompatProvider(local.baseUrl, local.model, getKey('local'), local.context) : null;
 }
 
 export const localState = { ok: false, checked: 0, model: '', error: '' };

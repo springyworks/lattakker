@@ -1,6 +1,7 @@
 import { Sheet, MAX_COLS } from './sheet/Sheet';
 import type { GameView } from './game/GameView';
 import { SheetPane, type Tone } from './ui/SheetPane';
+import { helpButton } from './ui/help';
 import { LAB_DEMOS } from './labDemos';
 import { loadLabSaved, startLabAutoSave } from './storage';
 import { installGrabGesture, installPinchZoom } from './ui/touch';
@@ -44,7 +45,7 @@ export function createLab(view: GameView, smallScreen: boolean): Lab {
   restoreBtn.type = 'button';
   restoreBtn.textContent = '↺ Restore demos';
   restoreBtn.title = 'Put every demo back as it was written (your own cells stay)';
-  bar.append(title, say, modeBtn, restoreBtn);
+  bar.append(title, say, modeBtn, restoreBtn, helpButton('start'));
 
   const container = document.createElement('div');
   container.id = 'lab';

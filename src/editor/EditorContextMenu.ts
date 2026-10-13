@@ -1,6 +1,7 @@
 import * as monaco from 'monaco-editor';
 import { HoverMenu, type MenuItem } from '../ui/HoverMenu';
 import { aiBridge } from '../aichat/bridge';
+import { showHelp } from '../ui/help';
 import type { AiContext } from '../aichat/tools';
 import { parseCellUri } from './monaco';
 
@@ -118,6 +119,7 @@ function editorItems(editor: monaco.editor.ICodeEditor): MenuItem[] {
     action(editor, 'editor.action.quickFix', 'Quick fix', 'Ctrl+.'),
     action(editor, 'editor.action.formatDocument', 'Format code', 'Shift+Alt+F'),
     action(editor, 'editor.action.quickCommand', 'All commands', 'F1'),
+    { label: '❓ Help: the code editor', hint: 'Shift+F1', onSelect: () => showHelp('editor') },
   ];
 }
 

@@ -15,6 +15,7 @@ import { CellMenu } from './CellMenu';
 import type { MenuItem } from './HoverMenu';
 import { Navigator } from './Navigator';
 import { workspace } from '../workspace';
+import { showHelp } from './help';
 import { exampleTemplate } from '../exampleTemplate';
 
 export type Tone = 'info' | 'good' | 'bad';
@@ -91,6 +92,11 @@ export class SheetPane {
     this.installListeners();
     this.installSheetHandlers();
     this.installContextMenu();
+    // The cell under attention follows the focus wherever it came from: a click, a link, "go to", the helper taking you there.
+    workspace.onFocusChange((focus) => {
+      if (!focus || focus.tab !== sheet.id || sheet.isBoardAddress(focus.address) || this.hooks.reserved?.(focus.address) || focus.address === this.selectedCodeCell) return;
+      if (sheet.dataAt(focus.address)) this.selectCodeCell(focus.address, true);
+    });
     this.navigator = new Navigator(sheet, {
       hasBoard: hooks.hasBoard,
       onJump: ({ address, row }) => {
@@ -108,12 +114,13 @@ export class SheetPane {
     });
   }
 
-  selectCodeCell(address: string): void {
+  selectCodeCell(address: string, quiet = false): void {
     const sheet = this.sheet;
     if (this.selectedCodeCell) sheet.setSelectionVisual(this.selectedCodeCell, null);
     this.selectedCodeCell = address;
     this.lastSheetCell = address;
     sheet.setSelectionVisual(address, { stroke: THEME.select, strokeWidth: 3 });
+    if (quiet) return;
     sheet.flash(address, THEME.flash);
     const d = sheet.dataAt(address)!;
     this.hooks.say(
@@ -253,6 +260,7 @@ export class SheetPane {
         const address = id.slice(6);
         const isBoard = sheet.isBoardAddress(address);
         if (!isBoard) menu.addItem(`🤖 Ask the AI about ${address}`, null, () => aiBridge.ask({ tab: sheet.id, address }));
+        if (!isBoard) menu.addItem(`❓ Help for ${address}`, null, () => showHelp('cell', { tab: sheet.id, address }));
         if (!isBoard) {
           menu.addItem(`Edit ${address}`, null, () => this.editor.open(address));
           if (sheet.dataAt(address)?.code) menu.addItem(`Clear ${address}`, null, () => sheet.setCode(address, ''));
@@ -365,6 +373,7 @@ export class SheetPane {
 
     // The way out to words is always the first item.
     items.push({ label: '🤖 Ask the AI…', hint: 'Alt+I', onSelect: () => aiBridge.ask({ tab: sheet.id, address }) });
+    items.push({ label: '❓ Help for this cell', hint: 'F1', title: 'What this cell is, what it does, and buttons that show you', onSelect: () => showHelp('cell', { tab: sheet.id, address }) });
     items.push({
       tiny: true,
       label: hasCode ? `${address} · id ${d.uid} · ran ${d.runCount}×` : `${address} · empty cell`,

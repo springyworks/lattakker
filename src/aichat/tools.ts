@@ -1,5 +1,10 @@
 import { router } from '../mcp/router';
+import { nav } from '../nav';
 import { workspace } from '../workspace';
+import { resolveSmart } from './cellPaths';
+import { ammo } from './ammo';
+import { RULES, readDocs } from './docs';
+import { getSettings } from './config';
 import type { ToolDecl } from './providers';
 
 /** The name the helper uses on the in-page MCP router, so its traffic shows up (and can be watched) like any client's. */
@@ -18,11 +23,46 @@ export interface AiContext {
   selection?: string;
 }
 
+/** What a cell did when it ran: what it printed, or why it failed. */
+export interface RunReport {
+  ok: boolean;
+  error?: string;
+  output?: string;
+  text?: string;
+  uid?: string | null;
+}
+
+/** What the helper wrote by itself in this conversation: how many times, and which cells (by identity) it may still rewrite. */
+export class WriteLedger {
+  count = 0;
+  readonly uids = new Set<string>();
+  reset(): void {
+    this.count = 0;
+    this.uids.clear();
+  }
+}
+
+/** Most times the helper may write code by itself in one conversation. */
+export const MAX_WRITES = 6;
+const MAX_WRITE_CHARS = 8000;
+/** Size of the empty spot the helper gets for code it writes: wide and tall enough to show a picture or a few lines. */
+const FREE_COLS = 6;
+const FREE_ROWS = 4;
+/** The board's own rows end at row 10; the first row that is free to use is row 12. */
+const BOARD_FIRST_FREE_ROW = 11;
+
 /** What the tools need from the rest of the app. */
 export interface ToolHost {
   context(): AiContext;
   /** Shows the person some code the helper suggests; nothing is written until they say so. */
   suggest(path: string, code: string, note: string, afterLine: number | null): void;
+  /** Runs a cell again and waits until it has finished (or a time limit). */
+  run(path: string): Promise<RunReport>;
+  /** Types code into a cell where the person can watch, keeps it and runs it. */
+  write(path: string, code: string): Promise<RunReport>;
+  /** Tells the chat that the helper wrote code on its own, so the person gets a card with an undo button. */
+  wrote(path: string, code: string, report: RunReport): void;
+  readonly ledger: WriteLedger;
   /** The text in the open editor of that cell (saved or not), or null when no editor is open on it. */
   liveText(tab: string, address: string): string | null;
   help(): string;
@@ -67,8 +107,22 @@ export const TOOL_DECLS: ToolDecl[] = [
   },
   {
     name: 'read_guide',
-    description: 'The guide to the CODE a cell can contain: print, at, game, grid, on, every, plot ... Read it before writing or fixing cell code or explaining what cells can do. (This is not the window.mms API: that is only for outside AIs.)',
+    description: 'A short overview of the CODE a cell can contain, with the cell rules. For exact names, signatures and working examples use read_docs instead. (This is not the window.mms API: that is only for outside AIs.)',
     parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'read_docs',
+    description:
+      'Read the project like a coder: doc "api" = the exact names and signatures of everything a cell can use (print, plot, grid, at, on, every, game, input ...); doc "examples" = the real example cells the children start with, with comments; doc "readme" = the README by topic; doc "rules" = the rules for helpers. Give "query" (a few words, e.g. "grid click" or "timer every") to get the best matches; "path" (e.g. /lab/A16) to get one example cell whole; with neither you get an outline. Before writing code: look up the names in "api", find a similar cell in "examples", follow its style.',
+    parameters: {
+      type: 'object',
+      properties: {
+        doc: { type: 'string', enum: ['api', 'examples', 'readme', 'rules'] },
+        query: { type: 'string', description: 'A few words about what you look for.' },
+        path: { type: 'string', description: 'For doc "examples": one cell, e.g. /lab/A16 or /board/A12.' },
+      },
+      required: ['doc'],
+    },
   },
   {
     name: 'recall',
@@ -114,6 +168,35 @@ export const TOOL_DECLS: ToolDecl[] = [
     parameters: { type: 'object', properties: { path: cellPath }, required: ['path'] },
   },
   {
+    name: 'goto_cell',
+    description: 'Take the person to a cell: opens its tab, scrolls and zooms to it, and makes it blink. Use it when they say "go to", "show me", "take me to" or "focus on" a cell.',
+    parameters: { type: 'object', properties: { path: cellPath }, required: ['path'] },
+  },
+  {
+    name: 'run_cell',
+    description: 'Run a cell again and wait for it to finish. The answer says what it printed, or the error it ended with. Use it to test code or to see what a cell does now.',
+    parameters: { type: 'object', properties: { path: cellPath }, required: ['path'] },
+  },
+  {
+    name: 'find_free_cell',
+    description: `Find an empty spot (${FREE_COLS} columns wide, ${FREE_ROWS} rows tall) where new code can go without touching anybody's work. Answers with the cell path.`,
+    parameters: { type: 'object', properties: { tab: { type: 'string', description: 'Tab id: "board" or "lab". Default: the tab the person is in.' } } },
+  },
+  {
+    name: 'write_code',
+    description:
+      'Write code into an EMPTY cell yourself and run it, so the person can watch it being typed. Without a path it picks an empty spot (find_free_cell). You may only use a cell that is empty or that you wrote earlier; for any other cell use suggest_code. The answer tells what the cell printed or its error: fix the error with write_code on the same path. Start the code with span(6, 4) so it has room.',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'An empty cell, or one you wrote earlier. Leave it out to get an empty spot.' },
+        code: { type: 'string', description: 'The complete TypeScript for the cell (a top-level script, see read_guide).' },
+        note: { type: 'string', description: 'One short sentence: what this code does.' },
+      },
+      required: ['code'],
+    },
+  },
+  {
     name: 'suggest_code',
     description: 'Offer code for a cell. The person sees it in a card and decides: only if they press the button is it typed into the cell, slowly, where they can watch. Always explain the code in your answer too. Put a comment line above every line of code.',
     parameters: {
@@ -128,6 +211,18 @@ export const TOOL_DECLS: ToolDecl[] = [
     },
   },
 ];
+
+/** What a small model is offered: the tools for looking, going there, trying and suggesting. More tools make small models fumble. */
+const SMALL_MODEL_TOOLS = new Set(['look_around', 'list_cells', 'read_cell', 'goto_cell', 'flash_cell', 'run_cell', 'find_free_cell', 'write_code', 'suggest_code', 'read_docs']);
+
+/** The shortest list that still lets a model look, go there, try and suggest: for a model whose memory is tiny. */
+const TIGHT_TOOLS = new Set(['look_around', 'read_cell', 'goto_cell', 'run_cell', 'write_code', 'suggest_code']);
+
+/** The tools for one question: all of them, or the short list for a small model (the shortest when memory is tiny); write_code only when the person allowed it. */
+export function toolsFor(options: { small: boolean; second: boolean; tight?: boolean }): ToolDecl[] {
+  const all = options.second ? [...TOOL_DECLS, ...LOCAL_DECLS] : TOOL_DECLS;
+  return all.filter((t) => (t.name !== 'write_code' || getSettings().allowWrite) && (!options.small || SMALL_MODEL_TOOLS.has(t.name)) && (!options.tight || TIGHT_TOOLS.has(t.name)));
+}
 
 /** The little database, for the local librarian. */
 export const DB_DECLS: ToolDecl[] = [
@@ -161,15 +256,12 @@ export const LOCAL_DECLS: ToolDecl[] = [
 ];
 
 function limit(text: string, max = MAX_RESULT): string {
-  return text.length > max ? `${text.slice(0, max)}\n… (cut: ${text.length - max} more characters)` : text;
+  // A tool answer may take only a part of the model's memory: less when the window is small.
+  const cap = ammo.resultChars(max);
+  return text.length > cap ? `${text.slice(0, cap)}\n… (cut: ${text.length - cap} more characters)` : text;
 }
 
-const CELL_RULES = `Rules of cell code (read these first):
-- A cell is a top-level script, not a function: there is no \`return\`. Show results with print(...) (or view(text)).
-- The game is the global \`game\` (use game.phase, game.turn, game.lastMove, game.pieces('red') ...). \`mms\` does NOT exist inside cells (it is for outside AIs); inside cells use \`mcp\` and \`at()\`.
-- Never declare a variable with a name the app already uses (game, sheet, cell, memory, at, on, every, after, print, view, color, span, grid, plot, mcp, weather, ollama, input, run, stop, range). A cell's own helper names must be different, or the cell fails with "Identifier ... has already been declared".
-- game.lastMove and game.history are the moves of the battle; swaps made while arranging the army are not in them.
-`;
+const CELL_RULES = `Rules of cell code (read these first):\n${RULES.cell}\n`;
 
 /** The cell API guide: the "Cell code API" part of /llms.txt (which is served with the page), with the rules in front. */
 async function cellGuide(): Promise<string> {
@@ -196,7 +288,7 @@ function inner(answer: unknown): { ok: boolean; value: unknown } {
 
 async function readCell(host: ToolHost, path: string): Promise<unknown> {
   const here = host.context();
-  const hit = workspace.resolve(path, here.tab);
+  const hit = resolveSmart(path, here.tab);
   if ('error' in hit) return { error: hit.error };
   const answer = await router.request(CLIENT, hit.tab.id, 'tools/call', { name: 'get_cell', arguments: { address: hit.address } });
   const { ok, value } = inner(answer);
@@ -205,7 +297,109 @@ async function readCell(host: ToolHost, path: string): Promise<unknown> {
   const cell = value as { code?: string };
   const live = host.liveText(hit.tab.id, hit.address);
   const code = live ?? cell.code ?? '';
-  return { ...cell, code: undefined, codeWithLineNumbers: code.split('\n').map((l, i) => `${i + 1}: ${l}`).join('\n'), editorOpenWithUnsavedText: live !== null && live !== cell.code };
+  return { ...cell, code: undefined, note: hit.note, codeWithLineNumbers: code.split('\n').map((l, i) => `${i + 1}: ${l}`).join('\n'), editorOpenWithUnsavedText: live !== null && live !== cell.code };
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+/**
+ * Small models often send code with its line breaks written as the two characters \n (everything then lands on
+ * one line), or wrapped in a markdown fence. Both are repaired here so the code means what the model meant.
+ */
+export function cleanCode(raw: string): string {
+  let code = raw;
+  const fenced = /^\s*```[\w-]*\r?\n([\s\S]*?)\r?\n?```\s*$/.exec(code);
+  if (fenced) code = fenced[1];
+  // All on one line with a backslash-n between statements: the model meant line breaks. Inside a string literal a \n stays.
+  if (!code.trim().includes('\n') && code.includes('\\n')) {
+    let out = '';
+    let quote = '';
+    for (let i = 0; i < code.length; i++) {
+      const ch = code[i];
+      if (quote) {
+        out += ch;
+        if (ch === '\\' && i + 1 < code.length) out += code[++i];
+        else if (ch === quote) quote = '';
+      } else if (ch === '"' || ch === "'" || ch === '`') {
+        quote = ch;
+        out += ch;
+      } else if (ch === '\\' && code[i + 1] === 'n') {
+        out += '\n';
+        i++;
+      } else if (ch === '\\' && code[i + 1] === 't') {
+        out += '  ';
+        i++;
+      } else out += ch;
+    }
+    code = out;
+  }
+  return code;
+}
+
+/** What a run left behind, in a few lines the model can use. */
+function reportText(path: string, report: RunReport): Record<string, unknown> {
+  const cut = (s: string | undefined, n: number): string | undefined => (s && s.length > n ? `${s.slice(0, n)}… (cut)` : s);
+  return report.ok
+    ? { path, ran: true, printed: cut(report.output, 1200) || null, shows: cut(report.text, 400) || null }
+    : { path, ran: false, error: report.error ?? 'it did not finish', printed: cut(report.output, 600) || null };
+}
+
+/** The tab for new code: the one the person is in when it can hold code of its own, else the lab. */
+function tabForNewCode(host: ToolHost, asked: unknown): string {
+  const wanted = typeof asked === 'string' ? asked.trim().replace(/^\//, '') : '';
+  const id = wanted || host.context().tab;
+  return id === 'board' || id === 'lab' ? id : 'lab';
+}
+
+function freeSpot(tabId: string): { path: string } | { error: string } {
+  const tab = workspace.get(tabId);
+  if (!tab) return { error: `There is no tab "${tabId}". Use "board" or "lab".` };
+  const address = tab.sheet.findFreeBlock(FREE_COLS, FREE_ROWS, tabId === 'board' ? BOARD_FIRST_FREE_ROW : 0);
+  return address ? { path: workspace.pathOf(tabId, address) } : { error: `The ${tabId} tab has no empty ${FREE_COLS}x${FREE_ROWS} spot left. Try the other tab.` };
+}
+
+async function writeCode(host: ToolHost, args: Args): Promise<string> {
+  if (!getSettings().allowWrite) {
+    return asText({ error: 'The person has not allowed you to write code yourself. Offer the code with suggest_code, and say that a grown-up can switch on "Let the helper write code in empty cells" in the settings (⚙).' });
+  }
+  const code = typeof args.code === 'string' ? cleanCode(args.code) : '';
+  if (!code.trim()) return asText({ error: 'code must be the TypeScript text for the cell' });
+  if (code.length > MAX_WRITE_CHARS) return asText({ error: `The code is too long (${code.length} characters, at most ${MAX_WRITE_CHARS}). Write something shorter.` });
+  if (host.ledger.count >= MAX_WRITES) return asText({ error: `You have already written code ${MAX_WRITES} times in this conversation. Offer further code with suggest_code.` });
+
+  let path = typeof args.path === 'string' ? args.path.trim() : '';
+  if (!path) {
+    const spot = freeSpot(tabForNewCode(host, args.tab));
+    if ('error' in spot) return asText(spot);
+    path = spot.path;
+  }
+  const hit = workspace.resolve(path, host.context().tab);
+  if ('error' in hit) return asText({ error: hit.error });
+  const { tab, address } = hit;
+  if (tab.sheet.isBoardAddress(address)) return asText({ error: `${address} is a board square. Code goes in a lower row such as A12.` });
+  if (tab.id !== 'board' && tab.id !== 'lab') return asText({ error: `You may only write in the board and lab tabs, not in ${tab.id}.` });
+  const data = tab.sheet.dataAt(address)!;
+  const own = !!data.uid && host.ledger.uids.has(data.uid);
+  if (data.code.trim() && !own) return asText({ error: `${workspace.pathOf(tab.id, address)} already has someone else's code. Use find_free_cell for an empty one, or suggest_code to propose a change.` });
+
+  const full = workspace.pathOf(tab.id, address);
+  host.ledger.count++;
+  const typed = await host.write(full, code);
+  const uid = typed.uid ?? tab.sheet.dataAt(address)?.uid ?? null;
+  if (uid) host.ledger.uids.add(uid);
+  host.wrote(full, code, typed);
+  const failedLine = !typed.ok ? Number(/line (\d+)/i.exec(typed.error ?? '')?.[1]) : NaN;
+  return asText({
+    ...reportText(full, typed),
+    errorLineText: Number.isInteger(failedLine) ? (code.split('\n')[failedLine - 1] ?? null) : undefined,
+    wroteLines: code.split('\n').length,
+    writesLeft: MAX_WRITES - host.ledger.count,
+    next: !typed.ok
+      ? `Fix the error and call write_code again with the same path. This is TypeScript (not Python): write real line breaks, never the two characters \\n, and call plot/print the way read_guide shows.${/Invalid character/i.test(typed.error ?? '') ? ' "Invalid character" usually means a stray backslash or non-TypeScript syntax.' : ''}`
+      : !typed.output?.trim() && !typed.text?.trim()
+        ? 'It ran but printed and showed nothing. If the person expects to see something, check that the code calls print(...) and fix it with write_code on the same path.'
+        : 'It works. Tell the person what you made and what it does, in simple words.',
+  });
 }
 
 /** Runs one tool the model asked for. The answer is always text; a problem is reported in it, never thrown at the model. */
@@ -233,6 +427,10 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
         return limit(host.boardText());
       case 'read_guide':
         return limit(await cellGuide(), 9500);
+      case 'read_docs': {
+        if (typeof args.doc !== 'string') return asText({ error: 'doc must be api, examples, readme or rules' });
+        return await readDocs({ doc: args.doc, query: typeof args.query === 'string' ? args.query : undefined, path: typeof args.path === 'string' ? args.path : undefined }, ammo.resultChars(6000));
+      }
       case 'recall':
       case 'remember':
       case 'tidy_memory': {
@@ -296,18 +494,42 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
         return limit(asText(await router.request(CLIENT, server, method, params)));
       }
       case 'flash_cell': {
-        const hit = workspace.resolve(String(args.path ?? ''), host.context().tab);
+        const hit = resolveSmart(String(args.path ?? ''), host.context().tab);
         if ('error' in hit) return asText({ error: hit.error });
         const answer = await router.request(CLIENT, hit.tab.id, 'tools/call', { name: 'flash', arguments: { address: hit.address } });
-        return asText(inner(answer).value);
+        return asText({ ...(inner(answer).value as object), note: hit.note });
       }
+      case 'goto_cell': {
+        const hit = resolveSmart(String(args.path ?? ''), host.context().tab);
+        if ('error' in hit) return asText({ error: hit.error });
+        const full = workspace.pathOf(hit.tab.id, hit.address);
+        if (!nav.goTo(full)) return asText({ error: `Could not go to ${full}.` });
+        // The screen flies there for a moment; the blink comes when it has arrived.
+        await sleep(900);
+        await router.request(CLIENT, hit.tab.id, 'tools/call', { name: 'flash', arguments: { address: hit.address } });
+        const d = hit.tab.sheet.dataAt(hit.address);
+        return asText({ path: full, there: true, hasCode: !!d?.code.trim(), firstLine: d?.code.split('\n').find((l) => l.trim())?.slice(0, 100) ?? null, note: hit.note });
+      }
+      case 'run_cell': {
+        const hit = resolveSmart(String(args.path ?? ''), host.context().tab);
+        if ('error' in hit) return asText({ error: hit.error });
+        const full = workspace.pathOf(hit.tab.id, hit.address);
+        if (!hit.tab.sheet.dataAt(hit.address)?.code.trim()) return asText({ error: `${full} has no code to run.`, note: hit.note });
+        return asText({ ...reportText(full, await host.run(full)), note: hit.note });
+      }
+      case 'find_free_cell': {
+        const tabId = tabForNewCode(host, args.tab);
+        return asText({ ...freeSpot(tabId), tab: tabId, size: `${FREE_COLS}x${FREE_ROWS}`, next: 'Use write_code (or suggest_code) with this path.' });
+      }
+      case 'write_code':
+        return await writeCode(host, args);
       case 'suggest_code': {
         const hit = workspace.resolve(String(args.path ?? ''), host.context().tab);
         if ('error' in hit) return asText({ error: hit.error });
         if (hit.tab.sheet.isBoardAddress(hit.address)) return asText({ error: `${hit.address} is a board square. Code goes in a lower row such as A12.` });
         if (typeof args.code !== 'string' || !args.code.trim()) return asText({ error: 'code must be the TypeScript text for the cell' });
         const after = typeof args.after_line === 'number' && Number.isInteger(args.after_line) && args.after_line >= 1 ? args.after_line : null;
-        host.suggest(workspace.pathOf(hit.tab.id, hit.address), args.code, typeof args.note === 'string' ? args.note : '', after);
+        host.suggest(workspace.pathOf(hit.tab.id, hit.address), cleanCode(args.code), typeof args.note === 'string' ? args.note : '', after);
         return asText({ shownToThePerson: true, note: 'The person has to press the button before anything is changed. Explain the code in your answer.' });
       }
       default:
