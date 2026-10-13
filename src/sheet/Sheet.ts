@@ -427,6 +427,13 @@ export class Sheet {
     graph.getView().addListener(InternalEvent.SCALE, onScroll);
     graph.getView().addListener(InternalEvent.SCALE_AND_TRANSLATE, onScroll);
     graph.getView().addListener(InternalEvent.TRANSLATE, onScroll);
+    // Zooming by hand (wheel, pinch, buttons) ends the "zoom back out" promise: the old view is no longer where you came from.
+    graph.getView().addListener(InternalEvent.SCALE, () => {
+      if (this.zoomFlying || !this.zoomReturn) return;
+      this.zoomReturn = null;
+      this.zoomedOn = null;
+      this.zoomListeners.forEach((l) => l());
+    });
     this.updateStickyHeaders();
   }
 
@@ -2252,6 +2259,50 @@ export class Sheet {
   }
 
   private flight = 0;
+  /** Where the view was before "zoom in on this cell", so the same button can zoom back out. */
+  private zoomReturn: SheetView | null = null;
+  private zoomedOn: string | null = null;
+  private zoomFlying = false;
+  private readonly zoomListeners: Array<() => void> = [];
+
+  /** Is the sheet zoomed in on this cell by zoomInOn()? Then the next press zooms back out. */
+  isZoomedOn(address: string): boolean {
+    return this.zoomReturn !== null && this.zoomedOn === this.ownerOf(address);
+  }
+
+  onZoomState(listener: () => void): void {
+    this.zoomListeners.push(listener);
+  }
+
+  /** Zooms in so the cell's block fills the window with some room around it. The view it came from is kept for zoomOut(). */
+  async zoomInOn(address: string): Promise<void> {
+    const owner = this.ownerOf(address);
+    const view = this.viewOfCell(owner);
+    if (!view) return;
+    this.zoomReturn ??= this.viewState();
+    this.zoomedOn = owner;
+    this.zoomListeners.forEach((l) => l());
+    await this.flyingTo(view);
+    this.flash(owner, undefined, 600);
+  }
+
+  /** Back to the zoom and place from before zoomInOn(). */
+  async zoomOut(): Promise<void> {
+    const back = this.zoomReturn;
+    this.zoomReturn = null;
+    this.zoomedOn = null;
+    this.zoomListeners.forEach((l) => l());
+    if (back) await this.flyingTo(back);
+  }
+
+  private async flyingTo(view: SheetView): Promise<void> {
+    this.zoomFlying = true;
+    try {
+      await this.flyTo(view);
+    } finally {
+      this.zoomFlying = false;
+    }
+  }
 
   /** Where to look to see a cell's block large: zoomed so that the block fills most of the window, centred. */
   viewOfCell(address: string): SheetView | null {

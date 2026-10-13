@@ -1846,3 +1846,13 @@ body.ai-open .help-card {
   vertical-align: -2px;
   margin: 0 3px 0 0;
 }
+
+/* The magnifier left of the ⋮: zoom in on the cell; amber while zoomed in (a press zooms back out) */
+.cell-zoom-icon {
+  cursor: pointer;
+}
+.cell-zoom-icon.on {
+  color: #8a5a00;
+  background: #fff4d6;
+  border-color: #c58b1f;
+}

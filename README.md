@@ -323,6 +323,11 @@ second; when the pointer leaves, it fades out slowly, so the last five cells you
 readable for a moment. A short yellow hint under the cell says what a double-click does; tick
 **Do not show these hints** in it to switch it off (F1 on a cell has a button to bring it back).
 
+Next to the **⋮** icon of a hovered cell sits a small **magnifier**: it zooms in so the cell fills the
+window with some room around it, and then turns amber; press it again to zoom back out to where you
+were (zooming by hand forgets the old view). The ⋮ menu has the same item, plus **Duplicate** (a copy of
+the code in a free spot) and **Copy → output**.
+
 At the right of the strip, **📍** always shows where you are: click a cell (or a
 tile of a grid) and the path follows, for example `📍 /lab/A17/3,4`. Click the
 path to copy it. The ⋮ menu of a cell has **Copy → path** and **Copy → id**.

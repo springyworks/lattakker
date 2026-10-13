@@ -539,8 +539,28 @@ export class SheetPane {
         },
       });
     }
+    const zoomedHere = sheet.isZoomedOn(address);
+    items.push({
+      label: zoomedHere ? '🔍 Zoom back out' : '🔍 Zoom in on this cell',
+      title: zoomedHere ? 'Back to the zoom and place from before' : 'Fills the window with this cell, with some room around it. The same button zooms back out.',
+      onSelect: () => void (zoomedHere ? sheet.zoomOut() : sheet.zoomInOn(address)),
+    });
     if (hasCode) {
       items.push({ label: '▶ Run again', onSelect: () => sheet.setCode(address, d.code) });
+      items.push({
+        label: '📑 Duplicate',
+        title: 'A copy of this code in a free spot of its own (the original stays)',
+        onSelect: () => {
+          const spot = sheet.findFreeBlock(d.span.cols, d.span.rows, this.hooks.firstFreeRow ?? 0);
+          if (!spot) {
+            this.hooks.say('There is no free spot of that size left. Make room or try the other tab.', 'bad');
+            return;
+          }
+          sheet.setCode(spot, d.code);
+          void sheet.flyToCell(spot);
+          this.hooks.say(`Copied ${address} to ${spot}.`, 'good');
+        },
+      });
       const { cols, rows } = d.span;
       const resize = (c: number, r: number) => () => this.resize(address, c, r);
       items.push({
@@ -574,6 +594,7 @@ export class SheetPane {
         { label: `path  ${workspace.pathOf(sheet.id, address)}`, title: 'Works from every tab, for example at(\'/lab/J24\')', onSelect: () => this.copy(workspace.pathOf(sheet.id, address), 'the path') },
         { label: `id  ${hasCode ? '@' + d.uid : '(no code yet)'}`, title: 'Follows the code when the cell moves', disabled: !hasCode, onSelect: () => this.copy('@' + d.uid, 'the identity') },
         { label: 'code', disabled: !hasCode, onSelect: () => this.copy(d.code, 'the code') },
+        { label: 'output', disabled: d.output.length === 0, title: 'What the cell printed, as text', onSelect: () => this.copy(d.output.join('\n'), 'the output') },
       ],
     });
     items.push({

@@ -7,6 +7,8 @@ export interface CellMenuHooks {
   itemsFor(address: string): MenuItem[] | null;
 }
 
+const ZOOM_IN = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="6.5" cy="6.5" r="4.3"/><path d="M10 10l4 4M4.6 6.5h3.8M6.5 4.6v3.8"/></svg>';
+const ZOOM_OUT = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="6.5" cy="6.5" r="4.3"/><path d="M10 10l4 4M4.6 6.5h3.8"/></svg>';
 const ICON_W = 16;
 const ICON_H = 18;
 
@@ -18,6 +20,8 @@ const ICON_H = 18;
  */
 export class CellMenu {
   private readonly icon = document.createElement('div');
+  /** Left of the ⋮: zooms in on the cell, and (same button) back out to where you were. */
+  private readonly zoomIcon = document.createElement('div');
   /** A strip across the top of the cell while the pointer rests on the ⋮: the first // line of its code, a title for the block. */
   private readonly subheader = document.createElement('div');
   private readonly menu: HoverMenu;
@@ -47,6 +51,31 @@ export class CellMenu {
     this.icon.setAttribute('aria-haspopup', 'menu');
     this.icon.hidden = true;
     sheet.container.append(this.icon);
+    this.zoomIcon.className = 'cell-menu-icon cell-zoom-icon';
+    this.zoomIcon.setAttribute('role', 'button');
+    this.zoomIcon.hidden = true;
+    sheet.container.append(this.zoomIcon);
+    this.zoomIcon.addEventListener('pointerenter', () => {
+      this.overIcon = true;
+      window.clearTimeout(this.hideTimer);
+      this.syncTooltips();
+    });
+    this.zoomIcon.addEventListener('pointerleave', () => {
+      this.overIcon = false;
+      this.syncTooltips();
+      this.scheduleHide();
+    });
+    // A press here is only a press: it must not start the cell drag the ⋮ handle starts.
+    this.zoomIcon.addEventListener('pointerdown', (e) => e.stopPropagation());
+    this.zoomIcon.addEventListener('mousedown', (e) => e.stopPropagation());
+    this.zoomIcon.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const address = this.address;
+      if (!address) return;
+      if (sheet.isZoomedOn(address)) void sheet.zoomOut();
+      else void sheet.zoomInOn(address);
+    });
+    sheet.onZoomState(() => this.paintZoom());
 
     this.icon.addEventListener('pointerenter', () => {
       this.overIcon = true;
@@ -157,8 +186,18 @@ export class CellMenu {
     }, 450);
   }
 
+  /** The zoom icon says what a press does: zoom in on this cell, or back out to the previous zoom. */
+  private paintZoom(): void {
+    const out = !!this.address && this.sheet.isZoomedOn(this.address);
+    this.zoomIcon.innerHTML = out ? ZOOM_OUT : ZOOM_IN;
+    this.zoomIcon.title = out ? 'Zoom back out to where you were' : 'Zoom in on this cell';
+    this.zoomIcon.setAttribute('aria-label', this.zoomIcon.title);
+    this.zoomIcon.classList.toggle('on', out);
+  }
+
   private hide(): void {
     this.address = null;
+    this.zoomIcon.hidden = true;
     this.icon.hidden = true;
     this.hideSubheader();
   }
@@ -216,6 +255,10 @@ export class CellMenu {
     this.icon.style.top = `${Math.round(top)}px`;
     this.icon.style.height = `${ICON_H}px`;
     this.icon.style.width = `${ICON_W}px`;
+    const zoomLeft = Math.max(left, Math.max(left, right) - ICON_W - 3);
+    Object.assign(this.zoomIcon.style, { left: `${Math.round(zoomLeft)}px`, top: `${Math.round(top)}px`, width: `${ICON_W}px`, height: `${ICON_H}px` });
+    this.zoomIcon.hidden = false;
+    this.paintZoom();
   }
 
   /** The cell's box in the scrolling container's own pixels (what an absolutely placed child needs). */
