@@ -22,6 +22,7 @@ export class CellMenu {
   private readonly icon = document.createElement('div');
   /** Left of the ⋮: zooms in on the cell, and (same button) back out to where you were. */
   private readonly zoomIcon = document.createElement('div');
+  private zoomOut = false;
   /** A strip across the top of the cell while the pointer rests on the ⋮: the first // line of its code, a title for the block. */
   private readonly subheader = document.createElement('div');
   private readonly menu: HoverMenu;
@@ -186,9 +187,11 @@ export class CellMenu {
     }, 450);
   }
 
-  /** The zoom icon says what a press does: zoom in on this cell, or back out to the previous zoom. */
+  /** The zoom icon says what a press does: zoom in on this cell, or back out to the previous zoom. Only touched when that changes: replacing the icon under a pressed pointer would swallow the click. */
   private paintZoom(): void {
     const out = !!this.address && this.sheet.isZoomedOn(this.address);
+    if (this.zoomOut === out && this.zoomIcon.firstChild) return;
+    this.zoomOut = out;
     this.zoomIcon.innerHTML = out ? ZOOM_OUT : ZOOM_IN;
     this.zoomIcon.title = out ? 'Zoom back out to where you were' : 'Zoom in on this cell';
     this.zoomIcon.setAttribute('aria-label', this.zoomIcon.title);

@@ -1778,6 +1778,9 @@ body.ai-open .help-card {
 .cell-zoom-icon {
   cursor: pointer;
 }
+.cell-zoom-icon svg {
+  pointer-events: none;
+}
 .cell-zoom-icon.on {
   color: #8a5a00;
   background: #fff4d6;
