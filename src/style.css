@@ -10,7 +10,7 @@ html, body {
   display: none !important;
 }
 
-#app, #lab, #examples-sheet {
+#app, #lab, #examples-sheet, .sheet-tab-sheet {
   position: relative;
   width: 100vw;
   height: calc(100vh - var(--dock-h, 0px) - var(--tabs-h, 0px));
@@ -23,7 +23,7 @@ html, body {
 
 /* Never let a press-and-drag on the board or controls select text or drag a picture; that made
    the whole canvas appear to move while a piece was being dragged. Code editors keep selection. */
-#app, #lab, #examples-sheet, #dock {
+#app, #lab, #examples-sheet, .sheet-tab-sheet, #dock {
   -webkit-user-select: none;
   user-select: none;
   -webkit-user-drag: none;
@@ -38,7 +38,7 @@ body.grab-armed .sheet-pane, body.grab-armed .sheet-pane * {
 body.grab-armed .sheet-pane {
   box-shadow: inset 0 0 0 4px rgba(46, 125, 50, 0.55);
 }
-#app .monaco-editor, #app .monaco-editor *, #lab .monaco-editor, #lab .monaco-editor *, #examples-sheet .monaco-editor, #examples-sheet .monaco-editor * {
+#app .monaco-editor, #app .monaco-editor *, #lab .monaco-editor, #lab .monaco-editor *, #examples-sheet .monaco-editor, #examples-sheet .monaco-editor *, .sheet-tab-sheet .monaco-editor, .sheet-tab-sheet .monaco-editor * {
   -webkit-user-select: text;
   user-select: text;
 }
@@ -119,6 +119,24 @@ body.grab-armed .sheet-pane {
   height: 100%;
   display: flex;
   flex-direction: column;
+}
+/* An animated drawing (svg(...) in a cell): it fills the block and keeps its proportions; the printed lines sit under it. */
+.cell-svg {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.cell-svg > svg {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+}
+.cell-svg .svg-caption {
+  flex: 0 0 auto;
+  text-align: center;
 }
 .cell-plot svg {
   flex: 1 1 auto;
@@ -565,13 +583,12 @@ body.has-tabs {
   opacity: 0;
   border: 0;
 }
-body.tab-examples #dock,
-body.tab-lab #dock {
+body:not(.tab-board) #dock {
   display: none;
 }
 
 /* The Lab tab: a toolbar above its own sheet */
-#lab-panel, #examples-panel {
+#lab-panel, #examples-panel, .sheet-tab-panel {
   display: flex;
   flex-direction: column;
   width: 100vw;
@@ -621,7 +638,7 @@ body.tab-lab #dock {
 .lab-bar button:hover {
   background: #f0f4f8;
 }
-#lab-panel #lab, #examples-panel #examples-sheet {
+#lab-panel #lab, #examples-panel #examples-sheet, .sheet-tab-panel .sheet-tab-sheet {
   flex: 1 1 auto;
   min-height: 0;
   height: auto;
@@ -937,8 +954,10 @@ body.ai-open {
 body.ai-open #app,
 body.ai-open #lab,
 body.ai-open #examples-sheet,
+body.ai-open .sheet-tab-sheet,
 body.ai-open #lab-panel,
-body.ai-open #examples-panel {
+body.ai-open #examples-panel,
+body.ai-open .sheet-tab-panel {
   width: calc(100vw - var(--ai-w));
 }
 .ai-side {
@@ -1263,8 +1282,10 @@ body.ai-open #examples-panel {
   body.ai-open #app,
   body.ai-open #lab,
   body.ai-open #examples-sheet,
+  body.ai-open .sheet-tab-sheet,
   body.ai-open #lab-panel,
-  body.ai-open #examples-panel {
+  body.ai-open #examples-panel,
+  body.ai-open .sheet-tab-panel {
     width: 100vw;
   }
   body.ai-open {
@@ -1521,6 +1542,14 @@ body.ai-resizing .monaco-editor {
   margin-bottom: 8px;
   padding: 5px 7px;
   font: inherit;
+}
+.rubber-band {
+  position: absolute;
+  z-index: 5;
+  box-sizing: border-box;
+  border: 1px dashed #c58b1f;
+  background: rgba(197, 139, 31, 0.12);
+  pointer-events: none;
 }
 .input-buttons {
   display: flex;

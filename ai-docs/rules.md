@@ -28,9 +28,9 @@ Never invent a function name, an option or a cell path. If you have not seen it 
 
 - A cell is a top-level script, not a function: there is no `return`. Show results with `print(...)` (or `show(...)`, `view(text)`, `plot(...)`).
 - TypeScript, not Python: `const`/`let`, `=>`, `for (let i = 0; i < n; i++)`. There are no list comprehensions. Line breaks are real line breaks.
-- Start a cell with `span(cols, rows)` when it needs room (for example `span(6, 4)` for a picture).
+- Start a cell with `span(cols, rows)` when it needs room (for example `span(6, 4)` for a picture). It is the size the cell wants by default: if the person resizes the block by hand, their size is kept and a plain `span(...)` line is updated to match. Write only plain numbers in that line so it can be.
 - The game is the global `game` (`game.phase`, `game.turn`, `game.lastMove`, `game.pieces('red')` ...). `mms` does NOT exist inside cells (it is for outside AIs); inside cells use `mcp` and `at()`.
-- Never declare a variable with a name the app already uses: game, sheet, cell, memory, at, on, every, after, print, view, color, span, grid, plot, mcp, weather, ollama, input, run, stop, range. A cell's own helper names must be different, or it fails with "Identifier ... has already been declared".
+- Never declare a variable with a name the app already uses: game, sheet, cell, memory, at, on, every, after, print, view, color, span, grid, plot, mcp, weather, ollama, input, svg, system, tabs, run, stop, range. A cell's own helper names must be different, or it fails with "Identifier ... has already been declared".
 - `game.lastMove` and `game.history` are the moves of the battle; swaps made while arranging the army are not in them.
 - Cells are called by path: `A12` (this tab), `/lab/J24` (another tab), `A16/3,4` (a tile inside a grid), `@c-1a2b3c4d` (by identity; it follows the code when the cell moves).
 

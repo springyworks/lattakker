@@ -108,6 +108,11 @@ export class Workspace {
     tab.sheet.onCodeChanged(bump);
   }
 
+  /** A tab was closed: its cells can no longer be named. */
+  unregister(id: string): void {
+    if (this.tabs.delete(id)) this.cellsChanged();
+  }
+
   /** Called after cells moved, shifted or changed: paths that were handed out may point somewhere else now. Runs once per burst of changes. */
   private cellsChanged(): void {
     if (this.changedQueued) return;

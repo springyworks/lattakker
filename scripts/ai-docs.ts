@@ -66,18 +66,21 @@ export function buildDocs(root: string, site: string): AiDoc[] {
   const api = String(evalConst(join(root, 'src/sheet/apiTypes.ts'), 'CELL_API_DTS')).trim();
   const examples = evalConst(join(root, 'src/examples.ts'), 'EXAMPLES') as Array<[string, string]>;
   const demos = evalConst(join(root, 'src/labDemos.ts'), 'LAB_DEMOS') as Array<[string, string]>;
+  const monitor = evalConst(join(root, 'src/monitorDemos.ts'), 'MONITOR_DEMOS') as Array<[string, string]>;
   const rules = fill(read('ai-docs/rules.md'));
   const readme = read('README.md');
 
   const apiFile = `// Lattakker Sheet: everything a cell's TypeScript can use, as declarations. Generated from src/sheet/apiTypes.ts.\n// Cells are top-level scripts (no return, top-level await works). See rules.md.\n${api}\n`;
   const examplesFile = cellsDoc('Example cells: the Game board tab', `These are the cells the children start with on the Game board (paths /board/A12 ...). Each one is plain TypeScript with comments that explain it. Copy their style. Generated from src/examples.ts.`, 'board', examples);
-  const demosFile = cellsDoc('Demo cells: the Lab tab', `Live demos of the Lab (paths /lab/A16 ...): plots, animations, grids, inputs, MCP, weather, the model on this computer. Generated from src/labDemos.ts.`, 'lab', demos);
+  const demosFile = cellsDoc('Demo cells: the Lab tab', `Live demos of the Lab (paths /lab/A16 ...): plots, animations, grids, inputs, MCP, weather, the model on this computer. Generated from src/labDemos.ts.`, 'lab', demos) +
+    '\n' +
+    cellsDoc('Demo cells: the Monitor tab', `The Monitor tab (paths /monitor/A1 ...): the router drawing animated from the live MCP traffic (svg, mcp.tap), graphs of this computer (system), router messages per second, the weather. Generated from src/monitorDemos.ts.`, 'monitor', monitor);
 
   const docs: AiDoc[] = [
     { file: 'rules.md', type: 'text/markdown', title: 'Rules for AI helpers', description: 'How to behave with children, how to work like a coder, the rules of cell code.', body: rules },
     { file: 'cell-api.d.ts', type: 'text/plain', title: 'The cell code API', description: 'TypeScript declarations of print, plot, grid, at, on, every, game, input, mcp ... everything a cell can use.', body: apiFile },
     { file: 'examples.md', type: 'text/markdown', title: 'Example cells (Game board)', description: `${examples.length} cells of TypeScript with comments: the starting point of the children.`, body: examplesFile },
-    { file: 'lab-demos.md', type: 'text/markdown', title: 'Demo cells (Lab)', description: `${demos.length} live demos: plots, animation, grids, inputs, MCP, weather, a local model.`, body: demosFile },
+    { file: 'lab-demos.md', type: 'text/markdown', title: 'Demo cells (Lab)', description: `${demos.length + monitor.length} live demos: plots, animation, animated SVG, grids, inputs, MCP, weather, a local model, system graphs.`, body: demosFile },
     { file: 'README.md', type: 'text/markdown', title: 'README', description: 'The whole documentation of the project (same as the one on GitHub).', body: readme },
   ];
 
@@ -86,6 +89,7 @@ export function buildDocs(root: string, site: string): AiDoc[] {
     ['src/sheet/apiTypes.ts', 'The API typings (source of cell-api.d.ts)'],
     ['src/examples.ts', 'The example cells (source of examples.md)'],
     ['src/labDemos.ts', 'The Lab demo cells (source of lab-demos.md)'],
+    ['src/monitorDemos.ts', 'The Monitor demo cells (also in lab-demos.md)'],
     ['src/sheet/api.ts', 'How the API is implemented'],
     ['public/llms.txt', 'The short guide for AI assistants'],
   ];

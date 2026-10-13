@@ -1,0 +1,183 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" style="background-color: #ffffff; font-family: Arial, sans-serif;">
+  <defs>
+    <!-- Blueprint / Engineering Grid -->
+    <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
+      <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#e2e8f0" stroke-width="1" />
+      <path d="M 100 0 L 0 0 0 100" fill="none" stroke="#cbd5e1" stroke-width="1" />
+    </pattern>
+    <!-- Flow Arrows -->
+    <marker id="arrow-forward" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#0f172a" />
+    </marker>
+    <marker id="arrow-reverse" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 10 1 L 0 5 L 10 9 z" fill="#0f172a" />
+    </marker>
+    <!-- Half-Duplex Marker -->
+    <marker id="half-duplex" viewBox="0 0 14 10" refX="7" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 5 L 7 1 L 7 9 Z" fill="#0f172a" />
+      <path d="M 14 5 L 7 1 L 7 9 Z" fill="#0f172a" />
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="900" fill="url(#grid)" />
+
+  <!-- SysML Frame -->
+  <rect x="20" y="20" width="1160" height="860" fill="none" stroke="#000000" stroke-width="2" />
+  
+  <!-- SysML Header -->
+  <polygon points="20,20 520,20 540,50 20,50" fill="#ffffff" stroke="#000000" stroke-width="2" />
+  <text x="30" y="40" font-size="14" font-weight="bold" fill="#000000">ibd [System] Lattakker Application [MCP Orthogonal Routing]</text>
+
+  <!-- ========================================== -->
+  <!-- CENTRAL ROUTER BLOCK                       -->
+  <!-- ========================================== -->
+  <rect x="450" y="200" width="300" height="450" fill="#f8fafc" stroke="#000000" stroke-width="2" />
+  <text x="600" y="230" font-size="12" font-weight="bold" text-anchor="middle" fill="#0f172a">&lt;&lt;gateway&gt;&gt;</text>
+  <text x="600" y="250" font-size="16" font-weight="bold" text-anchor="middle" fill="#0f172a">mcp_router : Router</text>
+  <line x1="450" y1="270" x2="750" y2="270" stroke="#000000" stroke-width="1.5" />
+  <text x="465" y="295" font-size="12" fill="#334155">val stats : RouterStats</text>
+  <text x="465" y="320" font-size="12" fill="#334155">op routeMessage(msg: JSON_RPC)</text>
+  <text x="465" y="345" font-size="12" fill="#334155">op dispatchTrigger(event: String)</text>
+
+  <!-- Router Ports (Left Edge) -->
+  <rect x="446" y="276" width="8" height="8" fill="#ffffff" stroke="#000000" />
+  <rect x="446" y="346" width="8" height="8" fill="#ffffff" stroke="#000000" />
+  <rect x="446" y="416" width="8" height="8" fill="#ffffff" stroke="#000000" />
+  
+  <!-- Router Ports (Right Edge) -->
+  <rect x="746" y="246" width="8" height="8" fill="#ffffff" stroke="#000000" />
+  <rect x="746" y="321" width="8" height="8" fill="#ffffff" stroke="#000000" />
+  <rect x="746" y="396" width="8" height="8" fill="#ffffff" stroke="#000000" />
+  <rect x="746" y="471" width="8" height="8" fill="#ffffff" stroke="#000000" />
+  <rect x="746" y="546" width="8" height="8" fill="#ffffff" stroke="#000000" />
+
+  <!-- Router Ports (Bottom Edge) -->
+  <rect x="496" y="646" width="8" height="8" fill="#ffffff" stroke="#000000" />
+  <rect x="596" y="646" width="8" height="8" fill="#ffffff" stroke="#000000" />
+  <rect x="696" y="646" width="8" height="8" fill="#ffffff" stroke="#000000" />
+
+  <!-- ========================================== -->
+  <!-- LEFT BLOCKS: TAB SERVERS                   -->
+  <!-- ========================================== -->
+  
+  <!-- Board Tab -->
+  <rect x="70" y="220" width="180" height="60" fill="#ffffff" stroke="#000000" stroke-width="1.5" />
+  <text x="160" y="245" font-size="11" font-weight="bold" text-anchor="middle" fill="#0f172a">&lt;&lt;mcp_server&gt;&gt;</text>
+  <text x="160" y="265" font-size="14" font-weight="bold" text-anchor="middle" fill="#0f172a">board : Tab</text>
+  <rect x="246" y="246" width="8" height="8" fill="#ffffff" stroke="#000000" />
+
+  <!-- Lab Tab -->
+  <rect x="70" y="320" width="180" height="60" fill="#ffffff" stroke="#000000" stroke-width="1.5" />
+  <text x="160" y="345" font-size="11" font-weight="bold" text-anchor="middle" fill="#0f172a">&lt;&lt;mcp_server&gt;&gt;</text>
+  <text x="160" y="365" font-size="14" font-weight="bold" text-anchor="middle" fill="#0f172a">lab : Tab</text>
+  <rect x="246" y="346" width="8" height="8" fill="#ffffff" stroke="#000000" />
+
+  <!-- Examples Tab -->
+  <rect x="70" y="420" width="180" height="60" fill="#ffffff" stroke="#000000" stroke-width="1.5" />
+  <text x="160" y="445" font-size="11" font-weight="bold" text-anchor="middle" fill="#0f172a">&lt;&lt;mcp_server&gt;&gt;</text>
+  <text x="160" y="465" font-size="14" font-weight="bold" text-anchor="middle" fill="#0f172a">examples : Tab</text>
+  <rect x="246" y="446" width="8" height="8" fill="#ffffff" stroke="#000000" />
+
+  <!-- LEFT MANHATTAN ROUTING -->
+  <path d="M 254 250 L 380 250 L 380 280 L 446 280" fill="none" stroke="#1e293b" stroke-width="1.5" marker-start="url(#arrow-reverse)" marker-end="url(#arrow-forward)" />
+  <path d="M 254 350 L 446 350" fill="none" stroke="#1e293b" stroke-width="1.5" marker-start="url(#arrow-reverse)" marker-end="url(#arrow-forward)" />
+  <path d="M 254 450 L 380 450 L 380 420 L 446 420" fill="none" stroke="#1e293b" stroke-width="1.5" marker-start="url(#arrow-reverse)" marker-end="url(#arrow-forward)" />
+
+  <!-- ========================================== -->
+  <!-- RIGHT BLOCKS: SERVICE SERVERS              -->
+  <!-- ========================================== -->
+  
+  <!-- Weather -->
+  <rect x="950" y="170" width="180" height="60" fill="#ffffff" stroke="#000000" stroke-width="1.5" />
+  <text x="1040" y="195" font-size="11" font-weight="bold" text-anchor="middle" fill="#0f172a">&lt;&lt;mcp_server&gt;&gt;</text>
+  <text x="1040" y="215" font-size="14" font-weight="bold" text-anchor="middle" fill="#0f172a">weather : Service</text>
+  <rect x="946" y="196" width="8" height="8" fill="#ffffff" stroke="#000000" />
+
+  <!-- Ollama -->
+  <rect x="950" y="270" width="180" height="60" fill="#ffffff" stroke="#000000" stroke-width="1.5" />
+  <text x="1040" y="295" font-size="11" font-weight="bold" text-anchor="middle" fill="#0f172a">&lt;&lt;mcp_server&gt;&gt;</text>
+  <text x="1040" y="315" font-size="14" font-weight="bold" text-anchor="middle" fill="#0f172a">ollama : Service</text>
+  <rect x="946" y="296" width="8" height="8" fill="#ffffff" stroke="#000000" />
+
+  <!-- Memory -->
+  <rect x="950" y="370" width="180" height="60" fill="#ffffff" stroke="#000000" stroke-width="1.5" />
+  <text x="1040" y="395" font-size="11" font-weight="bold" text-anchor="middle" fill="#0f172a">&lt;&lt;mcp_server&gt;&gt;</text>
+  <text x="1040" y="415" font-size="14" font-weight="bold" text-anchor="middle" fill="#0f172a">memory : Service</text>
+  <rect x="946" y="396" width="8" height="8" fill="#ffffff" stroke="#000000" />
+
+  <!-- Status -->
+  <rect x="950" y="470" width="180" height="60" fill="#ffffff" stroke="#000000" stroke-width="1.5" />
+  <text x="1040" y="495" font-size="11" font-weight="bold" text-anchor="middle" fill="#0f172a">&lt;&lt;mcp_server&gt;&gt;</text>
+  <text x="1040" y="515" font-size="14" font-weight="bold" text-anchor="middle" fill="#0f172a">status : Service</text>
+  <rect x="946" y="496" width="8" height="8" fill="#ffffff" stroke="#000000" />
+
+  <!-- Helper -->
+  <rect x="950" y="570" width="180" height="60" fill="#ffffff" stroke="#000000" stroke-width="1.5" />
+  <text x="1040" y="595" font-size="11" font-weight="bold" text-anchor="middle" fill="#0f172a">&lt;&lt;mcp_server&gt;&gt;</text>
+  <text x="1040" y="615" font-size="14" font-weight="bold" text-anchor="middle" fill="#0f172a">helper : Service</text>
+  <rect x="946" y="596" width="8" height="8" fill="#ffffff" stroke="#000000" />
+
+  <!-- RIGHT MANHATTAN ROUTING (Wiring Loom Style) -->
+  <path d="M 754 250 L 830 250 L 830 200 L 946 200" fill="none" stroke="#1e293b" stroke-width="1.5" marker-start="url(#arrow-reverse)" marker-end="url(#arrow-forward)" />
+  <path d="M 754 325 L 870 325 L 870 300 L 946 300" fill="none" stroke="#1e293b" stroke-width="1.5" marker-start="url(#arrow-reverse)" marker-end="url(#arrow-forward)" />
+  <path d="M 754 400 L 946 400" fill="none" stroke="#1e293b" stroke-width="1.5" marker-start="url(#arrow-reverse)" marker-end="url(#arrow-forward)" />
+  <path d="M 754 475 L 870 475 L 870 500 L 946 500" fill="none" stroke="#1e293b" stroke-width="1.5" marker-start="url(#arrow-reverse)" marker-end="url(#arrow-forward)" />
+  <path d="M 754 550 L 830 550 L 830 600 L 946 600" fill="none" stroke="#1e293b" stroke-width="1.5" marker-start="url(#arrow-reverse)" marker-end="url(#arrow-forward)" />
+
+  <!-- ========================================== -->
+  <!-- BOTTOM BLOCKS: CHANNELS & ENDPOINTS        -->
+  <!-- ========================================== -->
+  
+  <!-- Cell Scripts -->
+  <rect x="190" y="750" width="220" height="60" fill="#ffffff" stroke="#000000" stroke-width="1.5" stroke-dasharray="6,4" />
+  <text x="300" y="775" font-size="11" font-weight="bold" text-anchor="middle" fill="#0f172a">&lt;&lt;context&gt;&gt;</text>
+  <text x="300" y="795" font-size="14" font-weight="bold" text-anchor="middle" fill="#0f172a">Cell Scripts (mcp.*)</text>
+  <rect x="296" y="746" width="8" height="8" fill="#ffffff" stroke="#000000" />
+
+  <!-- WebRTC Share -->
+  <rect x="490" y="750" width="220" height="60" fill="#ffffff" stroke="#000000" stroke-width="1.5" stroke-dasharray="6,4" />
+  <text x="600" y="775" font-size="11" font-weight="bold" text-anchor="middle" fill="#0f172a">&lt;&lt;mcp_channel&gt;&gt;</text>
+  <text x="600" y="795" font-size="14" font-weight="bold" text-anchor="middle" fill="#0f172a">WebRTC Data Channel</text>
+  <rect x="596" y="746" width="8" height="8" fill="#ffffff" stroke="#000000" />
+
+  <!-- Dev Server Endpoint -->
+  <rect x="790" y="750" width="220" height="60" fill="#ffffff" stroke="#000000" stroke-width="1.5" stroke-dasharray="6,4" />
+  <text x="900" y="775" font-size="11" font-weight="bold" text-anchor="middle" fill="#0f172a">&lt;&lt;endpoint&gt;&gt;</text>
+  <text x="900" y="795" font-size="14" font-weight="bold" text-anchor="middle" fill="#0f172a">Dev Server /mcp</text>
+  <rect x="896" y="746" width="8" height="8" fill="#ffffff" stroke="#000000" />
+
+  <!-- BOTTOM MANHATTAN ROUTING -->
+  <!-- Async Calls -->
+  <path d="M 500 654 L 500 710 L 300 710 L 300 746" fill="none" stroke="#1e293b" stroke-width="1.5" marker-end="url(#arrow-forward)" />
+  <!-- WebRTC Half-Duplex Marker -->
+  <path d="M 600 654 L 600 746" fill="none" stroke="#1e293b" stroke-width="1.5" marker-mid="url(#half-duplex)" marker-start="url(#arrow-reverse)" marker-end="url(#arrow-forward)" />
+  <!-- JSON-RPC HTTP Bridge -->
+  <path d="M 700 654 L 700 710 L 900 710 L 900 746" fill="none" stroke="#1e293b" stroke-width="1.5" marker-start="url(#arrow-reverse)" marker-end="url(#arrow-forward)" />
+
+  <!-- Routing Labels -->
+  <rect x="420" y="692" width="60" height="16" fill="#ffffff" />
+  <text x="450" y="704" font-size="10" font-family="monospace" text-anchor="middle" fill="#64748b">Async Watch</text>
+  
+  <rect x="560" y="692" width="80" height="16" fill="#ffffff" />
+  <text x="600" y="704" font-size="10" font-family="monospace" text-anchor="middle" fill="#64748b">Half-Duplex [HDX]</text>
+
+  <rect x="735" y="692" width="60" height="16" fill="#ffffff" />
+  <text x="765" y="704" font-size="10" font-family="monospace" text-anchor="middle" fill="#64748b">JSON-RPC</text>
+
+  <!-- Title / Revision Block -->
+  <rect x="850" y="780" width="330" height="100" fill="#ffffff" stroke="#000000" stroke-width="2" />
+  <line x1="850" y1="820" x2="1180" y2="820" stroke="#000000" stroke-width="1.5" />
+  <line x1="850" y1="850" x2="1180" y2="850" stroke="#000000" stroke-width="1.5" />
+  <line x1="1015" y1="820" x2="1015" y2="880" stroke="#000000" stroke-width="1.5" />
+  
+  <text x="860" y="805" font-size="16" font-weight="bold" fill="#000000">LATTAKKER ENGINEERING DIV.</text>
+  <text x="860" y="840" font-size="11" font-weight="bold" fill="#000000">DRAWN BY:</text>
+  <text x="940" y="840" font-size="11" fill="#000000">Systems Integration</text>
+  <text x="1025" y="840" font-size="11" font-weight="bold" fill="#000000">REV:</text>
+  <text x="1070" y="840" font-size="11" fill="#000000">1.1.0</text>
+  <text x="860" y="870" font-size="11" font-weight="bold" fill="#000000">TITLE:</text>
+  <text x="910" y="870" font-size="11" fill="#000000">IBD Routing Harness</text>
+  <text x="1025" y="870" font-size="11" font-weight="bold" fill="#000000">DATE:</text>
+  <text x="1070" y="870" font-size="11" fill="#000000">2026-10-13</text>
+</svg>

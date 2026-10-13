@@ -58,6 +58,11 @@ export class SheetPane {
   lastSheetCell: string;
   private deleteArmed: string | null = null;
   private deleteTimer = 0;
+  /** The cell the editor was opened on (the editor itself forgets it while closing). */
+  private openedAddress: string | null = null;
+  private groupDeleteArmed = false;
+  private groupDeleteTimer = 0;
+  private describeTimer = 0;
 
   constructor(
     readonly sheet: Sheet,
@@ -77,8 +82,19 @@ export class SheetPane {
         sheet.setCode(address, code);
         hooks.say(`Restarted ${address} ▶ Its timers stopped and the code runs from the top.`, 'info');
       },
-      onOpen: (address) => hooks.onEditorOpen?.(address),
-      onClose: () => hooks.onEditorClose?.(),
+      onOpen: (address) => {
+        this.openedAddress = address;
+        hooks.onEditorOpen?.(address);
+      },
+      onClose: () => {
+        // A block made from picked cells that nobody wrote in goes back to one cell; the handles come back to the picked block.
+        const address = this.openedAddress;
+        this.openedAddress = null;
+        const d = address ? sheet.dataAt(address) : undefined;
+        if (address && d && !d.code.trim() && (d.span.cols > 1 || d.span.rows > 1)) sheet.resetShape(address);
+        sheet.syncHandles();
+        hooks.onEditorClose?.();
+      },
       onOutputClick: (address) => {
         sheet.pulse(clickNode(address));
         sheet.flash(address, THEME.flash, 300);
@@ -97,6 +113,21 @@ export class SheetPane {
       if (!focus || focus.tab !== sheet.id || sheet.isBoardAddress(focus.address) || this.hooks.reserved?.(focus.address) || focus.address === this.selectedCodeCell) return;
       if (sheet.dataAt(focus.address)) this.selectCodeCell(focus.address, true);
     });
+    // Picking a group, the shape of blocks (handles, selections, span(...)), and the keys that act on the picked cells.
+    sheet.setCodeLocked((address) => this.editor.isOpen && this.editor.address === address);
+    sheet.onShapeChange((change) => {
+      if (!change.byPerson) return;
+      const { address, size, rewrote, limited } = change;
+      hooks.say(
+        `${address} is now ${size.cols}×${size.rows}.${rewrote ? ` Its span(${size.cols}, ${size.rows}) line says so now too.` : ''}${limited ? ' Other cells were in the way, so it could not get bigger.' : ''} Code that reads cell.cols or watches 'size' wakes up.`,
+        limited ? 'info' : 'good',
+      );
+    });
+    sheet.onPickChange((picked) => {
+      window.clearTimeout(this.describeTimer);
+      if (picked.length > 1) this.describeTimer = window.setTimeout(() => this.describePicked(), 250);
+    });
+    this.installKeys();
     this.navigator = new Navigator(sheet, {
       hasBoard: hooks.hasBoard,
       onJump: ({ address, row }) => {
@@ -116,10 +147,9 @@ export class SheetPane {
 
   selectCodeCell(address: string, quiet = false): void {
     const sheet = this.sheet;
-    if (this.selectedCodeCell) sheet.setSelectionVisual(this.selectedCodeCell, null);
     this.selectedCodeCell = address;
     this.lastSheetCell = address;
-    sheet.setSelectionVisual(address, { stroke: THEME.select, strokeWidth: 3 });
+    sheet.pick([address], address);
     if (quiet) return;
     sheet.flash(address, THEME.flash);
     const d = sheet.dataAt(address)!;
@@ -131,14 +161,129 @@ export class SheetPane {
     );
   }
 
+  // ------------------------------------------------------------ picked cells
+
+  /** The range of the picked cells, like A12:C14. */
+  private pickedRange(): { text: string; cols: number; rows: number } | null {
+    const b = this.sheet.pickedBounds();
+    return b ? { text: `${formatAddress(b.col, b.row)}:${formatAddress(b.col + b.cols - 1, b.row + b.rows - 1)}`, cols: b.cols, rows: b.rows } : null;
+  }
+
+  private describePicked(): void {
+    const picked = this.sheet.getPicked();
+    const range = this.pickedRange();
+    if (picked.length < 2 || !range) return;
+    const withCode = picked.filter((a) => this.sheet.dataAt(a)?.code.trim()).length;
+    this.hooks.say(`${picked.length} cells picked (${range.text}, ${range.cols}×${range.rows}). Enter makes one block of them to write in${withCode ? `, Delete clears the ${withCode} with code` : ''}, Esc lets go.`, 'info');
+  }
+
+  /** The picked cells become one block, as big as the pick, and the editor opens on it: the person decided its shape, the code can say more later. */
+  makeBlockFromPicked(): void {
+    const { sheet, hooks } = this;
+    const b = sheet.pickedBounds();
+    if (!b) return;
+    const first = formatAddress(b.col, b.row);
+    const blockers = sheet.getPicked().filter((a) => a !== first && sheet.dataAt(a)?.code.trim());
+    if (blockers.length) {
+      for (const a of blockers) sheet.flash(a, THEME.errorFill, 600);
+      hooks.say(`${blockers.slice(0, 3).join(', ')} already ${blockers.length === 1 ? 'has' : 'have'} code. Pick empty cells to make a block.`, 'bad');
+      return;
+    }
+    const got = sheet.setUserSize(first, b.cols, b.rows);
+    if (!got) return;
+    sheet.pick([first], first);
+    this.selectedCodeCell = first;
+    this.lastSheetCell = first;
+    hooks.say(`A block of ${got.cols}×${got.rows} at ${first}${got.cols !== b.cols || got.rows !== b.rows ? ' (smaller than you picked: other cells were in the way)' : ''}. Write its code ✏️`, 'good');
+    this.editor.open(first);
+  }
+
+  /** Runs every picked cell with code again. */
+  runPicked(): void {
+    const cells = this.sheet.getPicked().filter((a) => this.sheet.dataAt(a)?.code.trim());
+    for (const a of cells) this.sheet.setCode(a, this.sheet.dataAt(a)!.code);
+    this.hooks.say(cells.length ? `Restarted ${cells.length} ${cells.length === 1 ? 'cell' : 'cells'} ▶` : 'None of the picked cells has code.', 'info');
+  }
+
+  /** Clears the picked cells that have code. It asks twice (press again within 3 seconds), and leaves cells that other cells still read. */
+  clearPicked(): void {
+    const { sheet, hooks } = this;
+    const picked = sheet.getPicked();
+    const withCode = picked.filter((a) => sheet.dataAt(a)?.code.trim());
+    if (!withCode.length) {
+      hooks.say('The picked cells are empty already.', 'info');
+      return;
+    }
+    if (!this.groupDeleteArmed) {
+      this.groupDeleteArmed = true;
+      window.clearTimeout(this.groupDeleteTimer);
+      this.groupDeleteTimer = window.setTimeout(() => (this.groupDeleteArmed = false), 3000);
+      hooks.say(`Press Delete again to clear ${withCode.length} ${withCode.length === 1 ? 'cell' : 'cells'} with code.`, 'info');
+      return;
+    }
+    this.groupDeleteArmed = false;
+    const inGroup = new Set(picked);
+    const kept = withCode.filter((a) => this.referencesTo(a).some((r) => !inGroup.has(r)));
+    const gone = withCode.filter((a) => !kept.includes(a));
+    for (const a of gone) sheet.setCode(a, '');
+    hooks.say(`Cleared ${gone.length} ${gone.length === 1 ? 'cell' : 'cells'}.${kept.length ? ` ${kept.join(', ')} stayed: other cells read ${kept.length === 1 ? 'it' : 'them'}.` : ''}`, kept.length ? 'info' : 'good');
+  }
+
+  /** The menu entries for a group of picked cells. */
+  private groupItems(): MenuItem[] {
+    const picked = this.sheet.getPicked();
+    const range = this.pickedRange();
+    const withCode = picked.filter((a) => this.sheet.dataAt(a)?.code.trim()).length;
+    return [
+      { label: `🔲 Make one block of these ${picked.length} cells`, hint: range ? `${range.cols}×${range.rows}` : '', title: 'The picked empty cells become one block, as big as the pick, and the editor opens on it', onSelect: () => this.makeBlockFromPicked() },
+      { label: `▶ Run the ${withCode} picked cells`, disabled: withCode === 0, onSelect: () => this.runPicked() },
+      { label: `🗑 Clear the ${withCode} picked cells`, danger: true, disabled: withCode === 0, hint: 'Delete', onSelect: () => this.clearPicked() },
+      { label: 'Let go of the picked cells', hint: 'Esc', onSelect: () => this.sheet.pick([]) },
+      { separator: true },
+    ];
+  }
+
+  /** Enter, Delete and Esc act on the picked cells, when the keys are not meant for something else (a text box, the editor). */
+  private installKeys(): void {
+    window.addEventListener('keydown', (e) => {
+      if (workspace.current !== this.sheet.id || this.editor.isOpen || e.ctrlKey || e.metaKey || e.altKey) return;
+      if ((e.target as HTMLElement | null)?.closest?.('input, textarea, select, [contenteditable="true"], .monaco-editor, .ai-side, .ai-mini, .help-card, .input-panel')) return;
+      const picked = this.sheet.getPicked();
+      if (!picked.length) return;
+      if (e.key === 'Escape' && picked.length > 1) {
+        this.sheet.pick([]);
+      } else if (e.key === 'Enter') {
+        if (picked.length > 1) this.makeBlockFromPicked();
+        else if (!this.hooks.mayEdit || this.hooks.mayEdit(picked[0])) this.editor.open(picked[0]);
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        this.clearPicked();
+      } else return;
+      e.preventDefault();
+    });
+  }
+
   // ------------------------------------------------------------------ clicks
 
   private installListeners(): void {
     const { sheet, hooks } = this;
     sheet.setListeners({
-      onCellClick: (address) => {
-        workspace.setFocus(sheet.id, address, sheet.takeTileClick(address));
-        if (hooks.reserved?.(address)) return;
+      onCellClick: (address, evt) => {
+        const tile = sheet.takeTileClick(address);
+        if (hooks.reserved?.(address)) {
+          workspace.setFocus(sheet.id, address, tile);
+          return;
+        }
+        // Shift-click picks a rectangle from the first cell, Ctrl-click adds or removes one cell: the usual way.
+        // The pick comes first: the focus (which the cell under attention follows) is set after it.
+        if (!sheet.isBoardAddress(address) && (evt.shiftKey || evt.ctrlKey || evt.metaKey)) {
+          if (evt.shiftKey) sheet.pickRange(address);
+          else sheet.togglePick(address);
+          this.lastSheetCell = address;
+          this.selectedCodeCell = sheet.ownerOf(address);
+          workspace.setFocus(sheet.id, address, tile);
+          return;
+        }
+        workspace.setFocus(sheet.id, address, tile);
         sheet.pulse(clickNode(address));
         if (sheet.isBoardAddress(address)) {
           this.lastSheetCell = address;
@@ -187,14 +332,7 @@ export class SheetPane {
         if (!p || p.row <= afterRowIndex) return addr;
         return formatAddress(p.col, p.row + 1);
       };
-      if (this.selectedCodeCell) {
-        const next = remap(this.selectedCodeCell);
-        if (next !== this.selectedCodeCell) {
-          sheet.setSelectionVisual(this.selectedCodeCell, null);
-          this.selectedCodeCell = next;
-          sheet.setSelectionVisual(next, { stroke: THEME.select, strokeWidth: 3 });
-        }
-      }
+      if (this.selectedCodeCell) this.selectedCodeCell = remap(this.selectedCodeCell);
       this.lastSheetCell = remap(this.lastSheetCell);
       if (this.editor.isOpen && this.editor.address) {
         const p = parseAddress(this.editor.address);
@@ -203,11 +341,7 @@ export class SheetPane {
     });
 
     sheet.onContentMoved((from, to) => {
-      if (this.selectedCodeCell === from) {
-        sheet.setSelectionVisual(from, null);
-        this.selectedCodeCell = to;
-        sheet.setSelectionVisual(to, { stroke: THEME.select, strokeWidth: 3 });
-      }
+      if (this.selectedCodeCell === from) this.selectedCodeCell = to;
       if (this.lastSheetCell === from) this.lastSheetCell = to;
       if (this.editor.isOpen && (this.editor.address === from || this.editor.address === to)) this.editor.close(false);
       hooks.say(`Moved ${from}'s content to ${to} 📦`, 'good');
@@ -261,6 +395,12 @@ export class SheetPane {
         const isBoard = sheet.isBoardAddress(address);
         if (!isBoard) menu.addItem(`🤖 Ask the AI about ${address}`, null, () => aiBridge.ask({ tab: sheet.id, address }));
         if (!isBoard) menu.addItem(`❓ Help for ${address}`, null, () => showHelp('cell', { tab: sheet.id, address }));
+        if (!isBoard && sheet.getPicked().length > 1 && sheet.isPicked(sheet.ownerOf(address))) {
+          for (const item of this.groupItems()) {
+            if (item.separator) menu.addSeparator();
+            else menu.addItem(item.label ?? '', null, () => void item.onSelect?.(), undefined, undefined, !item.disabled);
+          }
+        }
         if (!isBoard) {
           menu.addItem(`Edit ${address}`, null, () => this.editor.open(address));
           if (sheet.dataAt(address)?.code) menu.addItem(`Clear ${address}`, null, () => sheet.setCode(address, ''));
@@ -292,9 +432,8 @@ export class SheetPane {
   }
 
   private resize(address: string, cols: number, rows: number): void {
-    this.sheet.setSpan(address, cols, rows);
-    const now = this.sheet.dataAt(address)!.span;
-    this.hooks.say(`${address} is now ${now.cols}×${now.rows}. Code that reads cell.cols or watches 'size' wakes up.`, 'good');
+    // The menu is the person speaking, like the handles: their size is kept, and a plain span(...) line follows (see sheet/shape.ts).
+    this.sheet.setUserSize(address, cols, rows);
   }
 
   private jumpTo(target: string): void {
@@ -374,6 +513,7 @@ export class SheetPane {
     // The way out to words is always the first item.
     items.push({ label: '🤖 Ask the AI…', hint: 'Alt+I', onSelect: () => aiBridge.ask({ tab: sheet.id, address }) });
     items.push({ label: '❓ Help for this cell', hint: 'F1', title: 'What this cell is, what it does, and buttons that show you', onSelect: () => showHelp('cell', { tab: sheet.id, address }) });
+    if (sheet.getPicked().length > 1 && sheet.isPicked(sheet.ownerOf(address))) items.push({ separator: true }, ...this.groupItems());
     items.push({
       tiny: true,
       label: hasCode ? `${address} · id ${d.uid} · ran ${d.runCount}×` : `${address} · empty cell`,

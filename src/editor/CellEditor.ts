@@ -66,11 +66,11 @@ export class CellEditor {
     const relayout = () => this.editor?.layout();
     graph.getView().addListener(InternalEvent.SCALE, relayout);
     graph.getView().addListener(InternalEvent.SCALE_AND_TRANSLATE, relayout);
-    graph.isCellResizable = (cell: Cell) => cell.getId() === 'ed:frame';
+    graph.isCellResizable = (cell: Cell) => cell.getId() === 'ed:frame' || sheet.hasHandles(cell);
     // SelectionCellsHandler (needed so resize handles render at all) would otherwise let any
     // clicked cell enter native selection and grow a VertexHandler outline; restrict that to the
-    // editor frame only, since every other click path in this app manages its own visuals.
-    graph.isCellSelectable = (cell: Cell) => cell.getId() === 'ed:frame';
+    // editor frame and the one picked code block, since every other click path in this app manages its own visuals.
+    graph.isCellSelectable = (cell: Cell) => cell.getId() === 'ed:frame' || sheet.hasHandles(cell);
     graph.addListener(InternalEvent.CELLS_RESIZED, (_sender: unknown, evt: EventObject) => {
       const cells = evt.getProperty('cells') as Cell[] | undefined;
       if (!this.frame || !cells?.includes(this.frame)) return;

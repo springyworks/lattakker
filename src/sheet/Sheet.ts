@@ -13,6 +13,7 @@ import {
   SelectionCellsHandler,
   SelectionHandler,
   TooltipHandler,
+  VertexHandler,
   type CellStyle,
   type MouseListenerSet,
 } from '@maxgraph/core';
@@ -33,7 +34,10 @@ import { THEME } from '../theme';
 import { DependencyGraph, MODE_NODE, ROWS_NODE, codeNode, sizeNode } from './reactivity';
 import { CancelError, RunContext } from './tasks';
 import { Spring } from './spring';
+import { decideSpan, emptyShape, readSpanCall, rewriteSpanCall, type ShapeState, type Size } from './shape';
+import { SheetCellHandler } from './cellHandler';
 import { plotSvg, tilesSvg, type PlotSpec } from './plot';
+import type { SvgScene } from './svgScene';
 
 /** A cell that takes longer than this is moved to the background so the others can run. */
 const RUN_SLICE_MS = 150;
@@ -102,9 +106,13 @@ export interface SheetCellData {
   plot: PlotSpec | null;
   /** A tile grid painted inside this block (grid(w, h) in the cell's code), or null. */
   tiles: TileGrid | null;
+  /** A live animated drawing shown in this block (svg(...) in the cell's code), or null. */
+  scene: SvgScene | null;
   viewText: string | null;
   codeVisual: CellVisual;
   span: { cols: number; rows: number };
+  /** Who decided the size: the person (handles, a selection) and/or the code (span(...)); see shape.ts. Moves with the code. */
+  shape: ShapeState;
   error: string | null;
   /** Survives re-runs and moves with the code; the cell's own notebook (see `memory` in the API). */
   memory: Record<string, unknown>;
@@ -150,6 +158,17 @@ export interface RoomInfo {
   addedCols: number;
   addedRows: number;
   shifts: Array<{ from: string; to: string }>;
+}
+
+/** A block changed shape: by the person (handles, a selection) or because its code asked for another size. */
+export interface ShapeChange {
+  address: string;
+  size: Size;
+  byPerson: boolean;
+  /** The person asked for more than fits (code or the board is in the way): the size that was possible was used. */
+  limited: boolean;
+  /** The `span(...)` line in the code was rewritten to the new numbers. */
+  rewrote: boolean;
 }
 
 /** A block that is about to step aside: how it looked and where it was, in model units. */
@@ -216,6 +235,17 @@ export class Sheet {
   private rowsInsertedHandlers: Array<(afterRowIndex: number) => void> = [];
   private roomMadeHandlers: Array<(info: RoomInfo) => void> = [];
   private contentMovedHandlers: Array<(from: string, to: string) => void> = [];
+  /** The cells the person picked (a click, a rubber band, Shift/Ctrl-click): the address of each block's owner. */
+  private picked = new Set<string>();
+  /** Where a Shift-click range starts. */
+  private pickAnchor: string | null = null;
+  private pickHandlers: Array<(picked: string[]) => void> = [];
+  private rubber: { startX: number; startY: number; active: boolean; additive: boolean; base: Set<string>; box: HTMLElement | null } | null = null;
+  /** When the last rubber band ended: the click that follows it is not a click on a cell. */
+  private rubberEndedAt = 0;
+  /** Asked before the code of a cell is rewritten (its editor may be open on it). */
+  private codeLocked: (address: string) => boolean = () => false;
+  private shapeHandlers: Array<(change: ShapeChange) => void> = [];
   private codeChangedHandlers: Array<(address: string) => void> = [];
   private referencesHandlers: Array<(report: ReferenceReport) => void> = [];
   private afterRunHandlers: Array<() => void> = [];
@@ -268,6 +298,30 @@ export class Sheet {
     if (panning) panning.useLeftButtonForPanning = false;
     const selection = graph.getPlugin<SelectionHandler>('SelectionHandler');
     if (selection) selection.setMoveEnabled(true);
+    // A picked code block wears maxGraph's own resize handles (see cellHandler.ts); carrying a block around stays the job of the content drag below.
+    graph.getPlugin<SelectionCellsHandler>('SelectionCellsHandler')?.setVertexHandlerFactory((state) =>
+      (state.cell.getId() ?? '').startsWith('sheet:') ? new SheetCellHandler(state, { width: CW, height: CH }) : new VertexHandler(state),
+    );
+    const movable = graph.isCellMovable.bind(graph);
+    graph.isCellMovable = (cell: Cell) => !(cell.getId() ?? '').startsWith('sheet:') && movable(cell);
+    graph.addListener(InternalEvent.CELLS_RESIZED, (_sender: unknown, evt: EventObject) => {
+      for (const c of (evt.getProperty('cells') as Cell[] | undefined) ?? []) {
+        const id = c.getId() ?? '';
+        if (id.startsWith('sheet:')) this.resizedByHand(id.slice(6));
+      }
+    });
+    // The picked cells stay on their cells when content moves or rows shift.
+    this.onContentMoved((from, to) => this.remapPicked((a) => (a === from ? to : a)));
+    this.onRowsInserted((after) =>
+      this.remapPicked((a) => {
+        const p = parseAddress(a);
+        return p && p.row > after ? formatAddress(p.col, p.row + 1) : a;
+      }),
+    );
+    this.onRoomMade((info) => {
+      const to = new Map(info.shifts.map((s) => [s.from, s.to]));
+      this.remapPicked((a) => to.get(a) ?? a);
+    });
     container.style.overflow = 'auto';
     container.style.position = 'relative';
 
@@ -315,7 +369,7 @@ export class Sheet {
     graph.addListener(InternalEvent.CLICK, (_sender: unknown, evt: EventObject) => {
       const cell = evt.getProperty('cell') as Cell | null | undefined;
       const me = evt.getProperty('event') as MouseEvent;
-      if (!cell || !this.listeners || this.contentDragBusy) return;
+      if (!cell || !this.listeners || this.contentDragBusy || performance.now() - this.rubberEndedAt < 200) return;
       const id = cell.getId() ?? '';
       // Clicking a cell can restyle it (selection outline/flash), which makes maxGraph tear down
       // and recreate its label DOM node. That breaks the browser's native double-click detection
@@ -342,7 +396,10 @@ export class Sheet {
     });
     const contentDragListener: MouseListenerSet = {
       mouseDown: (_sender, me) => this.onContentMouseDown(me),
-      mouseMove: (_sender, me) => this.onContentMouseMove(me),
+      mouseMove: (_sender, me) => {
+        this.onRubberMove(me);
+        this.onContentMouseMove(me);
+      },
       mouseUp: (_sender, me) => this.onContentMouseUp(me),
     };
     graph.addMouseListener(contentDragListener);
@@ -350,6 +407,7 @@ export class Sheet {
     // which would leave a half-finished drag hanging.
     container.addEventListener('pointercancel', () => {
       this.cancelContentDrag();
+      this.cancelRubber();
       this.pointerCancelHandlers.forEach((h) => h());
     });
 
@@ -482,9 +540,11 @@ export class Sheet {
       output: [],
       plot: null,
       tiles: null,
+      scene: null,
       viewText: null,
       codeVisual: {},
       span: { cols: 1, rows: 1 },
+      shape: emptyShape(),
       error: null,
       memory: {},
       runCount: 0,
@@ -771,6 +831,17 @@ export class Sheet {
     if (id.startsWith('sheet:')) {
       const d = this.data.get(id.slice(6));
       if (!d) return '';
+      // A drawing is a live DOM node (its animations keep running in it); everything else is drawn from text.
+      if (d.scene && !d.error && !(d.code && this.mode === 'view')) {
+        d.scene.setCaption(d.output.join('\n'));
+        // The label box has no height of its own, so the drawing is given the size of the cell (like a plot).
+        const geo = cell.getGeometry();
+        if (geo) {
+          d.scene.element.style.width = `${Math.round(geo.width)}px`;
+          d.scene.element.style.height = `${Math.round(geo.height)}px`;
+        }
+        return d.scene.element as unknown as string;
+      }
       return this.outputHtml(d.address);
     }
     const value = cell.getValue();
@@ -789,6 +860,10 @@ export class Sheet {
       const h = size?.height ?? geo?.height ?? 100;
       const caption = d.output.length ? `<div class="cell-text out plot-caption">${escapeHtml(d.output.join('\n'))}</div>` : '';
       return `<div class="cell-plot">${plotSvg(d.plot, w, h)}${caption}</div>`;
+    }
+    if (d.scene && !d.error && !showCode) {
+      const caption = d.output.length ? `<div class="cell-text out svg-caption">${escapeHtml(d.output.join('\n'))}</div>` : '';
+      return `<div class="cell-svg">${new XMLSerializer().serializeToString(d.scene.svg)}${caption}</div>`;
     }
     if (d.tiles && !d.error && !showCode) {
       const geo = this.cells.get(address)?.getGeometry();
@@ -845,13 +920,15 @@ export class Sheet {
     const code = d.codeVisual;
     const sel = this.selectionVisual.get(address) ?? {};
     const flash = this.flashVisual.get(address) ?? {};
+    // A picked cell wears the amber frame; in a group, the empty ones are tinted too, so the whole area reads as one.
+    const pick: CellVisual = this.picked.has(address) ? { stroke: THEME.select, strokeWidth: 3, ...(this.picked.size > 1 && !d.code ? { fill: THEME.pickFill } : {}) } : {};
     const style: CellStyle = { baseStyleNames: ['sheet'] };
-    const merged: CellVisual = { ...base, ...code, ...sel, ...flash };
+    const merged: CellVisual = { ...base, ...code, ...pick, ...sel, ...flash };
     if (merged.fill) style.fillColor = merged.fill;
     if (merged.stroke) style.strokeColor = merged.stroke;
     if (merged.strokeWidth) style.strokeWidth = merged.strokeWidth;
     // The cell under attention: its frame is see-through, so the cell's own content stays readable beneath it.
-    if (sel.stroke) style.strokeOpacity = 55;
+    if (this.picked.has(address) && !this.selectionVisual.has(address)) style.strokeOpacity = 55;
     if (merged.fontColor) style.fontColor = merged.fontColor;
     if (merged.fontSize) style.fontSize = merged.fontSize;
     if (merged.align) style.align = merged.align;
@@ -948,6 +1025,248 @@ export class Sheet {
     });
     this.depGraph.markDirty(sizeNode(address));
     this.requestRun();
+  }
+
+  // ------------------------------------------------------------------ shape
+
+  /**
+   * What a block's code asks for with span(cols, rows): a default size. The person's own size (resize handles, or
+   * cells turned into a block) wins until the code's numbers change; see shape.ts for the rule.
+   */
+  requestSpan(address: string, cols: number, rows: number): void {
+    const d = this.data.get(address);
+    if (!d) return;
+    const request = { cols: Math.max(1, Math.floor(cols) || 1), rows: Math.max(1, Math.floor(rows) || 1) };
+    const decision = decideSpan(d.shape, request, readSpanCall(d.code));
+    d.shape = decision.shape;
+    this.setSpan(address, decision.apply.cols, decision.apply.rows);
+    if (decision.rewriteTo) this.rewriteSpanLine(address, decision.rewriteTo);
+  }
+
+  /** The size the person gave this block, or null when nobody did. */
+  userSize(address: string): Size | null {
+    return this.data.get(address)?.shape.user ?? null;
+  }
+
+  /** Brings back a size the person chose (from a saved sheet). The code is not touched. */
+  restoreUserSize(address: string, size: Size): void {
+    const d = this.data.get(address);
+    if (!d) return;
+    const user = { cols: Math.max(1, Math.floor(size.cols) || 1), rows: Math.max(1, Math.floor(size.rows) || 1) };
+    d.shape = { ...d.shape, user };
+    this.setSpan(address, user.cols, user.rows);
+  }
+
+  /** The block goes back to one cell and forgets what anyone said about its size (an empty block nobody wrote in). */
+  resetShape(address: string): void {
+    const d = this.data.get(address);
+    if (!d) return;
+    d.shape = emptyShape();
+    this.forceSpan(address, 1, 1);
+  }
+
+  /** Listens for blocks changing shape because the person resized them (handles, a selection) or the code asked for another size. */
+  onShapeChange(handler: (change: ShapeChange) => void): void {
+    this.shapeHandlers.push(handler);
+  }
+
+  /** Tells the sheet when a cell's code must not be rewritten (its editor is open on it). */
+  setCodeLocked(isLocked: (address: string) => boolean): void {
+    this.codeLocked = isLocked;
+  }
+
+  /**
+   * The person gives a block a size: a resize handle, or cells turned into a block. Other code and the board limit it
+   * (the biggest size that fits is used). A plain span(...) line in the code is rewritten to the new numbers, so the
+   * code never disagrees with the screen; code without one is left alone (the shape is simply remembered).
+   */
+  setUserSize(address: string, cols: number, rows: number): Size | null {
+    const d = this.data.get(address);
+    if (!d || this.isBoardAddress(address)) return null;
+    const wanted = { cols: Math.max(1, Math.floor(cols) || 1), rows: Math.max(1, Math.floor(rows) || 1) };
+    const fit = this.fitFree(d, wanted);
+    this.forceSpan(address, fit.cols, fit.rows);
+    d.shape = { ...d.shape, user: fit };
+    const rewrote = d.code.trim() ? this.rewriteSpanLine(address, fit) : false;
+    this.shapeHandlers.forEach((h) => h({ address, size: fit, byPerson: true, limited: fit.cols !== wanted.cols || fit.rows !== wanted.rows, rewrote }));
+    // The new size is part of what is saved: tell whoever saves.
+    if (!rewrote && d.code.trim()) this.codeChangedHandlers.forEach((h) => h(address));
+    this.syncHandles();
+    return fit;
+  }
+
+  /** The biggest size not larger than `want` that does not run over other code, merged blocks or the board. */
+  private fitFree(d: SheetCellData, want: Size): Size {
+    let { cols, rows } = want;
+    cols = Math.min(cols, this.colCount - d.col);
+    rows = Math.min(rows, this.rowCount - d.row);
+    const free = (c: number, r: number): boolean => {
+      const rect = { c1: d.col, r1: d.row, c2: d.col + c - 1, r2: d.row + r - 1 };
+      for (let rr = rect.r1; rr <= rect.r2; rr++) for (let cc = rect.c1; cc <= rect.c2; cc++) if (this.isBoardAddress(formatAddress(cc, rr))) return false;
+      return this.occupantsOf(rect, d.address).length === 0;
+    };
+    // Shrink the side that grew until it fits.
+    while (!free(cols, rows)) {
+      if (cols > d.span.cols && cols >= rows) cols--;
+      else if (rows > d.span.rows) rows--;
+      else if (cols > d.span.cols) cols--;
+      else break;
+    }
+    return { cols: Math.max(1, cols), rows: Math.max(1, rows) };
+  }
+
+  /** setSpan, and the block's frame is put back on the grid even when its cell count did not change (a handle drag leaves it between lines). */
+  private forceSpan(address: string, cols: number, rows: number): void {
+    const d = this.data.get(address);
+    const cell = this.cells.get(address);
+    if (!d || !cell) return;
+    this.setSpan(address, cols, rows);
+    const geo = cell.getGeometry()!;
+    const width = d.span.cols * CW;
+    const height = d.span.rows * CH;
+    if (geo.width !== width || geo.height !== height) this.graph.getDataModel().setGeometry(cell, new Geometry(ORIGIN_X + d.col * CW, ORIGIN_Y + d.row * CH, width, height));
+  }
+
+  /** Rewrites the numbers of the code's plain `span(...)` line. False when there is none, nothing would change, or the code is being edited. */
+  private rewriteSpanLine(address: string, size: Size): boolean {
+    const d = this.data.get(address);
+    if (!d || this.codeLocked(address)) return false;
+    const next = rewriteSpanCall(d.code, size.cols, size.rows);
+    if (next === null || next === d.code) return false;
+    d.code = next;
+    d.shape = { ...d.shape, code: size };
+    this.refreshCell(address);
+    this.codeChangedHandlers.forEach((h) => h(address));
+    return true;
+  }
+
+  /** A resize handle was let go: the block takes the shape that is nearest on the grid. */
+  private resizedByHand(address: string): void {
+    const d = this.data.get(address);
+    const cell = this.cells.get(address);
+    if (!d || !cell) return;
+    const geo = cell.getGeometry()!;
+    this.setUserSize(address, Math.round(geo.width / CW), Math.round(geo.height / CH));
+  }
+
+  // -------------------------------------------------------------- picking
+
+  /** The owner of the block a cell belongs to (the cell itself when it is not covered by a bigger one). */
+  ownerOf(address: string): string {
+    return this.coveredBy.get(address) ?? address;
+  }
+
+  getPicked(): string[] {
+    return [...this.picked];
+  }
+
+  isPicked(address: string): boolean {
+    return this.picked.has(address);
+  }
+
+  get pickedAnchor(): string | null {
+    return this.pickAnchor;
+  }
+
+  /** Listens for the picked cells changing. */
+  onPickChange(handler: (picked: string[]) => void): void {
+    this.pickHandlers.push(handler);
+  }
+
+  /** The bounding box of the picked blocks in cells, or null when nothing is picked. */
+  pickedBounds(): { col: number; row: number; cols: number; rows: number } | null {
+    let c1 = Infinity;
+    let r1 = Infinity;
+    let c2 = -1;
+    let r2 = -1;
+    for (const a of this.picked) {
+      const d = this.data.get(a);
+      if (!d) continue;
+      c1 = Math.min(c1, d.col);
+      r1 = Math.min(r1, d.row);
+      c2 = Math.max(c2, d.col + d.span.cols - 1);
+      r2 = Math.max(r2, d.row + d.span.rows - 1);
+    }
+    return c2 < 0 ? null : { col: c1, row: r1, cols: c2 - c1 + 1, rows: r2 - r1 + 1 };
+  }
+
+  /** Replaces the picked cells. `anchor` is where a Shift-click range starts (default: the first one). Board squares are never picked. */
+  pick(addresses: Iterable<string>, anchor?: string | null): void {
+    const next = new Set<string>();
+    for (const a of addresses) {
+      const owner = this.ownerOf(a);
+      if (this.data.has(owner) && !this.isBoardAddress(owner)) next.add(owner);
+    }
+    const before = this.picked;
+    this.picked = next;
+    if (anchor !== undefined) this.pickAnchor = anchor ? this.ownerOf(anchor) : null;
+    else if (!this.pickAnchor || !next.has(this.pickAnchor)) this.pickAnchor = [...next][0] ?? null;
+    // Every cell of the group is restyled: the tint of the empty ones depends on how many are picked.
+    this.graph.batchUpdate(() => {
+      for (const a of new Set([...before, ...next])) this.applyStyle(a);
+    });
+    this.syncHandles();
+    this.pickHandlers.forEach((h) => h([...next]));
+  }
+
+  /** Ctrl-click: one more cell in the group, or one less. */
+  togglePick(address: string): void {
+    const owner = this.ownerOf(address);
+    const next = new Set(this.picked);
+    if (!next.delete(owner)) next.add(owner);
+    this.pick(next, next.has(owner) ? owner : undefined);
+  }
+
+  /** Shift-click: every cell in the rectangle from the anchor to `address`. */
+  pickRange(address: string): void {
+    const to = this.data.get(this.ownerOf(address));
+    const from = this.data.get(this.pickAnchor ?? this.ownerOf(address));
+    if (!to || !from) return;
+    this.pick(
+      this.ownersIn(Math.min(from.col, to.col), Math.min(from.row, to.row), Math.max(from.col + from.span.cols - 1, to.col + to.span.cols - 1), Math.max(from.row + from.span.rows - 1, to.row + to.span.rows - 1)),
+      from.address,
+    );
+  }
+
+  /** The blocks (by owner) that touch a rectangle of cells; board squares are left out. */
+  private ownersIn(c1: number, r1: number, c2: number, r2: number): string[] {
+    const owners = new Set<string>();
+    for (let r = Math.max(0, r1); r <= Math.min(r2, this.rowCount - 1); r++) {
+      for (let c = Math.max(0, c1); c <= Math.min(c2, this.colCount - 1); c++) {
+        const a = formatAddress(c, r);
+        if (!this.isBoardAddress(a)) owners.add(this.ownerOf(a));
+      }
+    }
+    return [...owners];
+  }
+
+  /** Keeps the picked cells on their cells when content moves or rows shift. */
+  private remapPicked(map: (address: string) => string): void {
+    const next = [...this.picked].map(map);
+    const anchor = this.pickAnchor ? map(this.pickAnchor) : null;
+    if (next.every((a, i) => a === [...this.picked][i]) && anchor === this.pickAnchor) return;
+    this.pick(next, anchor);
+  }
+
+  /** True for the one picked code block: the only sheet cell that wears resize handles. */
+  hasHandles(cell: Cell): boolean {
+    const id = cell.getId() ?? '';
+    if (!id.startsWith('sheet:')) return false;
+    const address = id.slice(6);
+    return this.picked.size === 1 && this.picked.has(address) && !!this.data.get(address)?.code.trim();
+  }
+
+  /** Puts maxGraph's resize handles on the one picked code block, and takes them off everything else. */
+  syncHandles(): void {
+    const only = this.picked.size === 1 ? [...this.picked][0] : null;
+    const cell = only && this.data.get(only)?.code.trim() ? this.cells.get(only) : undefined;
+    const now = this.graph.getSelectionCells();
+    const mine = now.filter((c) => (c.getId() ?? '').startsWith('sheet:'));
+    if (cell) {
+      if (!(now.length === 1 && now[0] === cell)) this.graph.setSelectionCell(cell);
+    } else if (mine.length) {
+      this.graph.setSelectionCells(now.filter((c) => !mine.includes(c)));
+    }
   }
 
   // ------------------------------------------------------------ content drag
@@ -1276,6 +1595,7 @@ export class Sheet {
     const uid = from.uid;
     const visual = from.codeVisual;
     const memory = from.memory;
+    const shape = from.shape;
     const touched: string[] = [];
     for (const d of [from, to]) {
       for (let r = d.row; r < d.row + rows; r++) for (let c = d.col; c < d.col + cols; c++) touched.push(formatAddress(c, r));
@@ -1285,20 +1605,24 @@ export class Sheet {
       from.uid = '';
       from.codeVisual = {};
       from.memory = {};
+      from.shape = emptyShape();
       from.runCount = 0;
       from.output = [];
       from.plot = null;
       from.tiles = null;
+      from.scene = null;
       from.viewText = null;
       from.error = null;
       this.setSpan(fromAddress, 1, 1);
       to.code = code;
       to.uid = uid;
       to.memory = memory;
+      to.shape = shape;
       to.codeVisual = visual;
       to.output = [];
       to.plot = null;
       to.tiles = null;
+      to.scene = null;
       to.viewText = null;
       to.error = null;
       this.setSpan(toAddress, cols, rows);
@@ -1349,6 +1673,8 @@ export class Sheet {
     const toVisual = to.codeVisual;
     const fromMemory = from.memory;
     const toMemory = to.memory;
+    const fromShape = from.shape;
+    const toShape = to.shape;
     const fromRuns = from.runCount;
     const toRuns = to.runCount;
 
@@ -1357,20 +1683,24 @@ export class Sheet {
       to.uid = fromUid;
       to.codeVisual = fromVisual;
       to.memory = fromMemory;
+      to.shape = fromShape;
       to.runCount = fromRuns;
       to.output = [];
       to.plot = null;
       to.tiles = null;
+      to.scene = null;
       to.viewText = null;
       to.error = null;
       from.code = toCode;
       from.uid = toUid;
       from.codeVisual = toVisual;
       from.memory = toMemory;
+      from.shape = toShape;
       from.runCount = toRuns;
       from.output = [];
       from.plot = null;
       from.tiles = null;
+      from.scene = null;
       from.viewText = null;
       from.error = null;
       this.refreshCell(fromAddress);
@@ -1397,12 +1727,28 @@ export class Sheet {
     return { x: me.getGraphX() / view.scale - view.translate.x, y: me.getGraphY() / view.scale - view.translate.y };
   }
 
+  /** Is this press on one of the green resize handles of the picked block? Then the handle owns the drag, not the content drag. */
+  private onResizeHandle(me: InternalMouseEvent): boolean {
+    const cell = this.graph.getSelectionCell();
+    if (!cell || !(cell.getId() ?? '').startsWith('sheet:')) return false;
+    const handler = this.graph.getPlugin<SelectionCellsHandler>('SelectionCellsHandler')?.getHandler(cell);
+    return handler instanceof VertexHandler && handler.getHandleForEvent(me) != null;
+  }
+
   private onContentMouseDown(me: InternalMouseEvent): void {
-    if (this.contentDrag) return;
+    if (this.contentDrag || this.rubber || this.onResizeHandle(me)) return;
     const id = me.getCell()?.getId() ?? '';
     if (!id.startsWith('sheet:')) return;
     const address = id.slice(6);
-    if (!this.draggable(address)) return;
+    const event = me.getEvent() as MouseEvent;
+    if (!this.draggable(address) || event.altKey) {
+      // Not a block to carry (an empty cell, or Alt held): a press and drag here draws a rubber band around cells.
+      if (event.button === 0 && !this.isBoardAddress(address) && !this.fingerIsScrolling(me)) {
+        const additive = event.ctrlKey || event.metaKey || event.shiftKey;
+        this.rubber = { startX: me.getGraphX(), startY: me.getGraphY(), active: false, additive, base: new Set(this.picked), box: null };
+      }
+      return;
+    }
     if (this.fingerIsScrolling(me)) return;
     const cell = this.cells.get(address)!;
     const geo = cell.getGeometry()!;
@@ -1439,7 +1785,51 @@ export class Sheet {
     me.consume();
   }
 
+  /** The rubber band grows with the pointer and picks the cells it touches. */
+  private onRubberMove(me: InternalMouseEvent): void {
+    const band = this.rubber;
+    if (!band) return;
+    const gx = me.getGraphX();
+    const gy = me.getGraphY();
+    if (!band.active) {
+      if (Math.hypot(gx - band.startX, gy - band.startY) < DRAG_THRESHOLD) return;
+      band.active = true;
+      band.box = document.createElement('div');
+      band.box.className = 'rubber-band';
+      this.container.append(band.box);
+    }
+    const x1 = Math.min(band.startX, gx);
+    const y1 = Math.min(band.startY, gy);
+    Object.assign(band.box!.style, { left: `${x1}px`, top: `${y1}px`, width: `${Math.abs(gx - band.startX)}px`, height: `${Math.abs(gy - band.startY)}px` });
+    const view = this.graph.getView();
+    const toModel = (v: number, t: number): number => v / view.scale - t;
+    const mx1 = toModel(x1, view.translate.x);
+    const my1 = toModel(y1, view.translate.y);
+    const mx2 = toModel(Math.max(band.startX, gx), view.translate.x);
+    const my2 = toModel(Math.max(band.startY, gy), view.translate.y);
+    const hit = this.ownersIn(Math.floor((mx1 - ORIGIN_X) / CW), Math.floor((my1 - ORIGIN_Y) / CH), Math.floor((mx2 - ORIGIN_X) / CW), Math.floor((my2 - ORIGIN_Y) / CH));
+    this.pick(band.additive ? [...band.base, ...hit] : hit);
+    me.consume();
+  }
+
+  private onRubberUp(me: InternalMouseEvent): void {
+    const band = this.rubber;
+    if (!band) return;
+    this.rubber = null;
+    band.box?.remove();
+    if (!band.active) return; // a plain click: the normal CLICK path handles it
+    this.rubberEndedAt = performance.now();
+    me.consume();
+  }
+
+  /** Stops a rubber band that the browser took away (a cancelled pointer, a lost focus). */
+  private cancelRubber(): void {
+    this.rubber?.box?.remove();
+    this.rubber = null;
+  }
+
   private onContentMouseUp(me: InternalMouseEvent): void {
+    this.onRubberUp(me);
     const drag = this.contentDrag;
     if (!drag) return;
     this.contentDrag = null;
@@ -1517,9 +1907,11 @@ export class Sheet {
           output: [],
           plot: null,
           tiles: null,
+          scene: null,
           viewText: null,
           codeVisual: {},
           span: { cols: 1, rows: 1 },
+          shape: emptyShape(),
           error: null,
           memory: {},
           runCount: 0,
@@ -1548,6 +1940,7 @@ export class Sheet {
           dst.code = src.code;
           dst.uid = src.uid;
           dst.memory = src.memory;
+          dst.shape = src.shape;
           dst.runCount = src.runCount;
         }
       }
@@ -1556,6 +1949,7 @@ export class Sheet {
         fresh.code = '';
         fresh.uid = '';
         fresh.memory = {};
+        fresh.shape = emptyShape();
         fresh.runCount = 0;
       }
 
@@ -1567,6 +1961,7 @@ export class Sheet {
           d.output = [];
           d.plot = null;
           d.tiles = null;
+          d.scene = null;
           d.viewText = null;
           d.codeVisual = {};
           d.span = { cols: 1, rows: 1 };
@@ -1620,9 +2015,11 @@ export class Sheet {
     if (changed) this.depGraph.markDirty(codeNode(address));
     if (!code.trim()) {
       d.memory = {};
+      d.shape = emptyShape();
       d.output = [];
       d.plot = null;
       d.tiles = null;
+      d.scene = null;
       d.viewText = null;
       d.codeVisual = {};
       this.setSpan(address, 1, 1);
@@ -1660,6 +2057,13 @@ export class Sheet {
     if (!ctx) return;
     ctx.cancel();
     this.contexts.delete(address);
+  }
+
+  /** Stops every cell and takes the drawing apart (a tab was closed). The sheet cannot be used afterwards. */
+  destroy(): void {
+    for (const address of [...this.contexts.keys()]) this.stopTasks(address);
+    this.setSuspended(true);
+    this.graph.destroy();
   }
 
   /** How many timers and handlers a cell currently owns. */
@@ -1767,6 +2171,7 @@ export class Sheet {
             d.output = [];
             d.plot = null;
             d.tiles = null;
+            d.scene = null;
             if (d.code) d.viewText = null;
             d.error = null;
             d.codeVisual = {};

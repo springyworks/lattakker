@@ -26,6 +26,7 @@ Live demo: https://springyworks.github.io/lattakker/
   - [6.2 Long sheets](#62-long-sheets)
   - [6.3 Tabs and cell paths: where am I?](#63-tabs-and-cell-paths-where-am-i)
   - [6.4 Working together (Share)](#64-working-together-share)
+  - [6.5 Your own tabs and the Monitor](#65-your-own-tabs-and-the-monitor)
 - [7 Your first program (start here)](#7-your-first-program-start-here)
 - [8 Programmer's manual: the cell API](#8-programmers-manual-the-cell-api)
   - [8.1 Output and looks](#81-output-and-looks)
@@ -42,6 +43,9 @@ Live demo: https://springyworks.github.io/lattakker/
   - [8.12 The weather](#812-the-weather)
   - [8.13 The model on this computer (Ollama)](#813-the-model-on-this-computer-ollama)
   - [8.14 Input from the person: the input global](#814-input-from-the-person-the-input-global)
+  - [8.15 Animated drawings: the svg global](#815-animated-drawings-the-svg-global)
+  - [8.16 How this computer is doing: the system global](#816-how-this-computer-is-doing-the-system-global)
+  - [8.17 Making tabs from code: the tabs global](#817-making-tabs-from-code-the-tabs-global)
 - [9 How the cell code is run (internals)](#9-how-the-cell-code-is-run-internals)
   - [9.1 When does a cell run?](#91-when-does-a-cell-run)
   - [9.2 Is this reactive programming?](#92-is-this-reactive-programming)
@@ -293,7 +297,8 @@ separator** between the code and the output up or down: the output scales with t
 [↑ Contents](#contents)
 
 The strip at the top of the page is drawn by maxGraph, like the rest of the
-page: **🎲 Game board**, **🧪 Lab** and **📚 Examples**. Each of the three is a
+page: **🎲 Game board**, **🧪 Lab**, **📚 Examples** and **📡 Monitor**, then the tabs you
+add yourself (see [6.5](#65-your-own-tabs-and-the-monitor)). Each of them is a
 sheet with code cells (the Examples notebook has big blocks, see below), and all
 have cells named `A1`,
 `J24` and so on. So a bare address only makes sense *inside one tab*. To name a
@@ -304,7 +309,7 @@ means "inside":
 |---|---|
 | `J24` | the cell J24 of the tab you are in (what code normally writes) |
 | `J24/3,4` | tile x=3, y=4 of the grid inside block J24 (see `grid()` in [8.1](#81-output-and-looks)) |
-| `/lab/J24` | absolute: tab first (`board`, `lab`, `examples`), so it works from every tab |
+| `/lab/J24` | absolute: tab first (`board`, `lab`, `examples`, `monitor`, or a tab of your own), so it works from every tab |
 | `/lab/J24/3,4` | the same tile, absolute |
 | `@c-1a2b3c4d` | a cell by its **identity** (its `uid`), which follows the code when the cell moves |
 | `lattakker:///lab/J24` | an absolute path as a URI (what tools use) |
@@ -367,6 +372,34 @@ across the internet*, which uses a public STUN server (a helper that tells each
 browser how it looks from outside); that is the only time the page contacts
 another server, and only if you tick the box. The page never shares anything
 unless a session is running.
+
+### 6.5 Your own tabs and the Monitor
+
+[↑ Contents](#contents)
+
+**＋** at the end of the tab strip makes a new tab: ask for a name and you get a
+sheet of its own with everything the others have (cells, blocks, editors, the whole
+cell API). Its cells are named with the tab's id (`Plots` becomes `/plots/A1`), and
+the tab is an MCP server of that name, so other tabs, AI helpers and tools can reach
+it. **Right-click a tab** to rename or close it (closing a tab with code asks twice,
+and deletes its cells). Up to 12 tabs of your own; this browser remembers them.
+Tabs can also be made from code (`tabs.ensure('plots', 'Plots')`, see
+[8.17](#817-making-tabs-from-code-the-tabs-global)) and over MCP (the server `tabs`).
+
+**📡 Monitor** is a tab of the page itself (it cannot be closed): the router drawing
+from `resources/router-architecture-Lattakker-gemini-svg.svg`, alive. Every message
+that crosses the MCP router lights up the box it goes to and sends a dot along its
+line. Next to it, live graphs of this computer (processor and graphics card load,
+temperatures, memory, frames per second), the router's messages per second and the
+weather. They are ordinary cells: change them, copy them into a tab of your own.
+Right-click the Monitor tab (or press **↺ Restore monitor**) to put the starting cells
+back.
+
+A web page cannot see the processor or the temperatures of the computer it runs on.
+While the page is served by the dev server (`npm run dev`) that server reads them
+(`/proc`, `/sys`, `nvidia-smi` on Linux) and offers them to this computer only
+(`/__lattakker/system`). On the published page the Monitor shows what a browser can
+tell (cores, frames per second, battery) and says so.
 
 ## 7 Your first program (start here)
 
@@ -508,7 +541,7 @@ Top-level `await` works. The editor shows these names with help text as you type
 | `view(text)` | Replace what is shown in view mode (default: the code itself). |
 | `color(fill)` | Background colour, e.g. `'#ffd6e7'` or `'lightgreen'`. |
 | `log(...values)` | Like `print`, and also writes to the browser console. |
-| `span(cols?, rows?)` | Merge the cell over `cols` x `rows` cells (never over the board). Leave one out to keep it: `span(4)` keeps the rows. With no arguments it changes nothing and returns `{ cols, rows }`. |
+| `span(cols?, rows?)` | The size this cell wants by default: merge it over `cols` x `rows` cells (never over the board). Leave one out to keep it: `span(4)` keeps the rows. With no arguments it changes nothing and returns `{ cols, rows }`. If the person resizes the block by hand, their size is kept and a plain `span(4, 2)` line is updated to match; change the numbers yourself and your size wins again (see below). |
 
 ```ts
 span(4, 3)
@@ -522,10 +555,34 @@ it to see the cell at its real size (a bit scaled up) while you keep typing;
 click again to shrink it. It follows the cell live, so a timer or a plot that
 redraws keeps moving there too.
 
-The cell's size can be set (and read) from code. Dragging a cell border to
-resize it is deliberately not offered: rewriting your `span(...)` line behind
-your back would fight with the code you are typing. The code is the single
-source of truth for the size.
+The cell's size can be set (and read) from code, and changed by hand. `span(4, 2)` is
+the size the code *wants by default*; the person can also resize the block with the
+green handles of the picked block (east, south and south-east; they snap to whole
+cells) or make a block from picked cells (8.1.1). Who decides is one rule, kept in
+`src/sheet/shape.ts`:
+
+- Nobody said anything: the block keeps its shape (1 × 1 for a new cell).
+- Only the code spoke: the code's size is used.
+- The person spoke: their size is kept for as long as the code keeps asking for the
+  same size. When the code's own numbers change (you edited them, or the code
+  computes something else) the code speaks again and wins.
+- When the person resizes a block whose code has a plain `span(4, 2)` line, that line
+  is rewritten to the new numbers (never while the cell's editor is open, and never
+  anything but a plain line of numbers), so the code and the screen never disagree.
+  Code without a `span` line is left alone; the shape is simply remembered (and
+  saved with the cell).
+- Other code or the board in the way limits a resize: the biggest size that fits is
+  used, and the status line says so.
+
+#### 8.1.1 Picking cells
+
+The usual gestures: drag over empty cells for a **rubber band** (Alt+drag starts one
+over code cells too), **Shift+click** for the rectangle from the first cell,
+**Ctrl+click** to add or remove one cell. Picked cells wear the amber frame (empty ones
+are tinted). **Enter** makes one block of the picked cells and opens the editor on it
+(or edits the one picked cell), **Delete** clears the picked cells with code (press
+twice; cells that other cells still read stay), **Esc** lets go. The cell menu has the
+same actions: *Make one block of these cells*, *Run*, *Clear*.
 
 ### 8.2 The cell itself and other cells
 
@@ -938,6 +995,65 @@ uses a value inside the function**: the cell does not re-run by itself when a
 control changes. Keys are only heard while the person is not typing in a box or an
 editor. A cell can have 24 controls, the page 60. See the Lab's **R35** (arrow
 keys), **A41** and **J41** (text boxes).
+
+### 8.15 Animated drawings: the svg global
+
+[↑ Contents](#contents)
+
+SVG is a picture written as text. `svg()` puts one in a cell or block and gives back
+a handle to find its parts by `id`, move, turn, recolour and animate them.
+
+```ts
+span(5, 5)
+const pic = svg(svg.asset('stickman'))                   // a drawing that comes with the app
+const arm = pic.el('armR').pivot('top')                   // find a part; pivot = where it turns
+await arm.animate({ rotate: -140 }, { time: '300ms', ease: 'bounce' })
+pic.el('head').on('click', () => pic.el('speech').text('Hello!'))
+pic.frame((t, dt) => pic.el('man').move(Math.sin(t) * 20, 0))   // every screen frame (about 60 a second)
+```
+
+- `svg(markup)` shows the drawing; `svg()` alone is a blank one (`pic.add('circle', { cx, cy, r })`,
+  `pic.write(x, y, 'words')`, `pic.viewBox(...)`, `pic.clear()`).
+- Parts: `attr`, `text`, `fill`, `stroke`, `opacity`, `show`/`hide`, `bbox`, `move`, `rotate`, `scale`,
+  `pivot`, `add`, `remove`, `on(event, fn)`. A drawing can set a pivot itself with `data-pivot="x y"`.
+- `animate(props, options)` changes properties smoothly: `x`, `y` (move), `rotate`, `scale`, `opacity`,
+  any attribute (numbers and colours), and `along: '#path-id'` to ride a path.
+  Options: `time`, `ease` (`linear`, `in`, `out`, `inOut`, `bounce`, `elastic`, `back`), `delay`, `loop`,
+  `yoyo`, `reverse`. It returns something you can `await`, with `.stop()`.
+- `svg.asset('stickman')` and `svg.asset('router-architecture')` come with the app (see `svg.assets()`).
+  The router drawing is the file in `resources/`; its boxes get the ids `node-board`, `node-lab`,
+  `node-weather` ... and its lines `link-board` ... when it is loaded.
+- Scripts, `on...` attributes and `javascript:` links in a drawing are removed. Handlers and frames stop
+  when the cell runs again. See the Lab's **A47** (the stickman) and the Monitor's **A1**.
+
+### 8.16 How this computer is doing: the system global
+
+[↑ Contents](#contents)
+
+```ts
+const s = await system.read()        // { source, cpu: { load, cores, model, temp }, memory, gpu, temps, browser: { fps, ... } }
+print(await system.text())            // 'CPU 31% 57°C, memory 24%, GPU 27% 28°C, 60 fps'
+every('1s', async () => { await system.read(); plot(system.series('cpu', 60)) })   // 'cpu', 'cpuTemp', 'gpu', 'gpuTemp', 'memory', 'fps'
+```
+
+`source` says where the numbers come from: `'dev-server'` (measured, see
+[6.5](#65-your-own-tabs-and-the-monitor)) or `'browser'` (only what a browser tells; the rest is
+`null`). `series()` fills while somebody calls `read()`. Over MCP: server `system`, tools `read`, `history`.
+
+### 8.17 Making tabs from code: the tabs global
+
+[↑ Contents](#contents)
+
+```ts
+tabs.ensure('plots', 'Plots', { icon: '📈', cells: { A1: 'plot([1, 4, 9])' } })   // made once, safe to run again
+const t = tabs.create('Scratch')     // a new tab every time: { id: 'scratch', title, icon, builtin, active, cells }
+tabs.list(); tabs.rename('scratch', 'Notes'); tabs.select('plots'); tabs.close('scratch')
+```
+
+Use `ensure` in a cell that can run again; `create` makes one more tab on every run. The page's own
+tabs (`board`, `lab`, `examples`, `monitor`) cannot be renamed or closed. Over MCP: server `tabs`, tools
+`list`, `create`, `ensure`, `rename`, `close`, `select`. The built-in AI helper may list and select tabs;
+making, renaming and closing them needs the helper setting that lets it write code.
 
 ## 9 How the cell code is run (internals)
 
@@ -1767,7 +1883,10 @@ src/ui/           Control panel, phone dock, touch gestures, the tab strip (Tabs
 src/mcp/          The MCP layer: router.ts (the page's message router and traffic log), tabServer.ts (one MCP server per tab)
 src/workspace.ts  The workspace: every tab, cell paths (/lab/J24, @uid), where you and the other person are
 src/share/        Sharing: link.ts (the WebRTC link and its copy-paste codes), session.ts (what travels, and the checks on it)
-src/lab.ts        The Lab tab: a second sheet, its toolbar and saving; labDemos.ts holds its demo cells
+src/sheetTab.ts   A tab with a sheet of its own (toolbar, saving), used by the Lab, the Monitor and every tab you add; lab.ts and labDemos.ts (the Lab), monitorDemos.ts (the Monitor)
+src/tabManager.ts Tabs that come and go: the ＋ and the right-click menu, tabs.* in cells, MCP server `tabs` (services/tabsServer.ts)
+src/sheet/svgScene.ts, svgAssets.ts   The animated-SVG engine (the svg global) and the drawings that come with the app
+src/services/system.ts + scripts/system-stats.ts   How this computer is doing (the system global; the dev server reads /proc, /sys, nvidia-smi)
 src/storage.ts    Saves and restores the game and cells in localStorage
 src/ai/           window.mms, WebMCP tools, the text copy for AI helpers, and bridge.ts (the page end of /mcp)
 src/aichat/       The built-in helper: providers.ts (local OpenAI-compatible server, Gemini), tools.ts (what it may do, over the page's MCP), agent.ts, ui.ts (side chat + pop-up + settings), watcher.ts (the // AI: lines), config.ts (settings; keys stay in memory)

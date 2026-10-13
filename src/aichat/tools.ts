@@ -151,7 +151,7 @@ export const TOOL_DECLS: ToolDecl[] = [
   {
     name: 'mcp_call',
     description:
-      'Talk MCP to the app directly, like any MCP client. Every tab is an MCP server (its id is the server name: "board", "lab", "examples"), and so are "router" (statistics, catalog, recent traffic), "memory" (notes and the little database), "weather" (tools now, forecast, find), "ollama" (the model on this computer: status, models, ask), "local-ai" (the second brain, if there is one) and "status" (what is going on right now). Methods: "resources/list" (the cells), "resources/read" with {"uri":"lattakker:///board/A12"}, "tools/list", "tools/call" with {"name":"get_cell"|"list_cells"|"run_cell"|"click"|"flash"|"signal","arguments":{...}}. Changing a cell\'s code is not allowed here: use suggest_code, so the person decides.',
+      'Talk MCP to the app directly, like any MCP client. Every tab is an MCP server (its id is the server name: "board", "lab", "examples", "monitor", and tabs the person made), and so are "router" (statistics, catalog, recent traffic), "memory" (notes and the little database), "weather" (tools now, forecast, find), "ollama" (the model on this computer: status, models, ask), "system" (CPU, memory, temperatures, graphics card: read, history), "tabs" (list, select; create, rename, close need write permission), "local-ai" (the second brain, if there is one) and "status" (what is going on right now). Methods: "resources/list" (the cells), "resources/read" with {"uri":"lattakker:///board/A12"}, "tools/list", "tools/call" with {"name":"get_cell"|"list_cells"|"run_cell"|"click"|"flash"|"signal","arguments":{...}}. Changing a cell\'s code is not allowed here: use suggest_code, so the person decides.',
     parameters: {
       type: 'object',
       properties: {
@@ -489,6 +489,9 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
           } catch {
             return asText({ error: 'params_json must be JSON text for an object, e.g. {"uri":"lattakker:///board/A12"}' });
           }
+        }
+        if (server === 'tabs' && method === 'tools/call' && String(params.name ?? '') !== 'list' && String(params.name ?? '') !== 'select' && !getSettings().allowWrite) {
+          return asText({ error: 'Making, renaming and closing tabs is switched off for you (a grown-up can allow it in the helper settings, "Let the helper write code"). You can list tabs and select one; ask the person to use the ＋ in the tab strip.' });
         }
         if (method === 'tools/call' && String(params.name ?? '') === 'set_code') return asText({ error: 'set_code is not allowed for you. Use suggest_code: the person looks at the code and decides.' });
         return limit(asText(await router.request(CLIENT, server, method, params)));

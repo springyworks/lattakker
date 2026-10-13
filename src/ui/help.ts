@@ -122,7 +122,7 @@ function cellTopic(ctx: HelpContext): HTMLElement[] {
   const tab = at ? workspace.get(at.tab) : undefined;
   const d = at && tab ? tab.sheet.dataAt(at.address) : undefined;
   if (!at || !tab || !d) {
-    out.push(para('A cell is one square of the sheet. It can hold a small program that draws, prints, plays or reacts to the game.'), list(['Click a cell to pick it, then press F1 again: I will tell you what it does.', 'Double-click a cell to write code in it.', 'Hover a cell and open its ⋮ menu for more.']));
+    out.push(para('A cell is one square of the sheet. It can hold a small program that draws, prints, plays or reacts to the game.'), list(['Click a cell to pick it, then press F1 again: I will tell you what it does.', 'Double-click a cell to write code in it.', 'Drag over empty cells to pick a group, then press Enter: they become one block to write in.', 'Hover a cell and open its ⋮ menu for more.']));
     return out;
   }
   const path = workspace.pathOf(at.tab, at.address);
@@ -169,7 +169,7 @@ const TOPICS: Record<string, Topic> = {
     title: '👋 Start here',
     build: () => [
       para('This page is a game board and a spreadsheet at once. The cells hold small programs (TypeScript) that you can read, change and run.'),
-      list(['🎲 Game board: play Lattakker, and write cells under the board.', '🧪 Lab: live demos. Double-click one to change it.', '📚 Examples: a notebook of ideas to copy.', '🤖 AI: a helper that can explain, go to a cell, run it, even write for you.']),
+      list(['🎲 Game board: play Lattakker, and write cells under the board.', '🧪 Lab: live demos. Double-click one to change it.', '📚 Examples: a notebook of ideas to copy.', '📡 Monitor: the page and this computer, live (graphs and an animated drawing).', '➕ Make a tab of your own with the + at the end of the tabs.', '🤖 AI: a helper that can explain, go to a cell, run it, even write for you.']),
       para('Press F1 any time to get help for the thing you are pointing at. Every ? button does the same.'),
       actions(['👀 Show me around', startTour], ['🤖 Open the helper', () => aiBridge.toggleSide()]),
     ],
@@ -224,7 +224,7 @@ const TOPICS: Record<string, Topic> = {
     id: 'tabs',
     title: '🧭 Moving around',
     build: () => [
-      para('The tabs at the top are the pages. The grey chip on the right says where you are, like /lab/A16. That is a cell path: it works from every tab.'),
+      para('The tabs at the top are the pages. The + makes a tab of your own (right-click a tab to rename or close it). The grey chip on the right says where you are, like /lab/A16. That is a cell path: it works from every tab.'),
       list(['◀ ▶ (or Alt+← and Alt+→) go back and forward through the places you visited.', 'Blue dotted names are links: click one to fly to that cell.', 'Type a cell like Q120 in the “Go to” box to jump around a long sheet.']),
       actions(['👀 Show me the tabs', () => spotlight(hooks.stripRect('tabs'), 'Pages')], ['👀 Show me ◀ ▶', () => spotlight(hooks.stripRect('back'), 'Back and forward')], ['👀 Show me my place', () => spotlight(hooks.stripRect('path'), 'Where you are (click to copy)')]),
     ],
@@ -246,10 +246,16 @@ const TOPICS: Record<string, Topic> = {
         ['Alt+Shift+I', 'the helper, small, next to the cell'],
         ['Alt+← / Alt+→', 'back / forward through your places'],
         ['Double-click', 'edit a cell'],
+        ['Drag over cells', 'pick a group (a rubber band)'],
+        ['Shift+click', 'pick everything from the first cell to this one'],
+        ['Ctrl+click', 'add or remove one cell'],
+        ['Enter', 'edit the picked cell, or make one block of the picked cells'],
+        ['Delete', 'clear the picked cells (press twice)'],
         ['Ctrl+Enter', 'run a cell again'],
-        ['Esc', 'run and close the editor, or close a pop-up'],
+        ['Esc', 'let go of the picked cells, or run and close the editor'],
         ['Shift+F1', 'help inside the code editor'],
       ]),
+      para('The green squares on a picked block are handles: drag one to make the block bigger or smaller. If its code has a line like span(4, 2), the numbers follow.'),
     ],
   },
 };
@@ -269,7 +275,7 @@ function sheetCorner(): DOMRect | null {
 
 function startTour(): void {
   const steps: Step[] = [
-    { rect: () => hooks.stripRect('tabs'), text: 'These tabs are the pages: the game, the Lab and the Examples.' },
+    { rect: () => hooks.stripRect('tabs'), text: 'These tabs are the pages: the game, the Lab, the Examples and the Monitor. The + makes a tab of your own.' },
     { rect: () => hooks.stripRect('path'), text: 'This says where you are, as a cell path. Click it to copy it.' },
     { rect: () => hooks.stripRect('ai'), text: 'The AI helper lives here (Alt+I). Ask it to explain, go to a cell, run it or write code.' },
     { rect: sheetCorner, text: 'Cells hold small programs. Double-click one to write code, hover it for its ⋮ menu.' },

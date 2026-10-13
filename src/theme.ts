@@ -36,6 +36,8 @@ export const THEME = {
   arrowRed: '#c58b1f',
   arrowBlue: '#1f9a8a',
   selectFill: '#f2e4bd',
+  /** The tint of empty cells inside a group of picked cells. */
+  pickFill: '#fbf0d0',
   moveFill: '#d9e8dd',
   moveStroke: '#3f7a55',
   attackFill: '#f0d8d5',

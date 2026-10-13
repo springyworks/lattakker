@@ -1388,4 +1388,85 @@ if (!s.ready) {
   })
 }`,
   ],
+  [
+    'A47',
+    String.raw`// A STICKMAN made of SVG. SVG is a picture written as text. svg() puts a picture in
+// this block and hands you its parts, so you can move, turn and animate them.
+// Click him: he jumps and waves. The slider in the Inputs panel changes how fast he walks.
+
+// The block is 5 cells wide and 5 tall.
+span(5, 5)
+
+// svg.asset('stickman') is a picture that comes with the app. Its parts have names:
+// man, head, body, armL, armR, legL, legR and speech.
+// svg(...) shows it here and gives back "pic", the handle to the whole picture.
+const pic = svg(svg.asset('stickman'))
+
+// pic.el('name') finds one part. We keep the ones we want to move in boxes.
+const man = pic.el('man')
+const armL = pic.el('armL')
+const armR = pic.el('armR')
+const legL = pic.el('legL')
+const legR = pic.el('legR')
+const speech = pic.el('speech')
+
+// How fast he walks. The slider changes it while he walks.
+let speed = 5
+input.slider('walking speed', { min: 0, max: 12, value: 5 }, (v) => (speed = v))
+
+// While he jumps and waves, the walking pauses.
+let busy = false
+
+// How far along the walk he is. It grows a little with every frame.
+let phase = 0
+
+// pic.frame(fn) runs fn for every frame of the screen, about 60 times a second.
+// dt is the time since the last frame, in seconds.
+pic.frame((t, dt) => {
+  // Nothing to do while he is jumping.
+  if (busy) return
+
+  // Sin goes back and forth between -1 and 1: just like a leg swinging.
+  phase += dt * speed
+  const swing = Math.sin(phase) * 28
+
+  // rotate(degrees) turns a part around its joint (the picture says where it is).
+  // The legs and arms swing the opposite way, like when you really walk.
+  legL.rotate(swing)
+  legR.rotate(-swing)
+  armL.rotate(-swing * 0.8)
+  armR.rotate(swing * 0.8)
+
+  // move(x, y) slides the whole man a little: a small bounce with every step.
+  man.move(0, -Math.abs(Math.sin(phase)) * 3)
+})
+
+// man.on('click', fn) runs fn when somebody clicks the man.
+man.on('click', async () => {
+  // Ignore clicks while he is already doing it.
+  if (busy) return
+  busy = true
+
+  // text() writes words into the speech bubble.
+  speech.text('Hello!')
+
+  // animate(what, how) changes things smoothly. "await" waits until it is finished.
+  // y: -40 means: 40 up. ease 'out' starts fast and ends slow, like a real jump.
+  await man.animate({ y: -40 }, { time: '250ms', ease: 'out' })
+
+  // The right arm goes up, and then waves 6 times: loop 6 and yoyo (back and forth).
+  armR.animate({ rotate: -150 }, { time: '200ms' })
+
+  // He falls down again. 'bounce' makes him bounce a little when he lands.
+  await man.animate({ y: 0 }, { time: '400ms', ease: 'bounce' })
+  await armR.animate({ rotate: -110 }, { time: '150ms', loop: 6, yoyo: true })
+
+  // Quiet again, and the walking goes on.
+  speech.text('')
+  busy = false
+})
+
+// A line of text under the picture.
+print('Click the man')`,
+  ],
 ];

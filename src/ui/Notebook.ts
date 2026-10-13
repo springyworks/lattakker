@@ -6,7 +6,7 @@ import { formatAddress } from '../sheet/address';
 import { clickNode } from '../sheet/reactivity';
 import { createNotebookEditor, modelFor, monaco } from '../editor/monaco';
 import { exampleTemplate } from '../exampleTemplate';
-import { loadExamplesSaved, startExamplesAutoSave } from '../storage';
+import { loadExamplesSaved, restoreCells, startExamplesAutoSave } from '../storage';
 import type { GameView } from '../game/GameView';
 import { MAX_COLS } from '../sheet/Sheet';
 import { SheetPane, type Tone } from './SheetPane';
@@ -474,7 +474,7 @@ export function createNotebook(view: GameView, board: NotebookBoard, examples: R
     const lastRow = saved.cells.reduce((m, [a]) => Math.max(m, Number(/\d+/.exec(a)?.[0] ?? 1)), 0);
     ensureRows(Math.min(500, lastRow + 1));
     if (saved.cols && saved.cols > sheet.colCount) sheet.addColumns(Math.min(saved.cols, MAX_COLS) - sheet.colCount);
-    for (const [address, code, uid] of saved.cells) sheet.setCode(address, code, uid);
+    restoreCells(sheet, saved.cells);
     if (saved.mode === 'view') setMode('view');
   }
   startExamplesAutoSave(sheet);

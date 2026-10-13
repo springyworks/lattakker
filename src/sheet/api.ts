@@ -9,8 +9,12 @@ import { router, type Traffic } from '../mcp/router';
 import { SIGNAL } from '../mcp/tabServer';
 import { CancelError, parseInterval, type RunContext } from './tasks';
 import { makePlot, type PlotOptions } from './plot';
+import { SvgScene, type SceneHost } from './svgScene';
+import { svgAsset, svgAssetNames } from './svgAssets';
 import { buildCatalog } from '../mcp/routerServer';
 import { findPlaces, forecast as weatherForecast, summary as weatherSummary, weatherNow, type PlaceInput } from '../services/weather';
+import { tabManager, type CreateTabOptions } from '../tabManager';
+import { readSystem, summarize as systemSummary, systemSeries, type SeriesName } from '../services/system';
 import { ollamaAsk, ollamaChat, ollamaModels, ollamaStatus, type OllamaMessage, type OllamaOptions } from '../services/ollama';
 import { inputPanel, type ControlKind, type ControlSpec } from '../ui/InputPanel';
 
@@ -253,7 +257,8 @@ export function buildApi(
       span(cols?: number, rows?: number) {
         if (cols !== undefined || rows !== undefined) {
           markWrite(address);
-          sheet.setSpan(
+          // A default size: the person's own (handles, a selection) wins until these numbers change; see sheet/shape.ts.
+          sheet.requestSpan(
             address,
             cols === undefined ? d.span.cols : Number(cols) || 1,
             rows === undefined ? d.span.rows : Number(rows) || 1,
@@ -569,6 +574,30 @@ export function buildApi(
     forget = ctx.addTask(stop);
     return stop;
   };
+
+  /**
+   * svg(markup) shows a drawing in this cell (or block) that the code can find the parts of and animate; see svgScene.ts.
+   * svg() is a blank drawing, svg.asset('stickman') a drawing that comes with the app.
+   */
+  const svgApi = (() => {
+    const host: SceneHost = {
+      guard: () => ctx.guard(),
+      addTask: (stop) => ctx.addTask(stop),
+      wrap: (fn, stop) => callback(fn, stop),
+      changed: () => sheet.refreshSoon(data.address),
+    };
+    const make = (markup?: string | { width?: number; height?: number }): SvgScene => {
+      ctx.guard();
+      markWrite(data.address);
+      const scene = new SvgScene(markup, host);
+      data.scene = scene;
+      data.plot = null;
+      data.tiles = null;
+      sheet.refreshCell(data.address);
+      return scene;
+    };
+    return Object.assign(make, { asset: (name: string) => svgAsset(name), assets: () => svgAssetNames() });
+  })();
 
   const after = (first: unknown, second?: unknown): (() => void) => {
     ctx.guard();
@@ -888,6 +917,29 @@ export function buildApi(
     text: (place: PlaceInput) => cancellable(async () => weatherSummary((await weatherNow(place)))),
   };
 
+  const system = {
+    /** How this computer is doing now (CPU, memory, temperatures, graphics card). Asking twice within a moment gives the same answer. */
+    read: () => cancellable(() => readSystem()),
+    /** The last readings of one value, ready for plot(): 'cpu', 'cpuTemp', 'gpu', 'gpuTemp', 'memory' or 'fps'. Fills while somebody calls read(). */
+    series: (name: SeriesName, count = 60) => systemSeries(name, count),
+    /** One line for print(): 'CPU 31% 57°C, memory 24%, GPU 27% 28°C'. */
+    text: () => cancellable(async () => systemSummary(await readSystem())),
+  };
+
+  const tabs = {
+    /** The tabs, left to right: { id, title, icon, builtin, active, cells }. */
+    list: () => tabManager().list(),
+    /** A new tab with a sheet of its own. Its cells are named /<id>/A1. Careful: every run makes another one; tabs.ensure() does not. */
+    create: (title: string, options?: CreateTabOptions) => tabManager().create(title, options),
+    /** The tab with this id; made only when it is not there yet, so a cell that runs again does not pile up tabs. */
+    ensure: (id: string, title?: string, options?: Omit<CreateTabOptions, 'id'>) => tabManager().ensure(id, title, options),
+    rename: (id: string, title: string) => tabManager().rename(id, title),
+    /** Closes a tab of your own and deletes its cells. */
+    close: (id: string) => tabManager().close(id),
+    /** Brings a tab to the front. */
+    select: (id: string) => tabManager().select(id),
+  };
+
   const ollama = {
     /** Is the model server there, which models, and what to do when something is missing. Never throws. */
     status: () => cancellable(() => ollamaStatus()),
@@ -996,8 +1048,11 @@ export function buildApi(
     show: (...values: unknown[]) => void self.show(...values),
     span: (cols?: number, rows?: number) => self.span(cols, rows),
     grid,
+    svg: svgApi,
     mcp,
     weather,
+    system,
+    tabs,
     ollama,
     input,
     every,

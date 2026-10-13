@@ -15,9 +15,13 @@ import { fitBoardToWidth, installGrabGesture, installPinchZoom } from './ui/touc
 import { GAME_NODE } from './sheet/reactivity';
 import { SheetPane } from './ui/SheetPane';
 import { createLab } from './lab';
+import { createSheetTab } from './sheetTab';
+import { MONITOR_DEMOS } from './monitorDemos';
+import { TabManager, installTabManager } from './tabManager';
+import { loadTabSaved, startTabAutoSave } from './storage';
 import { installAiSurface } from './ai/surface';
 import { installAiChat } from './aichat';
-import { loadSaved, startAutoSave } from './storage';
+import { loadSaved, restoreCells, startAutoSave } from './storage';
 import { workspace } from './workspace';
 import { router } from './mcp/router';
 import { TabServer } from './mcp/tabServer';
@@ -206,6 +210,24 @@ workspace.register({ id: 'examples', title: 'Examples', sheet: notebook.sheet, e
 for (const tab of workspace.list()) new TabServer(tab, router);
 installServices();
 const tabs = new Tabs({ board: container, lab: lab.root, examples: notebook.root });
+
+// Tabs that come and go (the ＋ in the strip, tabs.create() in a cell, the MCP server "tabs") and the page's own Monitor tab.
+const tabManager = installTabManager(new TabManager(tabs, view, smallScreen, (text, tone) => hud.say(text, tone)));
+tabManager.makeBuiltIn(
+  { id: 'monitor', title: 'Monitor', icon: '📡', hint: 'The router drawing alive with the page\'s messages, and graphs of this computer' },
+  () =>
+    createSheetTab(view, smallScreen, {
+      id: 'monitor',
+      title: 'Monitor',
+      icon: '📡',
+      intro: 'The page and this computer, live: the router drawing, CPU, temperatures, messages per second. Change any cell.',
+      seed: MONITOR_DEMOS,
+      restoreLabel: '↺ Restore monitor',
+      load: () => loadTabSaved('monitor'),
+      startSave: (sheet) => startTabAutoSave('monitor', sheet),
+    }),
+);
+tabManager.restore();
 installHelp({ stripRect: (id) => tabs.strip.rectOf(id) });
 tabs.strip.onHelp = () => toggleHelp();
 const share = new ShareDialog(tabs.strip);
@@ -246,7 +268,7 @@ window.addEventListener('keydown', (e) => {
 if (restored && saved) {
   while (sheet.rowCount < saved.rows && sheet.rowCount < 500) sheet.insertRow(sheet.rowCount - 1);
   if (saved.cols && saved.cols > sheet.colCount) sheet.addColumns(Math.min(saved.cols, MAX_COLS) - sheet.colCount);
-  for (const [address, code, uid] of saved.cells) sheet.setCode(address, code, uid);
+  restoreCells(sheet, saved.cells);
   if (saved.mode === 'view') toggleMode();
 } else {
   loadExamples();
@@ -257,7 +279,7 @@ if (brought > 0) hud.say(`${brought} new or updated examples are on your sheet �
 scheduleSave = startAutoSave(view.game, sheet);
 
 // Expose a few handles for tinkering from the browser console / AI chats.
-Object.assign(window as unknown as Record<string, unknown>, { sheet, game: view.game, view, hud, loadExamples, tabs, lab: lab.sheet, labPane: lab.pane, workspace, share, mcpRouter: router, nav });
+Object.assign(window as unknown as Record<string, unknown>, { sheet, game: view.game, view, hud, loadExamples, tabs, lab: lab.sheet, labPane: lab.pane, workspace, share, mcpRouter: router, nav, tabManager });
 const surface = installAiSurface({ sheet, view, hud, editor });
 // The AI helper (chat, pop-up, "// AI:" watcher): silent until someone chooses a helper in its settings.
 installAiChat({ surface, strip: tabs.strip, say: (text) => hud.say(text, 'info') });

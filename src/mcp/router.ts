@@ -146,6 +146,11 @@ export class McpRouter {
     this.servers.set(server.name, server);
   }
 
+  /** A server goes away (its tab was closed). */
+  unregister(name: string): void {
+    this.servers.delete(name);
+  }
+
   /** The names of the servers that can be asked something. */
   names(): string[] {
     return [...this.servers.keys()];

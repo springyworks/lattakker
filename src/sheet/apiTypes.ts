@@ -62,7 +62,7 @@ interface CellRef {
   color(fill: string): CellRef;
   /** Text colour. */
   textColor(color: string): CellRef;
-  /** Merge this cell over cols x rows neighbours (not over the board). Leave one out to keep it. No arguments: just read the size. */
+  /** The size this cell wants by default: merge it over cols x rows neighbours (not over the board). Leave one out to keep it. No arguments: just read the size. If the person resizes the block (green handles) or makes it from picked cells, their size is kept and a plain "span(4, 2)" line is rewritten to match; change the numbers in the code and the code's size wins again. With no span() at all the block keeps the shape it has (1x1 for a new cell). */
   span(cols?: number, rows?: number): { cols: number; rows: number };
   /** How many columns / rows this cell covers now. Reading them makes your cell re-run when this cell is resized. */
   readonly cols: number;
@@ -324,6 +324,70 @@ interface WeatherApi {
   text(place: WeatherPlaceInput): Promise<string>;
 }
 
+interface SystemInfo {
+  /** 'dev-server' when the dev server measured it (real load and temperatures), 'browser' on the published page (only what the browser tells; the rest is null). */
+  source: 'dev-server' | 'browser';
+  time: number;
+  cpu: { load: number | null; cores: number; model: string; temp: number | null };
+  memory: { totalMb: number | null; usedMb: number | null } | null;
+  gpu: { name: string; load: number | null; temp: number | null; memUsedMb: number | null; memTotalMb: number | null; powerW: number | null; fanPercent: number | null } | null;
+  temps: { name: string; celsius: number }[];
+  loadAverage: number[];
+  uptimeSeconds: number | null;
+  browser: { fps: number | null; heapMb: number | null; online: boolean; network: string | null; battery: number | null; charging: boolean | null };
+}
+
+/**
+ * How this computer is doing: CPU load, memory, temperatures, the graphics card.
+ * Measured when the dev server runs; on the published page only browser facts (cores, fps, battery) are there.
+ * every('1s', async () => { const s = await system.read(); plot(system.series('cpu')) })
+ */
+interface SystemApi {
+  read(): Promise<SystemInfo>;
+  /** The last readings of one value, oldest first, ready for plot(). Fills while somebody calls read(). */
+  series(name: 'cpu' | 'cpuTemp' | 'gpu' | 'gpuTemp' | 'memory' | 'fps', count?: number): number[];
+  /** One line for print(): 'CPU 31% 57°C, memory 24%, GPU 27% 28°C'. */
+  text(): Promise<string>;
+}
+
+interface TabInfo {
+  id: string;
+  title: string;
+  icon: string;
+  /** The page's own tabs (board, lab, examples, monitor) cannot be renamed or closed. */
+  builtin: boolean;
+  active: boolean;
+  /** How many cells hold code. */
+  cells: number;
+}
+
+interface CreateTabOptions {
+  /** Lowercase letters, digits and "-" (default: made from the title). */
+  id?: string;
+  /** One emoji, default 📄. */
+  icon?: string;
+  /** Starting cells: { A1: 'print(1)', C1: '...' }. */
+  cells?: Record<string, string>;
+  /** Bring the new tab to the front (default true). */
+  select?: boolean;
+}
+
+/**
+ * The tabs of the page. A new tab is a sheet of its own: cells, blocks, the whole cell API. Its cells are named
+ * with the tab id: /plots/A1. Tabs are remembered by the browser.
+ * tabs.ensure('plots', 'Plots', { icon: '📈', cells: { A1: 'plot([1, 4, 9])' } })   // made once, safe to run again
+ * const t = tabs.create('Scratch'); print(t.id)   // 'scratch'
+ */
+interface TabsApi {
+  list(): TabInfo[];
+  /** A new tab every time it runs. Prefer ensure() in a cell that can run again. */
+  create(title: string, options?: CreateTabOptions): TabInfo;
+  ensure(id: string, title?: string, options?: Omit<CreateTabOptions, 'id'>): TabInfo;
+  rename(id: string, title: string): TabInfo;
+  close(id: string): { closed: string; cells: number };
+  select(id: string): TabInfo;
+}
+
 interface OllamaStatus {
   /** Something answers at the address from the helper settings (default localhost:11434). */
   running: boolean;
@@ -422,7 +486,7 @@ declare function print(...values: unknown[]): void;
 declare function view(text: string): void;
 /** Short for cell.color(fill) */
 declare function color(fill: string): void;
-/** Short for cell.span(cols, rows). span(4) keeps the rows; span() just returns the current size. */
+/** Short for cell.span(cols, rows): the size this cell wants by default. span(4) keeps the rows; span() just returns the current size. A size the person gave the block by hand wins until you change these numbers. */
 declare function span(cols?: number, rows?: number): { cols: number; rows: number };
 /**
  * Give this cell's block a grid of tiles, whatever its size: span(4, 2) then grid(10, 8) makes 80 tiles that fill the block.
@@ -470,10 +534,112 @@ declare function on(target: string | CellRef, event: CellEventName, fn: (changed
 declare function on(target: Grid, event: 'click', fn: (tile: Tile) => unknown): () => void;
 declare function on(target: 'game', fn: (game: GameApi) => unknown): () => void;
 declare function on(target: 'sheet', event: 'rows' | 'mode', fn: (sheet: SheetApi) => unknown): () => void;
+/** How an animation moves: linear, in (slow start), out (slow end), inOut (the default), bounce, elastic, back. */
+type SvgEase = 'linear' | 'in' | 'out' | 'inOut' | 'bounce' | 'elastic' | 'back';
+interface SvgAnimateOptions {
+  /** How long one play takes: 500, '500ms' or '2s'. Default 500 ms. */
+  time?: number | string;
+  ease?: SvgEase;
+  /** Wait this long before starting. */
+  delay?: number | string;
+  /** true: for ever. A number: that many plays. */
+  loop?: boolean | number;
+  /** Play backwards on every second play, so a loop swings to and fro. */
+  yoyo?: boolean;
+  /** For along: start at the end of the path. */
+  reverse?: boolean;
+}
+/** What animate() returns: await it to wait until the animation is done; stop() ends it early. */
+interface SvgAnimation extends Promise<void> {
+  stop(): void;
+}
+/** One part of a drawing. */
+interface SvgEl {
+  /** The SVG element itself, for anything these methods do not cover. */
+  readonly node: SVGElement;
+  /** attr('r') reads an attribute, attr('r', 20) sets it, attr({ r: 20, fill: 'red' }) sets several. */
+  attr(name: string): string | null;
+  attr(name: string, value: string | number): SvgEl;
+  attr(map: Record<string, string | number>): SvgEl;
+  /** The words of a text element: text() reads, text('hi') sets. */
+  text(): string;
+  text(value: unknown): SvgEl;
+  fill(color: string): SvgEl;
+  stroke(color: string, width?: number): SvgEl;
+  opacity(value: number): SvgEl;
+  show(): SvgEl;
+  hide(): SvgEl;
+  /** The part's box in its own coordinates. */
+  bbox(): { x: number; y: number; width: number; height: number };
+  /** Moves the part by (x, y) from where it was drawn. */
+  move(x: number, y: number): SvgEl;
+  /** Turns the part by this many degrees around its pivot. */
+  rotate(degrees: number): SvgEl;
+  /** Grows the part around its pivot: scale(2) is twice as big. */
+  scale(sx: number, sy?: number): SvgEl;
+  /** Where the part turns and grows from: 'center' (default), 'top', 'bottom', 'left', 'right', 'topleft' ... or a point: pivot(100, 86). A drawing can say it with data-pivot="100 86". */
+  pivot(where: string | number, y?: number): SvgEl;
+  /** Where the part is now: { x, y, rotate, scale }. */
+  readonly state: { x: number; y: number; rotate: number; scale: number };
+  /** Adds a child: g.add('circle', { cx: 10, cy: 10, r: 5 }). */
+  add(tag: string, attrs?: Record<string, string | number>): SvgEl;
+  remove(): void;
+  /** fn(event) runs when the part gets this event ('click', 'pointerdown', 'pointerover' ...). Returns a stop function; it also stops when the cell runs again. */
+  on(event: string, fn: (event: Event) => unknown): () => void;
+  /**
+   * Changes properties smoothly. x and y MOVE the part, rotate turns it (degrees), scale grows it, opacity fades it.
+   * Any other name is an attribute (r, cx, cy, width, fill, stroke ...): numbers and colours both work.
+   * along moves the part's centre along a path: { along: '#link-board' }.
+   * await arm.animate({ rotate: 40 }, { time: '300ms', ease: 'bounce' })
+   * dot.animate({ cx: 150, fill: 'tomato' }, { time: '1s', yoyo: true, loop: true })
+   */
+  animate(props: Record<string, number | string | SvgEl>, options?: SvgAnimateOptions): SvgAnimation;
+}
+/** A drawing shown in this cell. */
+interface SvgScene {
+  /** The SVG element of the drawing. */
+  readonly svg: SVGSVGElement;
+  /** The ids in the drawing: what el() can find. */
+  readonly ids: string[];
+  /** The part with this id (el('sun') or el('#sun')) or matching this selector (el('.leg'), el('circle')). Says which ids exist when there is none. */
+  el(selector: string | SvgEl): SvgEl;
+  /** Every part that matches a selector. */
+  all(selector: string): SvgEl[];
+  /** Adds a part to the drawing: pic.add('circle', { cx: 50, cy: 50, r: 10, fill: 'tomato' }). */
+  add(tag: string, attrs?: Record<string, string | number>): SvgEl;
+  /** Writes words into the drawing: pic.write(10, 20, 'Score: 3'). */
+  write(x: number, y: number, words: unknown, attrs?: Record<string, string | number>): SvgEl;
+  /** Sets the words of several parts at once: pic.set({ score: 'Score: 3' }). */
+  set(texts: Record<string, unknown>): SvgScene;
+  /** The visible part of the drawing: pic.viewBox(0, 0, 200, 100). */
+  viewBox(x: number, y: number, width: number, height: number): SvgScene;
+  /** Takes everything out of the drawing. */
+  clear(): SvgScene;
+  /** fn(seconds, secondsSinceLastFrame) runs for every frame of the screen (about 60 times a second). Returns a stop function; it also stops when the cell runs again. */
+  frame(fn: (seconds: number, delta: number) => unknown): () => void;
+}
+interface SvgApi {
+  /** Shows a drawing in this cell or block, given as SVG text: svg('<svg viewBox="0 0 100 100">...</svg>'). Its parts can be found and animated. svg() alone is a blank drawing; svg({ width: 400, height: 300 }) sets its size. */
+  (markup?: string | { width?: number; height?: number }): SvgScene;
+  /** A drawing that comes with the app, as SVG text: svg(svg.asset('stickman')). */
+  asset(name: string): string;
+  /** The names of the drawings that come with the app: 'stickman', 'router-architecture'. */
+  assets(): string[];
+}
+/**
+ * Animated drawings. Give a cell some SVG, find its parts by id, move, turn, recolour and animate them.
+ * const pic = svg(svg.asset('stickman'))
+ * await pic.el('armR').pivot('top').animate({ rotate: -140 }, { time: '300ms' })
+ */
+declare const svg: SvgApi;
 /** Talk to other tabs over MCP (asynchronous): read their cells, watch them, click them, send them signals. */
 declare const mcp: Mcp;
 /** The weather anywhere (open-meteo.com). await weather.now('Amsterdam'). */
 declare const weather: WeatherApi;
+/** The page's tabs: tabs.ensure('plots', 'Plots') makes a sheet of its own once; tabs.list(), rename, close, select. */
+declare const tabs: TabsApi;
+/** How this computer is doing: await system.read() (CPU, memory, temperatures, graphics card); system.series('cpu') to plot. */
+declare const system: SystemApi;
 /** The model on this computer (Ollama). await ollama.ask('...'); await ollama.status() says what is missing. */
 declare const ollama: OllamaApi;
 /** Answers from the person: await input.ask('Name?'), input.slider(...), input.button(...), input.onKey(...). */

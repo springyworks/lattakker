@@ -13,6 +13,8 @@ export interface StripTab {
 }
 
 export const STRIP_H = 40;
+/** The id of the little ＋ at the end of the tabs (a tab id can never look like this). */
+const ADD_ID = '__add';
 const TAB_TOP = 7;
 const TAB_GAP = 6;
 const PATH_H = 24;
@@ -32,6 +34,11 @@ export class TabStrip {
   private forwardCell!: Cell;
   private remoteCell!: Cell;
   private helpCell!: Cell;
+  private addCell!: Cell;
+  /** What a click on the ＋ does: make a new tab. */
+  onAdd: () => void = () => {};
+  /** What a right-click on a tab does (the screen position is where to open a menu). */
+  onTabMenu: (id: string, x: number, y: number) => void = () => {};
   /** What a click on the little ? does: open the help. */
   onHelp: () => void = () => {};
   /** What a click on the share button does (set by whoever owns the share dialog). */
@@ -84,27 +91,24 @@ export class TabStrip {
         if (id === 'strip:ai') return 'Ask the AI helper (Alt+I). It can look at the cell you are in';
         if (id === 'strip:share') return 'Work together with a tutor or a friend: a direct link between two browsers, no server';
         if (id === 'strip:remote') return 'Where the other person is pointing right now';
+        if (id === `strip:${ADD_ID}`) return 'A new tab with a sheet of its own (right-click a tab to rename or close it)';
         if (id === 'strip:path') return "Where you are, written as a cell path. Click to copy it. Code can use it: at('/lab/J24')";
         if (id === 'strip:help') return 'Help and show me (F1)';
         return this.tabs.find((t) => `strip:${t.id}` === id)?.hint ?? '';
       };
     }
 
-    let x = 12;
+    const x = 12;
     graph.batchUpdate(() => {
-      for (const spec of this.tabs) {
-        const w = Math.round(spec.label.length * 8.4 + 34);
-        const cell = graph.insertVertex({
-          parent: graph.getDefaultParent(),
-          id: `strip:${spec.id}`,
-          value: spec.label,
-          position: [x, TAB_TOP],
-          size: [w, STRIP_H],
-          style: this.tabStyle(false, false),
-        });
-        this.tabCells.set(spec.id, cell);
-        x += w + TAB_GAP;
-      }
+      for (const spec of this.tabs) this.makeTabCell(spec, x);
+      this.addCell = graph.insertVertex({
+        parent: graph.getDefaultParent(),
+        id: `strip:${ADD_ID}`,
+        value: '＋',
+        position: [x, TAB_TOP + 5],
+        size: [32, STRIP_H - 10],
+        style: this.addStyle(false),
+      });
       this.shareCell = graph.insertVertex({
         parent: graph.getDefaultParent(),
         id: 'strip:share',
@@ -177,6 +181,7 @@ export class TabStrip {
         if (this.canForward) this.onForward();
       }
       else if (id === 'strip:remote') this.copyRemote();
+      else if (id === `strip:${ADD_ID}`) this.onAdd();
       else if (id.startsWith('strip:')) this.onSelect(id.slice(6));
     });
     // Hover feedback on a tab: the drawing itself reacts, no CSS involved.
@@ -192,6 +197,14 @@ export class TabStrip {
       },
       mouseUp: () => {},
     });
+    container.addEventListener('contextmenu', (e) => {
+      const origin = container.getBoundingClientRect();
+      const cell = graph.getCellAt(e.clientX - origin.left, e.clientY - origin.top);
+      const id = cell?.getId() ?? '';
+      if (!id.startsWith('strip:') || !this.tabCells.has(id.slice(6))) return;
+      e.preventDefault();
+      this.onTabMenu(id.slice(6), e.clientX, e.clientY);
+    });
     container.addEventListener('pointerleave', () => {
       if (this.hovered) {
         this.hovered = null;
@@ -200,6 +213,57 @@ export class TabStrip {
     });
     new ResizeObserver(() => this.placePath()).observe(container);
     this.placePath();
+  }
+
+  private tabWidth(label: string): number {
+    return Math.round(label.length * 8.4 + 34);
+  }
+
+  private makeTabCell(spec: StripTab, x: number): Cell {
+    const cell = this.graph.insertVertex({
+      parent: this.graph.getDefaultParent(),
+      id: `strip:${spec.id}`,
+      value: spec.label,
+      position: [x, TAB_TOP],
+      size: [this.tabWidth(spec.label), STRIP_H],
+      style: this.tabStyle(false, false),
+    });
+    this.tabCells.set(spec.id, cell);
+    return cell;
+  }
+
+  /** Adds a tab at the end (or at `index`). */
+  addTab(spec: StripTab, index = this.tabs.length): void {
+    if (this.tabCells.has(spec.id)) return;
+    this.tabs.splice(index, 0, spec);
+    this.graph.batchUpdate(() => this.makeTabCell(spec, 0));
+    this.paintTabs();
+    this.placePath();
+  }
+
+  /** Takes a tab away. */
+  removeTab(id: string): void {
+    const cell = this.tabCells.get(id);
+    if (!cell) return;
+    this.tabCells.delete(id);
+    this.tabs.splice(this.tabs.findIndex((t) => t.id === id), 1);
+    this.graph.getDataModel().remove(cell);
+    this.placePath();
+  }
+
+  /** New words (and hint) for a tab. */
+  renameTab(id: string, label: string, hint?: string): void {
+    const spec = this.tabs.find((t) => t.id === id);
+    const cell = this.tabCells.get(id);
+    if (!spec || !cell) return;
+    spec.label = label;
+    if (hint !== undefined) spec.hint = hint;
+    this.graph.getDataModel().setValue(cell, label);
+    this.placePath();
+  }
+
+  private addStyle(hover: boolean): Record<string, unknown> {
+    return { ...this.tabStyle(false, hover), fillColor: hover ? '#e9edf1' : '#e6eaee', strokeColor: '#c5ccd3', fontSize: 16, spacingTop: 4, fontColor: INK_SOFT };
   }
 
   /** Where a control of the strip is on screen: 'tabs' (all the tabs), 'ai', 'share', 'back', 'forward', 'help' or 'path'. */
@@ -346,6 +410,7 @@ export class TabStrip {
         const cell = this.tabCells.get(spec.id)!;
         model.setStyle(cell, this.tabStyle(spec.id === this.active, spec.id === this.hovered && spec.id !== this.active));
       }
+      model.setStyle(this.addCell, this.addStyle(this.hovered === ADD_ID));
     } finally {
       model.endUpdate();
     }
@@ -387,8 +452,16 @@ export class TabStrip {
       next.width = w;
       model.setGeometry(cell, next);
     };
-    const lastTab = this.tabCells.get(this.tabs[this.tabs.length - 1].id)!.getGeometry()!;
-    const shareX = lastTab.x + lastTab.width + 12;
+    let tabX = 12;
+    for (const spec of this.tabs) {
+      const cell = this.tabCells.get(spec.id);
+      if (!cell) continue;
+      const w = this.tabWidth(spec.label);
+      move(cell, tabX, w);
+      tabX += w + TAB_GAP;
+    }
+    move(this.addCell, tabX, 32);
+    const shareX = tabX + 32 + 12;
     const shareW = widthFor(this.shareText, 112);
     move(this.shareCell, shareX, shareW);
     const aiX = shareX + shareW + 8;
