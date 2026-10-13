@@ -1745,3 +1745,57 @@ body.ai-open .help-card {
     animation: none;
   }
 }
+
+/* The box that asks for a tab's name (＋ in the tab strip, Rename in its menu) */
+.tab-ask-shade {
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 18vh;
+  background: rgba(31, 41, 51, 0.28);
+}
+.tab-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(320px, calc(100vw - 32px));
+  padding: 16px;
+  background: #ffffff;
+  border: 1px solid #9aa5b1;
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  font: 14px system-ui, sans-serif;
+  color: #1f2933;
+}
+.tab-ask input {
+  font: 15px system-ui, sans-serif;
+  padding: 7px 9px;
+  border: 1px solid #9aa5b1;
+  border-radius: 6px;
+}
+.tab-ask input:focus {
+  outline: 2px solid #5b9a74;
+  outline-offset: 0;
+}
+.tab-ask > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.tab-ask button {
+  font: 600 13px system-ui, sans-serif;
+  padding: 5px 14px;
+  border: 1px solid #9aa5b1;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1f2933;
+  cursor: pointer;
+}
+.tab-ask button[type='submit'] {
+  background: #2e7d32;
+  border-color: #2e7d32;
+  color: #ffffff;
+}
