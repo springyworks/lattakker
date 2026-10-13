@@ -1,3 +1,4 @@
+import { CellHover } from './CellHover';
 import { aiBridge } from '../aichat/bridge';
 import { InternalEvent, type Cell, type MaxPopupMenu, type PopupMenuHandler } from '@maxgraph/core';
 import type { Sheet } from '../sheet/Sheet';
@@ -102,6 +103,8 @@ export class SheetPane {
     });
     new CellCodeView(sheet);
     this.cellMenu = new CellMenu(sheet, { itemsFor: (address) => this.menuItemsFor(address) });
+    const hover = new CellHover(sheet, () => this.cellMenu.busy || this.editor.isOpen);
+    this.cellMenu.onBusy = () => hover.dismiss();
 
     sheet.setRunner((data, ctx) => runCell(data, ctx, (d, c) => buildApi(sheet, view, hooks, d, c), (a, s) => transpile(a, s, sheet.id)));
     sheet.raiseHeaders();

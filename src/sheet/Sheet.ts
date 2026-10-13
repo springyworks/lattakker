@@ -208,6 +208,8 @@ export class Sheet {
   readonly pieceLayer: Cell;
   readonly uiLayer: Cell;
   readonly cells = new Map<string, Cell>();
+  /** Set by whoever draws the hover hint of a cell itself (CellHover), so maxGraph's own tooltip stays out of the way. */
+  externalCellHints = false;
   readonly data = new Map<string, SheetCellData>();
   mode: Mode = 'run';
   /** Grows by 1 every insertRow(); start seeded from the ROWS constant. */
@@ -351,6 +353,8 @@ export class Sheet {
         const id = cell.getId() ?? '';
         const custom = this.listeners?.tooltipFor?.(id, cell);
         if (custom != null) return custom;
+        // With external hints (ui/CellHover.ts) a cell shows its own hint box and its address in the corner instead.
+        if (id.startsWith('sheet:') && this.externalCellHints) return '';
         if (id.startsWith('sheet:')) {
           const addr = id.slice(6);
           const d = this.data.get(addr);

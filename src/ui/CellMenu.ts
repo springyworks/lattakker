@@ -109,11 +109,20 @@ export class CellMenu {
     this.hide();
   }
 
+  /** Called when the icon or the menu takes the pointer (other hover hints should go away). */
+  onBusy: () => void = () => {};
+
+  /** The pointer is on the ⋮ icon or a menu is open: nothing else should pop up. */
+  get busy(): boolean {
+    return this.overIcon || this.menu.isOpen;
+  }
+
   /** The sheet's own cell tooltip would pile up under the icon and the menu. */
   private syncTooltips(): void {
     const tip = this.sheet.graph.getPlugin<TooltipHandler>('TooltipHandler');
     if (!tip) return;
     const on = !this.overIcon && !this.menu.isOpen;
+    if (!on) this.onBusy();
     if (!on) tip.hide();
     tip.setEnabled(on);
   }

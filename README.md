@@ -318,6 +318,11 @@ The path uses only letters, digits and `/ , @ -`, so it needs no escaping in
 JSON or in a URL, and in code it is an ordinary string: `at('/lab/J24')`.
 TypeScript needs no new syntax. A plain address keeps working exactly as before.
 
+Rest the pointer on a cell and its **address** appears small in its top-left corner after a
+second; when the pointer leaves, it fades out slowly, so the last five cells you touched stay
+readable for a moment. A short yellow hint under the cell says what a double-click does; tick
+**Do not show these hints** in it to switch it off (F1 on a cell has a button to bring it back).
+
 At the right of the strip, **📍** always shows where you are: click a cell (or a
 tile of a grid) and the path follows, for example `📍 /lab/A17/3,4`. Click the
 path to copy it. The ⋮ menu of a cell has **Copy → path** and **Copy → id**.

@@ -28,11 +28,13 @@ function annotateRouter(markup: string): string {
   const all = [...svg.children];
   const rects = all.filter((e) => e.localName === 'rect' && num(e, 'height') >= 50 && num(e, 'width') >= 150 && num(e, 'stroke-width') >= 1.5);
   const texts = all.filter((e) => e.localName === 'text');
-  const boxes = new Map<string, { x: number; y: number; w: number; h: number }>();
-  // The biggest box first, so a small label-like rectangle never takes a name from the real box.
-  const bySize = [...rects].sort((a, b) => num(b, 'width') * num(b, 'height') - num(a, 'width') * num(a, 'height'));
-  for (const rect of bySize) {
+  // The whole drawing has a frame around it: that is not a box. Of two rectangles with the same name (a box and its header strip) the bigger one is the box.
+  const vb = (svg.getAttribute('viewBox') ?? '0 0 1200 900').split(/\s+/).map(Number);
+  const frameArea = (vb[2] || 1200) * (vb[3] || 900) * 0.4;
+  const best = new Map<string, { rect: Element; box: { x: number; y: number; w: number; h: number }; mine: Element[] }>();
+  for (const rect of rects) {
     const box = { x: num(rect, 'x'), y: num(rect, 'y'), w: num(rect, 'width'), h: num(rect, 'height') };
+    if (box.w * box.h > frameArea) continue;
     const inside = (el: Element, pad = 0): boolean => {
       const x = num(el, 'x') + (el.localName === 'rect' ? num(el, 'width') / 2 : 0);
       const y = num(el, 'y') + (el.localName === 'rect' ? num(el, 'height') / 2 : 0);
@@ -40,7 +42,12 @@ function annotateRouter(markup: string): string {
     };
     const mine = texts.filter((t) => inside(t));
     const name = mine.map((t) => nodeName(t.textContent ?? '')).find((n) => n !== null);
-    if (!name || boxes.has(name)) continue;
+    if (!name) continue;
+    const known = best.get(name);
+    if (!known || box.w * box.h > known.box.w * known.box.h) best.set(name, { rect, box, mine });
+  }
+  const boxes = new Map<string, { x: number; y: number; w: number; h: number }>();
+  for (const [name, { rect, box, mine }] of best) {
     const g = doc.createElementNS(SVG_NS, 'g');
     g.setAttribute('id', `node-${name}`);
     g.setAttribute('class', 'node');
@@ -48,7 +55,12 @@ function annotateRouter(markup: string): string {
     g.setAttribute('data-pivot', `${box.x + box.w / 2} ${box.y + box.h / 2}`);
     rect.before(g);
     // The box, its words, and the small port squares sitting on its edge.
-    const ports = all.filter((e) => e.localName === 'rect' && e !== rect && num(e, 'width') <= 10 && inside(e, 10));
+    const ports = all.filter((e) => {
+      if (e.localName !== 'rect' || e === rect || num(e, 'width') > 10) return false;
+      const x = num(e, 'x') + num(e, 'width') / 2;
+      const y = num(e, 'y') + num(e, 'height') / 2;
+      return x >= box.x - 10 && x <= box.x + box.w + 10 && y >= box.y - 10 && y <= box.y + box.h + 10;
+    });
     g.append(rect, ...mine, ...ports);
     boxes.set(name, box);
   }

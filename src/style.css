@@ -1799,3 +1799,50 @@ body.ai-open .help-card {
   border-color: #2e7d32;
   color: #ffffff;
 }
+
+/* A cell's address, small in its top-left corner while the pointer rests on it, fading when it leaves (the last five stay) */
+.cell-address-tag {
+  position: absolute;
+  z-index: 6;
+  pointer-events: none;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.82);
+  color: #52606d;
+  font: 600 10px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  line-height: 14px;
+  opacity: 0;
+  transition: opacity 0.25s ease-out;
+}
+.cell-address-tag.live {
+  opacity: 1;
+}
+.cell-address-tag.fading {
+  opacity: 0;
+  transition: opacity 6s ease-in;
+}
+
+/* The yellow hint under a hovered cell, with a box to switch such hints off */
+.cell-hint {
+  position: fixed;
+  z-index: 100050;
+  padding: 5px 8px;
+  background: #ffffcc;
+  border: 1px solid #1f2933;
+  border-radius: 3px;
+  box-shadow: 3px 3px 12px #c0c0c0;
+  font: 12px system-ui, sans-serif;
+  color: #000;
+  white-space: nowrap;
+}
+.cell-hint-off {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  color: #52606d;
+  cursor: pointer;
+}
+.cell-hint-off input {
+  vertical-align: -2px;
+  margin: 0 3px 0 0;
+}

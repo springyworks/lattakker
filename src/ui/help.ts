@@ -1,6 +1,7 @@
 import { aiBridge } from '../aichat/bridge';
 import { cellLink, nav } from '../nav';
 import { workspace } from '../workspace';
+import { cellHints } from './hints';
 
 /**
  * Help and "show me", everywhere. One small card explains the thing you are pointing at, and its buttons do the
@@ -99,6 +100,16 @@ function actions(...buttons: Array<[string, () => void] | null>): HTMLElement {
   return row;
 }
 
+/** The little yellow hint under a hovered cell can be switched off in the hint itself; this brings it back (and switches it off). */
+function hintSwitch(): HTMLElement {
+  const row = actions([cellHints.enabled ? '💡 Hide the yellow cell hints' : '💡 Show the yellow cell hints again', () => {
+    cellHints.set(!cellHints.enabled);
+    button.textContent = cellHints.enabled ? '💡 Hide the yellow cell hints' : '💡 Show the yellow cell hints again';
+  }]);
+  const button = row.querySelector('button')!;
+  return row;
+}
+
 // ---------------------------------------------------------------- the topics
 
 interface Topic {
@@ -174,7 +185,7 @@ const TOPICS: Record<string, Topic> = {
       actions(['👀 Show me around', startTour], ['🤖 Open the helper', () => aiBridge.toggleSide()]),
     ],
   },
-  cell: { id: 'cell', title: '🔲 This cell', build: cellTopic },
+  cell: { id: 'cell', title: '🔲 This cell', build: (ctx) => [...cellTopic(ctx), hintSwitch()] },
   editor: {
     id: 'editor',
     title: '✏️ The code editor',
