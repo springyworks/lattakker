@@ -1,6 +1,8 @@
 import { friendly, makeProvider, type ChatMsg, type ToolCall } from './providers';
 import { localAssistantReady, probeLocal } from './localAi';
-import { runTool, toolsFor, WriteLedger, type AiContext, type ToolHost } from './tools';
+import { router } from '../mcp/router';
+import { getSettings } from './config';
+import { CLIENT, runTool, toolsFor, WriteLedger, type AiContext, type ToolHost } from './tools';
 import { workspace } from '../workspace';
 import { jobs } from './jobs';
 import { describeModel, isSmallModel } from './modelInfo';
@@ -168,6 +170,7 @@ export class Conversation {
     // The seconds of "last sign of life" are re-drawn once a second; they are measured, not invented (see jobs.ts).
     this.ticker = window.setInterval(() => this.changed(), 1000);
     const info = describeModel();
+    router.notify(from || 'you', CLIENT, 'chat/question', { characters: question.length });
     const chat = jobs.start('chat', `answering “${question.slice(0, 40)}${question.length > 40 ? '…' : ''}”`, { stallAfterSeconds: 3600 });
     const stopWatching = jobs.onCancel(() => this.abort?.abort());
     this.changed();
@@ -198,7 +201,11 @@ export class Conversation {
           this.note(`🔋 The model’s memory was nearly full, so I shortened ${fitted.shortened ? `${fitted.shortened} long answer${fitted.shortened === 1 ? '' : 's'}` : ''}${fitted.shortened && fitted.dropped ? ' and ' : ''}${fitted.dropped ? 'the oldest part of this chat' : ''} to make room.`);
         }
         chat.say(`memory check: about ${kilo(fitted.estimate)} of ${fitted.room ? kilo(fitted.room) : '?'} tokens${fitted.shortened || fitted.dropped ? ' (shortened to fit)' : ''}`, false);
+        // The model is reached by fetch, not over the router, so the router is told: the chat shows up in its traffic.
+        const modelBox = getSettings().provider === 'local' ? 'ollama' : 'helper';
+        router.notify(CLIENT, modelBox, 'llm/complete', { round: round + 1, messages: this.messages.length, tools: tools.length });
         const reply = await provider.complete(system, this.messages, tools, this.abort.signal);
+        router.notify(modelBox, CLIENT, 'llm/reply', { toolCalls: reply.toolCalls.length, characters: reply.text.length });
         this.messages.push({ role: 'assistant', text: reply.text, toolCalls: reply.toolCalls, raw: reply.raw });
         if (reply.text.trim()) answer = reply.text.trim();
         if (!reply.toolCalls.length) break;

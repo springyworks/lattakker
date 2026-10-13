@@ -402,9 +402,22 @@ async function writeCode(host: ToolHost, args: Args): Promise<string> {
   });
 }
 
+/** Tools that read the page directly instead of asking an MCP server: the router would never see them, so they are announced to it. */
+const DIRECT_TOOLS = new Set(['look_around', 'list_tabs', 'read_cell', 'game_state', 'board_text', 'read_guide', 'read_docs', 'run_cell', 'find_free_cell', 'write_code', 'suggest_code']);
+
+function announceDirect(host: ToolHost, name: string, args: Args, client: string): void {
+  if (!DIRECT_TOOLS.has(name)) return;
+  const guide = name === 'read_guide' || name === 'read_docs';
+  const path = typeof args.path === 'string' ? args.path : '';
+  const hit = path && !guide ? workspace.resolve(path, host.context().tab) : null;
+  const tab = hit && !('error' in hit) ? hit.tab.id : host.context().tab;
+  router.notify(client, guide ? 'cells' : tab, `tools/${name}`, args);
+}
+
 /** Runs one tool the model asked for. The answer is always text; a problem is reported in it, never thrown at the model. */
 export async function runTool(host: ToolHost, name: string, args: Args, client: string = CLIENT): Promise<string> {
   try {
+    announceDirect(host, name, args, client);
     switch (name) {
       case 'look_around': {
         const here = host.context();

@@ -15,6 +15,7 @@ import { THEME } from '../theme';
 import { CellMenu } from './CellMenu';
 import type { MenuItem } from './HoverMenu';
 import { Navigator } from './Navigator';
+import { ZoomBack } from './ZoomBack';
 import { workspace } from '../workspace';
 import { showHelp } from './help';
 import { exampleTemplate } from '../exampleTemplate';
@@ -104,6 +105,7 @@ export class SheetPane {
       },
     });
     new CellCodeView(sheet);
+    new ZoomBack(sheet);
     this.cellMenu = new CellMenu(sheet, { itemsFor: (address) => this.menuItemsFor(address) });
     const hover = new CellHover(sheet, () => this.cellMenu.busy || this.editor.isOpen);
     this.cellMenu.onBusy = () => hover.dismiss();

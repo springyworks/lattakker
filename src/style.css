@@ -438,6 +438,67 @@ body.grab-armed .sheet-pane {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
+/* The first sight of the game board: the flag, big, and a place to click. */
+.splash {
+  position: fixed;
+  z-index: 44;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 28px 0 40px;
+  box-sizing: border-box;
+  background: radial-gradient(ellipse at center, rgba(255, 255, 255, 0) 38%, rgba(31, 41, 51, 0.38) 100%);
+  user-select: none;
+  outline: none;
+}
+.splash-title {
+  font: 800 54px/1 system-ui, sans-serif;
+  letter-spacing: 0.04em;
+  color: #ffffff;
+  text-shadow: 0 2px 0 #7a2a24, 0 0 18px rgba(31, 41, 51, 0.7);
+}
+.splash-hint {
+  padding: 10px 22px;
+  font: 700 18px system-ui, sans-serif;
+  color: #ffffff;
+  background: rgba(31, 41, 51, 0.78);
+  border-radius: 24px;
+  animation: splash-pulse 1.6s ease-in-out infinite;
+}
+@keyframes splash-pulse {
+  50% {
+    transform: scale(1.06);
+    background: rgba(168, 67, 62, 0.9);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .splash-hint {
+    animation: none;
+  }
+}
+
+/* The way back out of "zoom in on this cell", top right of the sheet. */
+.zoom-back {
+  position: fixed;
+  z-index: 45;
+  padding: 6px 12px;
+  font: 600 13px system-ui, sans-serif;
+  color: #ffffff;
+  background: #2f4b66;
+  border: 1px solid #1f2933;
+  border-radius: 16px;
+  box-shadow: 0 2px 8px rgba(31, 41, 51, 0.35);
+  cursor: pointer;
+}
+.zoom-back:hover {
+  background: #1f3a54;
+}
+.zoom-back[hidden] {
+  display: none;
+}
+
 /* Long-sheet navigator: a "Go to" box and a miniature of the whole sheet along the right edge. */
 .sheet-nav {
   position: fixed;

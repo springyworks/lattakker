@@ -898,6 +898,25 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
     },
   ];
 
+  // An outside AI (over the dev server's /mcp, or WebMCP) drives the page with these tools. Most of them never touch the router, so each call
+  // is announced on it as coming from "ai": the router drawing then shows the outside AI's work too. (mcp_request is a real router request already.)
+  const targetOf = (name: string, args: Json): string => {
+    const tab = typeof args.tab === 'string' ? args.tab : typeof args.address === 'string' && args.address.startsWith('/') ? args.address.split('/')[1] : '';
+    if (/cell|code|^run_cell$/.test(name)) return tab && tab !== 'all' ? tab : 'board';
+    if (/request|reply/.test(name)) return 'helper';
+    if (name === 'list_tabs' || name === 'mcp_log') return 'router';
+    if (name === 'get_docs') return 'cells';
+    return 'board';
+  };
+  for (const t of tools) {
+    if (t.name === 'mcp_request') continue;
+    const run = t.run.bind(t);
+    t.run = (args) => {
+      router.notify('ai', targetOf(t.name, args), `tools/${t.name}`, args);
+      return run(args);
+    };
+  }
+
   const webmcp: { available: boolean; api: string | null; registered: string[]; errors: string[]; note?: string } = {
     available: false,
     api: null,

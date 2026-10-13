@@ -204,8 +204,8 @@ export class Game {
     this.placeArmy('blue');
   }
 
-  /** Random but sensible setup: flag on the back row, bombs hugging it. */
-  placeArmy(color: Color): void {
+  /** Random but sensible setup: flag on the back row (on `flagColumn` when given), bombs hugging it. */
+  placeArmy(color: Color, flagColumn?: number): void {
     for (const r of homeRows(color)) {
       for (let c = 0; c < BOARD_COLS; c++) {
         const existing = this.board[r][c];
@@ -224,7 +224,7 @@ export class Game {
     for (const r of homeRows(color)) for (let c = 0; c < BOARD_COLS; c++) squares.push({ row: r, col: c });
 
     const flag = pieces.find((p) => p.rank === 'F')!;
-    const flagCol = Math.floor(this.rnd() * BOARD_COLS);
+    const flagCol = flagColumn !== undefined && flagColumn >= 0 && flagColumn < BOARD_COLS ? flagColumn : Math.floor(this.rnd() * BOARD_COLS);
     const flagPos = { row: backRow, col: flagCol };
     this.board[flagPos.row][flagPos.col] = flag;
 

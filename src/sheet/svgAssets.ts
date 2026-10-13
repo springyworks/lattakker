@@ -9,10 +9,10 @@ import routerArchitecture from '../../resources/router-architecture-Lattakker-ge
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const num = (el: Element, name: string): number => Number.parseFloat(el.getAttribute(name) ?? '0') || 0;
 
-/** The name a box in the router drawing goes by: "board : Tab" is board, "mcp_router : Router" is router ... */
+/** The name a box in the router drawing goes by: "board : Tab" is board, "mcp_router : Router" is router, "outside_ai : Client" is outside_ai ... */
 function nodeName(text: string): string | null {
   const t = text.trim();
-  const m = /^(\w+) : (Tab|Service|Router)$/.exec(t);
+  const m = /^(\w+) : (Tab|Service|Router|Client)$/.exec(t);
   if (m) return m[1] === 'mcp_router' ? 'router' : m[1];
   if (/^Cell Scripts/.test(t)) return 'cells';
   if (/^WebRTC/.test(t)) return 'webrtc';
@@ -68,6 +68,12 @@ function annotateRouter(markup: string): string {
   for (const path of all.filter((e) => e.localName === 'path' && (e.getAttribute('marker-end') || e.getAttribute('marker-start')))) {
     const pairs = [...(path.getAttribute('d') ?? '').matchAll(/(-?\d+(?:\.\d+)?)[ ,]+(-?\d+(?:\.\d+)?)/g)].map((m) => [Number(m[1]), Number(m[2])]);
     if (pairs.length < 2) continue;
+    // A line that carries its own name (link-outside_ai) keeps it; only lines that join a box to the router are named here.
+    if (path.getAttribute('id')?.startsWith('link-')) {
+      path.setAttribute('class', 'link');
+      path.setAttribute('data-name', path.getAttribute('id')!.slice(5));
+      continue;
+    }
     const ends = [pairs[0], pairs[pairs.length - 1]];
     const target = [...boxes].find(([name, box]) => name !== 'router' && ends.some(([x, y]) => near(x, y, box)));
     if (!target) continue;

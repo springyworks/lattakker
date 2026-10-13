@@ -892,6 +892,15 @@ export class GameView {
     this.onChange?.();
   }
 
+  /** A fresh battle that is already running, with Red's flag on the back row at `flagCol` (H10 by default): what a visitor finds on arriving. */
+  quickStart(flagCol = 7): void {
+    this.newGame();
+    this.game.placeArmy('red', flagCol);
+    this.syncPieces();
+    this.start();
+    this.hud.say('Welcome, General! 👋 The battle is running and it is your move. Click a red piece, then a green dot. Guard your flag 🚩 at H10!', 'good');
+  }
+
   /** Used by code cells: move for Red if it is legal right now. */
   codeMove(fromAddr: string, toAddr: string): string {
     const from = this.posOf(fromAddr);

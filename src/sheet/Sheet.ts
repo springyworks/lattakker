@@ -2260,6 +2260,29 @@ export class Sheet {
     this.zoomListeners.push(listener);
   }
 
+  /** Is the sheet zoomed in by zoomInOn() on any cell, so that zoomOut() has somewhere to go back to? */
+  isZoomed(): boolean {
+    return this.zoomReturn !== null;
+  }
+
+  /** Where to look to have the square (col, row) in the middle of the window at this zoom. */
+  viewAround(col: number, row: number, scale: number): SheetView {
+    const c = this.container;
+    const t = this.graph.getView().getTranslate();
+    const cx = (ORIGIN_X + col * CW + CW / 2 + t.x) * scale;
+    const cy = (ORIGIN_Y + row * CH + CH / 2 + t.y) * scale;
+    return { scale, left: Math.max(0, cx - c.clientWidth / 2), top: Math.max(0, cy - c.clientHeight / 2) };
+  }
+
+  /** Takes a view at once (no flight). */
+  jumpTo(view: SheetView): void {
+    this.flight++;
+    this.graph.zoomTo(view.scale, false);
+    this.container.scrollLeft = view.left;
+    this.container.scrollTop = view.top;
+    this.updateStickyHeaders();
+  }
+
   /** Zooms in so the cell's block fills the window with some room around it. The view it came from is kept for zoomOut(). */
   async zoomInOn(address: string): Promise<void> {
     const owner = this.ownerOf(address);

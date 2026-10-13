@@ -399,7 +399,10 @@ Tabs can also be made from code (`tabs.ensure('plots', 'Plots')`, see
 **📡 Monitor** is a tab of the page itself (it cannot be closed): the router drawing
 from `resources/router-architecture-Lattakker-gemini-svg.svg`, alive. Every message
 that crosses the MCP router lights up the box it goes to and sends a dot along its
-line. Next to it, live graphs of this computer (processor and graphics card load,
+line. The AI helper's chat (the question, each model call, each tool) shows too, and so does
+an AI chat outside the page (the `outside_ai` box at the bottom, over the dev server's `/mcp`):
+its calls run in a dot along the whole way, and the answer comes back. Every line also has a tiny two-line ticker with the last two messages over it
+(`→` a question going to the box, `←` its answer with the time it took, `✕` an error). Next to it, live graphs of this computer (processor and graphics card load,
 temperatures, memory, frames per second), the router's messages per second and the
 weather. They are ordinary cells: change them, copy them into a tab of your own.
 Right-click the Monitor tab (or press **↺ Restore monitor**) to put the starting cells
@@ -416,7 +419,10 @@ tell (cores, frames per second, battery) and says so.
 [↑ Contents](#contents)
 
 You do not need to know any programming to begin. The game works as it is:
-press **Start the battle!**, click a red piece, click a dot. Below the board
+the page opens zoomed in on the red flag (H10); click anywhere and the view glides out
+to the board. A new battle is already running every time the page opens: click a red
+piece, click a dot. (**New game** brings back the setup, with **Shuffle** and
+**Start the battle!**.) A cell's 🔍 zooms in on it; **🔍 Zoom back out**, top right, goes back. Below the board
 are some grey-green cells that already do things: one counts the pieces, one
 paints the board, one tells whose turn it is. They update by themselves after
 every move. They are small programs, written in **TypeScript**.
@@ -1032,7 +1038,9 @@ pic.frame((t, dt) => pic.el('man').move(Math.sin(t) * 20, 0))   // every screen 
   `yoyo`, `reverse`. It returns something you can `await`, with `.stop()`.
 - `svg.asset('stickman')` and `svg.asset('router-architecture')` come with the app (see `svg.assets()`).
   The router drawing is the file in `resources/`; its boxes get the ids `node-board`, `node-lab`,
-  `node-weather` ... and its lines `link-board` ... when it is loaded.
+  `node-weather` ... `node-outside_ai` and its lines `link-board` ... `link-outside_ai` when it is loaded.
+  Every line is drawn from the router to its box (`link-outside_ai` runs from the outside AI to the dev server). The tickers are `tick-NAME-1` and `tick-NAME-2`
+  (empty in the file; the Monitor's A1 fills them in, and `data-chars` says how many letters fit).
 - Scripts, `on...` attributes and `javascript:` links in a drawing are removed. Handlers and frames stop
   when the cell runs again. See the Lab's **A47** (the stickman) and the Monitor's **A1**.
 

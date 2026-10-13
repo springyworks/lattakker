@@ -9,6 +9,7 @@ import { migrateExamples } from './examplesMigration';
 import { formatAddress, parseAddress } from './sheet/address';
 import { CW, MAX_COLS, ORIGIN_X } from './sheet/Sheet';
 import { Dock } from './ui/Dock';
+import { Splash, gameViewFor } from './ui/Splash';
 import { Tabs } from './ui/Tabs';
 import { createNotebook } from './ui/Notebook';
 import { fitBoardToWidth, installGrabGesture, installPinchZoom } from './ui/touch';
@@ -166,7 +167,9 @@ view.onChange = () => {
     tab.sheet.requestRun();
   }
 };
+// A visitor always finds a battle that is running and ready to play (the red flag on H10), whatever game was kept in this browser.
 view.init(restored);
+view.quickStart();
 changedSquares();
 
 if (smallScreen) {
@@ -246,8 +249,13 @@ tabs.onChange((tab) => {
   notebook.setActive(tab === 'examples');
   if (tab === 'board') sheet.container.focus({ preventScroll: true });
 });
-tabs.select(tabs.fromHash());
+const startTab = tabs.fromHash();
+tabs.select(startTab);
 showHere();
+
+// The first thing on the game board: zoomed in on the flag, waiting. A click glides out to the view where the game is played.
+const splash = startTab === 'board' ? new Splash(sheet, { col: 7, row: 9 }, () => gameViewFor(sheet, smallScreen), () => hud.say('Your move, General! Pick a red piece, then a green dot.', 'info')) : null;
+tabs.onChange(() => void splash?.dismiss(false));
 
 // Cell links and the ◀ ▶ buttons: go to a cell (zooming in), and back and forward through the places visited.
 nav.setTeller((text) => hud.say(text, 'bad'));
