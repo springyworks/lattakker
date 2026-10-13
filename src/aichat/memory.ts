@@ -313,6 +313,18 @@ export async function importJson(text: string): Promise<{ ok: boolean; added: nu
   return { ok: true, added };
 }
 
+/** Makes the memory exactly what a backup holds (used to follow the shared file). False when the text is no memory. */
+export async function replaceFrom(text: string): Promise<boolean> {
+  try {
+    const data = JSON.parse(text) as { app?: unknown; notes?: unknown };
+    if (data.app !== 'lattakker-memory' || !Array.isArray(data.notes)) return false;
+  } catch {
+    return false;
+  }
+  await wipe();
+  return (await importJson(text)).ok;
+}
+
 /** Asks the browser not to clear this site's storage when it is short of space. */
 export async function keepSafe(): Promise<boolean> {
   try {

@@ -27,6 +27,7 @@ export class Tabs {
   private current: TabId = 'board';
   readonly strip: TabStrip;
   private readonly listeners: Array<(tab: TabId, previous: TabId) => void> = [];
+  private readonly leaving: Array<() => void> = [];
 
   constructor(private readonly panels: Record<TabId, HTMLElement>) {
     this.root.id = 'tabs';
@@ -82,8 +83,14 @@ export class Tabs {
     this.listeners.push(handler);
   }
 
+  /** Runs just before another tab comes to the front, while the one on screen still has its scroll position. */
+  onBeforeChange(handler: () => void): void {
+    this.leaving.push(handler);
+  }
+
   select(tab: TabId): void {
     if (tab === this.current) return;
+    this.leaving.forEach((h) => h());
     const previous = this.current;
     this.current = tab;
     this.apply();

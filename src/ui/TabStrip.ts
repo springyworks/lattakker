@@ -16,6 +16,7 @@ export const STRIP_H = 40;
 const TAB_TOP = 7;
 const TAB_GAP = 6;
 const PATH_H = 24;
+const NAV_W = 30;
 
 const INK = '#1f2933';
 const INK_SOFT = '#3e4c59';
@@ -27,11 +28,18 @@ export class TabStrip {
   private pathCell!: Cell;
   private shareCell!: Cell;
   private aiCell!: Cell;
+  private backCell!: Cell;
+  private forwardCell!: Cell;
   private remoteCell!: Cell;
   /** What a click on the share button does (set by whoever owns the share dialog). */
   onShare: () => void = () => {};
   /** What a click on the 🤖 helper button does. */
   onAi: () => void = () => {};
+  /** What the ◀ and ▶ buttons do: go to the previous or the next place visited. */
+  onBack: () => void = () => {};
+  onForward: () => void = () => {};
+  private canBack = false;
+  private canForward = false;
   private aiOn = false;
   private shareText = '🤝 Share';
   private shareOn = false;
@@ -68,6 +76,8 @@ export class TabStrip {
       tips.delay = 400;
       tips.getTooltipForCell = (cell: Cell) => {
         const id = cell.getId() ?? '';
+        if (id === 'strip:back') return 'Back to the previous place (Alt+←)';
+        if (id === 'strip:forward') return 'Forward to the next place (Alt+→)';
         if (id === 'strip:ai') return 'Ask the AI helper (Alt+I). It can look at the cell you are in';
         if (id === 'strip:share') return 'Work together with a tutor or a friend: a direct link between two browsers, no server';
         if (id === 'strip:remote') return 'Where the other person is pointing right now';
@@ -107,6 +117,22 @@ export class TabStrip {
         size: [72, PATH_H],
         style: this.aiStyle(),
       });
+      this.backCell = graph.insertVertex({
+        parent: graph.getDefaultParent(),
+        id: 'strip:back',
+        value: '◀',
+        position: [x + 210, (STRIP_H - PATH_H) / 2 + 2],
+        size: [NAV_W, PATH_H],
+        style: this.navStyle(false),
+      });
+      this.forwardCell = graph.insertVertex({
+        parent: graph.getDefaultParent(),
+        id: 'strip:forward',
+        value: '▶',
+        position: [x + 210 + NAV_W + 4, (STRIP_H - PATH_H) / 2 + 2],
+        size: [NAV_W, PATH_H],
+        style: this.navStyle(false),
+      });
       this.remoteCell = graph.insertVertex({
         parent: graph.getDefaultParent(),
         id: 'strip:remote',
@@ -132,6 +158,11 @@ export class TabStrip {
       if (id === 'strip:path') this.copyPath();
       else if (id === 'strip:share') this.onShare();
       else if (id === 'strip:ai') this.onAi();
+      else if (id === 'strip:back') {
+        if (this.canBack) this.onBack();
+      } else if (id === 'strip:forward') {
+        if (this.canForward) this.onForward();
+      }
       else if (id === 'strip:remote') this.copyRemote();
       else if (id.startsWith('strip:')) this.onSelect(id.slice(6));
     });
@@ -140,7 +171,7 @@ export class TabStrip {
       mouseDown: () => {},
       mouseMove: (_s: unknown, me: { getCell(): Cell | null }) => {
         const id = me.getCell()?.getId() ?? '';
-        const over = id.startsWith('strip:') && !['strip:path', 'strip:share', 'strip:ai', 'strip:remote'].includes(id) ? id.slice(6) : null;
+        const over = id.startsWith('strip:') && !['strip:path', 'strip:share', 'strip:ai', 'strip:remote', 'strip:back', 'strip:forward'].includes(id) ? id.slice(6) : null;
         if (over !== this.hovered) {
           this.hovered = over;
           this.paintTabs();
@@ -214,6 +245,24 @@ export class TabStrip {
 
   private aiStyle(): Record<string, unknown> {
     return { ...this.shareStyle(), fillColor: this.aiOn ? '#d9e8dd' : '#f6f7f9', strokeColor: this.aiOn ? '#5b9a74' : EDGE };
+  }
+
+  private navStyle(enabled: boolean): Record<string, unknown> {
+    return { ...this.shareStyle(), fontSize: 13, fontColor: enabled ? INK : '#aab3bd', strokeColor: enabled ? '#8795a1' : '#d3d8de', fillColor: enabled ? '#f6f7f9' : '#eef0f2' };
+  }
+
+  /** Whether there is a place to go back to and a place to go forward to. */
+  setHistory(canBack: boolean, canForward: boolean): void {
+    this.canBack = canBack;
+    this.canForward = canForward;
+    const model = this.graph.getDataModel();
+    model.beginUpdate();
+    try {
+      model.setStyle(this.backCell, this.navStyle(canBack));
+      model.setStyle(this.forwardCell, this.navStyle(canForward));
+    } finally {
+      model.endUpdate();
+    }
   }
 
   /** Whether the helper's side chat is open. */
@@ -316,7 +365,9 @@ export class TabStrip {
     move(this.shareCell, shareX, shareW);
     const aiX = shareX + shareW + 8;
     move(this.aiCell, aiX, 72);
-    const rightOfButtons = aiX + 72 + 12;
+    move(this.backCell, aiX + 72 + 8, NAV_W);
+    move(this.forwardCell, aiX + 72 + 8 + NAV_W + 4, NAV_W);
+    const rightOfButtons = aiX + 72 + 8 + NAV_W * 2 + 4 + 12;
     const pathText = this.flashing ? 'copied ✓' : `📍 ${this.pathText}`;
     const pathW = widthFor(pathText, 90);
     const available = this.container.clientWidth;

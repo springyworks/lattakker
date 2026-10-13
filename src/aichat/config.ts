@@ -19,6 +19,8 @@ export interface AiSettings {
   autoSeconds: number;
   /** Let an outside AI (connected over MCP) put questions to this helper. Off unless a person turns it on. */
   allowOutside: boolean;
+  /** Let cells and the helper look up the weather (the place name is sent to open-meteo.com). */
+  allowWeather: boolean;
 }
 
 export const DEFAULT_SETTINGS: AiSettings = {
@@ -29,6 +31,7 @@ export const DEFAULT_SETTINGS: AiSettings = {
   autoPopup: true,
   autoSeconds: 3,
   allowOutside: false,
+  allowWeather: true,
 };
 
 const SETTINGS_KEY = 'lattakker:ai:v1';
@@ -50,6 +53,7 @@ function merge(base: AiSettings, saved: Partial<AiSettings> | null): AiSettings 
     remember: saved.remember === true,
     autoPopup: saved.autoPopup !== false,
     allowOutside: saved.allowOutside === true,
+    allowWeather: saved.allowWeather !== false,
     autoSeconds: Number.isFinite(seconds) ? Math.min(600, Math.max(3, Math.round(seconds))) : base.autoSeconds,
   };
 }

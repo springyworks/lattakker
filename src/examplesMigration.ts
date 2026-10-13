@@ -12,11 +12,12 @@ import type { Sheet } from './sheet/Sheet';
  */
 
 const KEY = 'lattakker:examples-rev';
-export const EXAMPLES_REV = 2;
+export const EXAMPLES_REV = 3;
 
 /** What each revision added, per tab. */
 const ADDED: Record<number, { board: string[]; lab: string[] }> = {
   2: { board: ['A42', 'G42', 'M42', 'Q42', 'U42'], lab: ['A31', 'G31'] },
+  3: { board: [], lab: ['A35', 'J35', 'R35', 'A41', 'J41'] },
 };
 
 /** The code (without its comments) that an example had before a revision replaced it. */

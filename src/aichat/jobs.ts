@@ -180,6 +180,7 @@ export function describeTree(nodes: JobNode[], depth = 0): string {
 /** The MCP server `status`: ask what is going on, from the chat, a cell or an outside AI. */
 export class StatusServer implements McpServer {
   readonly name = 'status';
+  readonly description = 'What is going on right now: the running jobs as a tree, with real signs of life.';
 
   handle(method: string, params: Record<string, unknown>): Json {
     switch (method) {

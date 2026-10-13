@@ -44,6 +44,7 @@ export async function probeLocal(force = false): Promise<boolean> {
   const abort = new AbortController();
   const timer = window.setTimeout(() => abort.abort(), 2500);
   const before = localState.ok;
+  const errorBefore = localState.error;
   try {
     const models = await provider.listModels(abort.signal);
     const want = getSettings().local.model;
@@ -56,8 +57,15 @@ export async function probeLocal(force = false): Promise<boolean> {
     window.clearTimeout(timer);
   }
   localState.model = getSettings().local.model;
-  if (before !== localState.ok) listeners.forEach((l) => l());
+  if (before !== localState.ok || errorBefore !== localState.error) listeners.forEach((l) => l());
   return localState.ok;
+}
+
+/** A warning for the chat's header when a local model is chosen but does not answer (empty when all is well). */
+export function localWarning(): string {
+  const { local } = getSettings();
+  if (!local.model || !localState.checked || localState.ok) return '';
+  return `⚠ local model “${local.model}” not found (${localState.error || 'no answer'}). Is Ollama running? Start “ollama serve” with OLLAMA_ORIGINS=${location.origin}.`;
 }
 
 /** Ollama's own list of models that are in memory right now (null when the server is not Ollama). */
@@ -128,6 +136,7 @@ const TOOLS = [
 
 export class LocalAiServer implements McpServer {
   readonly name = 'local-ai';
+  readonly description = "The second brain: a small model on this computer that keeps the memory and the database tidy (consult, teach, manage).";
   private busy = false;
 
   constructor(

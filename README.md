@@ -38,6 +38,10 @@ Live demo: https://springyworks.github.io/lattakker/
   - [8.8 Examples](#88-examples)
   - [8.9 Cells in other tabs: at('/lab/J24')](#89-cells-in-other-tabs-atlabj24)
   - [8.10 Talking to tabs over MCP: the mcp global](#810-talking-to-tabs-over-mcp-the-mcp-global)
+  - [8.11 The MCP servers of the page and the router's statistics](#811-the-mcp-servers-of-the-page-and-the-routers-statistics)
+  - [8.12 The weather](#812-the-weather)
+  - [8.13 The model on this computer (Ollama)](#813-the-model-on-this-computer-ollama)
+  - [8.14 Input from the person: the input global](#814-input-from-the-person-the-input-global)
 - [9 How the cell code is run (internals)](#9-how-the-cell-code-is-run-internals)
   - [9.1 When does a cell run?](#91-when-does-a-cell-run)
   - [9.2 Is this reactive programming?](#92-is-this-reactive-programming)
@@ -810,6 +814,129 @@ Lab over MCP; **M42** is a button that starts the Lab's rocket (a trigger over
 MCP); **Q42** shouts a `wave` that the Lab's **A31** answers with an `echo`;
 and **U42** shows the traffic live.
 
+### Moving around: cell links and ◀ ▶
+
+A path that names a real cell is a **blue link** wherever the page shows one: in the Inputs panel, in the AI chat
+(where a question was asked, a code suggestion's cell, and `A12` or `/lab/A41` written in `code` marks in an answer).
+Clicking it opens that tab, flies to the cell and zooms so that its block fills the window, then gives it a short
+pulse. The flight eases in and out and takes about a second (longer for a longer way, with a little zoom out
+halfway on far jumps), because its job is to let the eye follow where the view went. The ◀ ▶ buttons right of 🤖 AI (or Alt+← and Alt+→) go back and forward through the places you
+visited, like an editor: switching tabs or following a link adds a place, clicking around inside a tab does not, and
+going back also restores how that place was zoomed and scrolled.
+
+### 8.11 The MCP servers of the page and the router's statistics
+
+[↑ Contents](#contents)
+
+Tabs are not the only MCP servers. Everything that can be asked something is
+one, and they all sit on the same router:
+
+| Server | What it is for | Tools |
+| --- | --- | --- |
+| `board`, `lab`, `examples` | the cells of a tab | `list_cells`, `get_cell`, `run_cell`, `set_code`, `click`, `flash`, `signal` |
+| `router` | the router itself | `stats`, `catalog`, `servers`, `recent`, `reset_stats` |
+| `weather` | the weather ([8.12](#812-the-weather)) | `now`, `forecast`, `find` |
+| `ollama` | the model on this computer ([8.13](#813-the-model-on-this-computer-ollama)) | `status`, `models`, `ask` |
+| `memory` | the helper's notes and little database | `remember`, `recall`, `db_put` ... |
+| `status` | what is going on right now | `jobs` |
+| `helper`, `local-ai` | the built-in AI helper and its second brain | `ask`, `consult` ... |
+
+Not sure what exists? Ask the router. It is the first thing to try for a person,
+a cell or an AI helper (the helper has a `discover` tool for it):
+
+```ts
+const everything = await mcp.catalog()          // every server: what it is for, its tools, how many resources
+print((await mcp.tools('weather')).map((t) => t.name))
+const s = mcp.stats()                            // instant, not a message itself
+print(s.messages, 'messages,', s.errors, 'errors,', s.ratePerSecond, 'per second')
+plot(s.perSecond)                                // messages per second over the last minute
+print(s.servers[0])                              // busiest server: { name, requests, errors, avgMs, maxMs }
+print(s.clients[0], s.methods[0], s.slowest)     // who asks most, what is asked most, the slowest answer
+mcp.resetStats()                                 // start counting again
+```
+
+`mcp.stats()` is the same data as `mcp.tool('router', 'stats')`. It counts every
+request, answer, error and notification that crossed the router since the page
+started (nothing is estimated). Reading it is not a dependency: use
+`every('1s', ...)` to follow it. The Lab's **A35** is a live dashboard and **J35**
+lists the servers.
+
+### 8.12 The weather
+
+[↑ Contents](#contents)
+
+```ts
+const w = await weather.now('Amsterdam')         // also 'Paris, France', '52.37,4.89' or { lat, lon }
+print(w.icon, w.temperature + '°C', w.text, 'wind', w.wind, 'km/h from', w.windFrom)
+const f = await weather.forecast('Oslo', 5)      // 1 to 7 days: { place, now, days: [{ date, min, max, rain, ... }] }
+plot(f.days.map((d) => d.max), { title: 'highest temperature' })
+print(await weather.find('Springfield'))         // places with that name, with country and coordinates
+print(await weather.text('Tokyo'))               // one sentence
+```
+
+The data comes from [Open-Meteo](https://open-meteo.com) (free, no key). **A lookup
+sends the place name, or the coordinates, to open-meteo.com and nothing else.**
+Answers are kept for 10 minutes and the page asks at most 20 times a minute, so
+`every('1s', ...)` with a weather call is pointless and refused after a while. It
+can be switched off for the whole page in the helper settings (⚙, "Other"). Over
+MCP it is the server `weather` (`now`, `forecast`, `find`), so the built-in helper
+and outside AIs can ask too. Try the Lab's **A41**.
+
+### 8.13 The model on this computer (Ollama)
+
+[↑ Contents](#contents)
+
+```ts
+const s = await ollama.status()                   // never throws
+if (!s.ready) print(s.message)                    // says in plain words what is missing and what to do
+else print(await ollama.ask('Explain a loop to a child in two sentences.'))
+print((await ollama.models()).map((m) => m.name + ' ' + m.sizeGB + ' GB'))
+print(await ollama.chat([{ role: 'user', content: 'Hi!' }, { role: 'assistant', content: 'Hello!' }, { role: 'user', content: 'And now in Dutch.' }], { system: 'Be brief.' }))
+```
+
+It talks to the address in the helper settings (default `http://localhost:11434`)
+and to the model chosen there (else the first installed one). Nothing leaves the
+computer. If the server is not found, every call says so: install
+[Ollama](https://ollama.com), start it (`ollama serve`), pull a model
+(`ollama pull qwen2.5-coder:7b`) and start it with
+`OLLAMA_ORIGINS=<the address of this page>` so the page may talk to it. The AI
+chat's header shows the same warning in orange whenever a local model is chosen but
+does not answer. Ask one thing at a time (`await` it); the first question can be
+slow while the model loads, and a third question at the same time is refused when two
+are already running. LM Studio and other servers with the OpenAI-style door work
+for `ask` and `chat`; `status` then says it is not Ollama itself. Over MCP: the
+server `ollama` (`status`, `models`, `ask`; outside AIs may only `ask` when the
+person allowed outside questions). Try the Lab's **J41**.
+
+### 8.14 Input from the person: the input global
+
+[↑ Contents](#contents)
+
+```ts
+const name = await input.ask('Your name?', 'Ada')              // text, or null when cancelled
+if (await input.confirm('Start over?')) seed()                  // yes or no
+const colour = await input.choose('Colour?', ['red', 'blue'])   // one of the words, or null
+const speed = input.slider('speed', { min: 1, max: 10, step: 1, value: 3 }, (v) => print('speed', v))
+input.number('size', 8, (n) => resize(n))
+input.text('place', 'Amsterdam', (p) => draw(p))
+input.checkbox('sound', true, (on) => ...)
+input.select('mode', ['easy', 'hard'], (m) => ...)
+input.button('reset', () => seed())
+speed.value; speed.set(5); speed.remove()
+input.onKey((key, { shift, ctrl, alt, repeat }) => ...)       // 'a', 'ArrowLeft', 'Enter', 'Space'
+input.isDown('ArrowLeft')                                       // is it held right now?
+```
+
+Questions appear as a card at the top of the page, one at a time. Controls live in
+a small "🎛 Inputs" panel at the bottom left, grouped by the cell that made them.
+They go away when the cell runs again or calls `stop()`, and a control comes back
+with the value the person had given it. The change function runs as an event
+handler of the cell (one at a time, errors land on the cell), so **put the code that
+uses a value inside the function**: the cell does not re-run by itself when a
+control changes. Keys are only heard while the person is not typing in a box or an
+editor. A cell can have 24 controls, the page 60. See the Lab's **R35** (arrow
+keys), **A41** and **J41** (text boxes).
+
 ## 9 How the cell code is run (internals)
 
 [↑ Contents](#contents)
@@ -1432,6 +1559,20 @@ password, key) are refused. In ⚙ you can look through the notes, forget
 them, **back them up to a file** (and load a backup), and ask the browser to keep
 the storage safe. If the browser wipes its storage the memory starts over, so
 back up what you care about.
+
+**One memory for everything (dev server).** A browser keeps its storage per
+address, so every port of `npm run dev` would have its own memory. While the dev
+server runs, the notes and the little database are therefore also kept in one
+file, `~/.lattakker/memory.json` (or the path in `LATTAKKER_MEMORY`), and every
+page, whatever its port, uses it. A page merges the file in when it starts
+(the newer copy of a note wins), writes every change a moment later, and takes
+the file over when it gets the focus back, so a note forgotten in one page is gone
+in the others (one old copy in another port's browser storage can bring it back
+once, when that page first starts). The file is plain JSON: the command line or an
+AI in the editor can read it, and the helper reads it like any note. Only this
+computer may reach it (`/__lattakker/memory`, loopback only). The published page
+has no server, so there the memory stays in the browser and the backup button is
+the way to move it.
 
 The memory and the helper are MCP servers on the page's router, named `memory`
 and `helper`. An outside AI uses them like the tabs

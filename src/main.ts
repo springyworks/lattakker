@@ -21,6 +21,8 @@ import { loadSaved, startAutoSave } from './storage';
 import { workspace } from './workspace';
 import { router } from './mcp/router';
 import { TabServer } from './mcp/tabServer';
+import { installServices } from './services';
+import { nav } from './nav';
 import { ShareDialog } from './ui/ShareDialog';
 
 const HELP = `How to play Lattakker
@@ -201,6 +203,7 @@ lab.root.after(notebook.root);
 workspace.register({ id: 'examples', title: 'Examples', sheet: notebook.sheet, editor: notebook.pane.editor, select: () => tabs.select('examples') });
 // Every tab runs an MCP server; cells, AI helpers and tools reach them through the page's router (see mcp/router.ts).
 for (const tab of workspace.list()) new TabServer(tab, router);
+installServices();
 const tabs = new Tabs({ board: container, lab: lab.root, examples: notebook.root });
 const share = new ShareDialog(tabs.strip);
 
@@ -221,6 +224,22 @@ tabs.onChange((tab) => {
 tabs.select(tabs.fromHash());
 showHere();
 
+// Cell links and the ◀ ▶ buttons: go to a cell (zooming in), and back and forward through the places visited.
+nav.setTeller((text) => hud.say(text, 'bad'));
+nav.install();
+tabs.onBeforeChange(() => nav.beforeLeave());
+tabs.strip.onBack = () => nav.back();
+tabs.strip.onForward = () => nav.forward();
+nav.onChange(() => tabs.strip.setHistory(nav.canBack, nav.canForward));
+tabs.strip.setHistory(false, false);
+window.addEventListener('keydown', (e) => {
+  if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+  if ((e.target as HTMLElement | null)?.closest?.('input, textarea, select, .monaco-editor')) return;
+  e.preventDefault();
+  if (e.key === 'ArrowLeft') nav.back();
+  else nav.forward();
+});
+
 if (restored && saved) {
   while (sheet.rowCount < saved.rows && sheet.rowCount < 500) sheet.insertRow(sheet.rowCount - 1);
   if (saved.cols && saved.cols > sheet.colCount) sheet.addColumns(Math.min(saved.cols, MAX_COLS) - sheet.colCount);
@@ -231,11 +250,11 @@ if (restored && saved) {
 }
 // Someone returning with saved cells gets the examples that are new since their last visit (never over their own code).
 const brought = migrateExamples({ restored, board: sheet, lab: lab.sheet, examples: EXAMPLES, labDemos: LAB_DEMOS });
-if (brought > 0) hud.say(`${brought} new or updated examples are on your sheet ✨ Look for the cross-tab and MCP cells in row 42 (and A31 in the Lab).`, 'good');
+if (brought > 0) hud.say(`${brought} new or updated examples are on your sheet ✨ Look for the cross-tab and MCP cells in row 42, and the router, weather, Ollama and input demos in the Lab (A31 and rows 35 to 45).`, 'good');
 scheduleSave = startAutoSave(view.game, sheet);
 
 // Expose a few handles for tinkering from the browser console / AI chats.
-Object.assign(window as unknown as Record<string, unknown>, { sheet, game: view.game, view, hud, loadExamples, tabs, lab: lab.sheet, labPane: lab.pane, workspace, share, mcpRouter: router });
+Object.assign(window as unknown as Record<string, unknown>, { sheet, game: view.game, view, hud, loadExamples, tabs, lab: lab.sheet, labPane: lab.pane, workspace, share, mcpRouter: router, nav });
 const surface = installAiSurface({ sheet, view, hud, editor });
 // The AI helper (chat, pop-up, "// AI:" watcher): silent until someone chooses a helper in its settings.
 installAiChat({ surface, strip: tabs.strip, say: (text) => hud.say(text, 'info') });

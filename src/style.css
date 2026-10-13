@@ -1257,6 +1257,11 @@ body.ai-open #examples-panel {
 .ai-model:empty {
   display: none;
 }
+.ai-model.ai-warn {
+  color: #8a4b00;
+  background: #fff4e0;
+  white-space: normal;
+}
 .ai-via {
   margin-top: 3px;
   font-size: 10px;
@@ -1310,4 +1315,134 @@ body.ai-open #examples-panel {
   cursor: move;
   touch-action: none;
   user-select: none;
+}
+
+/* The input panel: controls that cells make with input.slider(...), input.button(...) ... and questions (input.ask) */
+.input-panel {
+  position: fixed;
+  left: 10px;
+  bottom: 10px;
+  z-index: 80;
+  width: 250px;
+  max-height: 50vh;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  background: #ffffff;
+  border: 1px solid #b8bfc7;
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16);
+  font: 12px system-ui, sans-serif;
+  color: #1f2933;
+}
+.input-title {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 6px 6px 0 0;
+  background: #e4e7eb;
+  text-align: left;
+  font: 600 12px system-ui, sans-serif;
+  cursor: pointer;
+}
+.input-panel.folded .input-body {
+  display: none;
+}
+.input-body {
+  overflow: auto;
+  padding: 4px 10px 8px;
+}
+.cell-link {
+  color: #1a6fc4;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  cursor: pointer;
+}
+.cell-link:hover {
+  color: #0b4f96;
+  text-decoration-style: solid;
+}
+.input-owner {
+  margin: 6px 0 2px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #52606d;
+}
+.input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 3px 0;
+}
+.input-label {
+  flex: 0 0 76px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.input-row input[type='range'] {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.input-row input[type='number'],
+.input-row input[type='text'],
+.input-row select {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+}
+.input-value {
+  flex: 0 0 38px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: #52606d;
+}
+.input-button {
+  padding: 3px 12px;
+  border: 1px solid #9aa5b1;
+  border-radius: 4px;
+  background: #f5f7fa;
+  font: inherit;
+  cursor: pointer;
+}
+.input-button:hover {
+  background: #e4e7eb;
+}
+.input-button.primary {
+  background: #2f6f9f;
+  border-color: #2f6f9f;
+  color: #ffffff;
+}
+.input-card {
+  position: fixed;
+  left: 50%;
+  top: 70px;
+  transform: translateX(-50%);
+  z-index: 120;
+  width: min(380px, 92vw);
+  box-sizing: border-box;
+  padding: 12px 14px;
+  background: #ffffff;
+  border: 1px solid #7b8794;
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+  font: 13px system-ui, sans-serif;
+  color: #1f2933;
+}
+.input-question {
+  margin-bottom: 8px;
+  white-space: pre-wrap;
+}
+.input-field {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 8px;
+  padding: 5px 7px;
+  font: inherit;
+}
+.input-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
 }

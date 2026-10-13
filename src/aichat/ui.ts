@@ -1,13 +1,15 @@
 import { workspace } from '../workspace';
+import { cellLink } from '../nav';
 import { router } from '../mcp/router';
 import { jobs, onJobsChange, type JobNode } from './jobs';
 import { installPopupMenu } from '../editor/EditorContextMenu';
 import type { Conversation, Entry } from './agent';
 import { destination, forgetAll, getKey, getSettings, isConfigured, setKey, updateSettings } from './config';
-import { localAssistantReady, localState, onLocalChange } from './localAi';
+import { localAssistantReady, localState, localWarning, onLocalChange } from './localAi';
 import { renderMarkdown } from './markdown';
 import { allNotes, exportJson, forget, importJson, isKeptSafe, keepSafe, memoryInfo, onMemoryChange, wipe } from './memory';
 import { describeModel } from './modelInfo';
+import { memoryFileState } from './memorySync';
 import { GeminiProvider, OpenAiCompatProvider, friendly, type ModelProvider } from './providers';
 import type { AiContext } from './tools';
 
@@ -264,7 +266,9 @@ export class AiChatUi {
       if (line) line.textContent = configured ? sent : '';
       const model = node.querySelector<HTMLElement>('[data-role=model]');
       if (model) {
-        model.textContent = configured ? `${info.line}${localAssistantReady() ? ` · 🧠 second brain: ${localState.model}` : ''}` : '';
+        const warning = localWarning();
+        model.textContent = configured ? `${info.line}${localAssistantReady() ? ` · 🧠 second brain: ${localState.model}` : ''}${warning ? ` · ${warning}` : ''}` : '';
+        model.classList.toggle('ai-warn', configured && !!warning);
         model.title = 'Who answers, and how well it probably writes code. This is a guess from the model\'s name: how smart a model feels depends on the task and on who asks.';
       }
     }
@@ -290,7 +294,7 @@ export class AiChatUi {
     if (!isConfigured()) log.append(this.setupCard());
     else if (welcome && !entries.length) {
       log.append(
-        el('div', { className: 'ai-hello' }, el('p', { textContent: 'Hi! I can look at the cell you are in and explain it, find a bug, or suggest code.' }), el('p', { textContent: 'Try: “What does this cell do?” or “Why is there an error?”' })),
+        el('div', { className: 'ai-hello' }, el('p', { textContent: 'Hi! I can look at the cell you are in and explain it, find a bug, or suggest code.' }), el('p', { textContent: 'Try: “What does this cell do?” or “Why is there an error?”' }), this.knowsPanel()),
       );
     }
     for (const entry of entries) log.append(this.entryNode(entry));
@@ -344,7 +348,7 @@ export class AiChatUi {
   private entryNode(entry: Entry): HTMLElement {
     switch (entry.kind) {
       case 'user':
-        return el('div', { className: 'ai-msg user' }, el('div', { className: 'ai-who', textContent: `You · ${entry.where}` }), el('div', { textContent: entry.text }));
+        return el('div', { className: 'ai-msg user' }, el('div', { className: 'ai-who' }, 'You · ', entry.path ? cellLink(entry.path, entry.where) : entry.where), el('div', { textContent: entry.text }));
       case 'ai': {
         const body = el('div', { className: 'ai-text' });
         body.append(renderMarkdown(entry.text));
@@ -361,7 +365,7 @@ export class AiChatUi {
 
   private proposalNode(entry: Extract<Entry, { kind: 'proposal' }>): HTMLElement {
     const pre = el('pre', {}, el('code', { textContent: entry.code }));
-    const card = el('div', { className: 'ai-proposal' }, el('div', { className: 'ai-who', textContent: entry.afterLine ? `💡 Code to add in ${entry.path} below line ${entry.afterLine}` : `💡 Code for ${entry.path}` }));
+    const card = el('div', { className: 'ai-proposal' }, el('div', { className: 'ai-who' }, entry.afterLine ? '💡 Code to add in ' : '💡 Code for ', cellLink(entry.path), entry.afterLine ? ` below line ${entry.afterLine}` : ''));
     if (entry.note) card.append(el('div', { className: 'ai-note', textContent: entry.note }));
     card.append(pre);
     if (entry.state === 'open') {
@@ -435,9 +439,12 @@ export class AiChatUi {
     done.onclick = () => this.showSettings(false);
     const outside = el('input', { type: 'checkbox', checked: s.allowOutside });
     outside.onchange = () => updateSettings((x) => (x.allowOutside = outside.checked));
-    root.append(this.memorySettings());
+    const weatherBox = el('input', { type: 'checkbox', checked: s.allowWeather });
+    weatherBox.onchange = () => updateSettings((x) => (x.allowWeather = weatherBox.checked));
+    root.append(this.knowsPanel(), this.memorySettings());
     root.append(
       el('h3', { textContent: 'Other' }),
+      el('label', { className: 'ai-row' }, weatherBox, ' Let cells and the helper look up the weather (weather.now(...), the MCP server “weather”). A lookup sends the place name to open-meteo.com, nothing else.'),
       el('label', { className: 'ai-row' }, outside, ' Let an outside AI (one connected over MCP, see the README) put questions to this helper. It then uses your helper, so with Gemini it uses your key and quota. Off by default.'),
       el('label', { className: 'ai-row' }, remember, ' Remember the key on this computer (otherwise it is forgotten when the page closes). Code in a cell could read a remembered key, so only do this on your own computer.'),
       el('label', { className: 'ai-row' }, auto, ' When I write “// AI:”, “//ai” or “//help” in a cell, pop up the helper after ', secs, ' seconds.'),
@@ -445,6 +452,28 @@ export class AiChatUi {
       el('p', { className: 'ai-note', textContent: 'Microsoft Copilot cannot be used here: it has no free way to be called from a web page.' }),
     );
     this.sideBody.append(root);
+  }
+
+  /** What an AI learns about you and the page when it starts, and what it keeps: in this chat, this browser, elsewhere. */
+  private knowsPanel(): HTMLElement {
+    const info = memoryInfo();
+    const item = (title: string, text: string): HTMLElement => el('li', {}, el('strong', { textContent: title }), ` ${text}`);
+    return el(
+      'details',
+      { className: 'ai-help' },
+      el('summary', { textContent: 'What the helper knows and remembers' }),
+      el(
+        'ul',
+        {},
+        item('The first time:', 'it knows nothing about you or your sheet. It gets the app’s fixed instructions, your question, which cell you asked from (and the text you selected), and how many notes its memory holds. Everything else it must look up with its tools: the cells it reads, the guide, the board.'),
+        item('Where that goes:', `all of it is sent to ${isConfigured() ? destination() : 'the model you choose'}. A model on this computer keeps it here; an online one (Gemini) works under its company’s rules. Weather lookups (cells or helper) send only the place name to open-meteo.com; they can be switched off below.`),
+        item('This conversation:', 'the last messages are re-sent with each question so it can follow along. They are forgotten when the page is reloaded or you start a new conversation (🗑).'),
+        item('Its memory:', `${info.count} notes and ${info.records} database records, kept in this browser (IndexedDB). They survive a reload and a restart. The helper only sees a note when it looks it up.`),
+        item('One memory on this computer:', memoryFileState.file ? `while the dev server runs, every page of it (whatever the port) shares one memory, kept in the file ${memoryFileState.file}. A note forgotten in one page is gone in the others. The command line or an AI in the editor can read the same file.` : 'the published page keeps its memory in this browser only. The dev server (npm run dev) keeps one shared memory in a file instead.'),
+        item('Without the dev server:', `the memory stays in this browser: another browser, another computer, a private window, or the same app opened from another address (for example localhost instead of ${location.host}) starts with an empty memory. Move it with “Back up to a file” and “Load a backup”.`),
+        item('Nothing in the cloud:', 'this app has no server of its own that stores your notes, chats or keys. Sharing a session with someone sends code and pointers straight to their browser, never the memory.'),
+      ),
+    );
   }
 
   /** A list of the models the server offers (the whole list, always), a box for typing a name, and a button that really asks the model one tiny thing. */

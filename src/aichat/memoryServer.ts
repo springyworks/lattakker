@@ -39,6 +39,7 @@ const brief = (n: Note) => ({ id: n.id, title: n.title, tags: n.tags, source: n.
 
 export class MemoryServer implements McpServer {
   readonly name = 'memory';
+  readonly description = "The helper's memory: notes (remember, recall) and a little database (db_put, db_query ...), kept in this browser.";
 
   async handle(method: string, params: Record<string, unknown>, from: string): Promise<Json> {
     await loadMemory();

@@ -10,6 +10,7 @@ import { HelperServer } from './helperServer';
 import { StatusServer } from './jobs';
 import { MemoryServer } from './memoryServer';
 import { loadMemory } from './memory';
+import { startMemorySync } from './memorySync';
 import { LocalAiServer, probeLocal } from './localAi';
 import { router } from '../mcp/router';
 import { AiChatUi } from './ui';
@@ -85,7 +86,7 @@ export function installAiChat(deps: { surface: Surface; strip: TabStrip; say: (t
   router.register(new StatusServer());
   router.register(new HelperServer(convo, contextNow));
   router.register(new LocalAiServer(() => convo.toolHost(), (text) => convo.note(text), 'ai-chat'));
-  void loadMemory();
+  void loadMemory().then(() => startMemorySync());
   // Is there a local model next to the main helper? Looked up now and whenever the settings change.
   void probeLocal(true);
   onSettingsChange(() => void probeLocal(true));

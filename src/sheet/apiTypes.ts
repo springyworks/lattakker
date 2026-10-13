@@ -213,6 +213,196 @@ interface Mcp {
   recent(n?: number): McpMessage[];
   /** fn(message) runs for every message as it happens. Returns a stop function. */
   tap(fn: (message: McpMessage) => unknown): () => void;
+  /**
+   * What the router has counted since the page started: messages, errors, messages per second, who asked what.
+   * Not a dependency: read it again from every('1s', ...). The same numbers are the MCP tool mcp.tool('router', 'stats').
+   * every('1s', () => plot(mcp.stats().perSecond))     messages per second over the last minute
+   */
+  stats(): RouterStats;
+  /** Start the router's counters again from zero. */
+  resetStats(): void;
+  /** Everything this app can do over MCP: every server, what it is for, its tools. Start here when you do not know what exists. */
+  catalog(): Promise<McpCatalogEntry[]>;
+  /** The tools of one server: await mcp.tools('weather'). */
+  tools(server: string): Promise<Array<{ name: string; description: string; inputSchema: object }>>;
+}
+
+/** What the router has counted. */
+interface RouterStats {
+  /** Seconds since the page started (or the last resetStats). */
+  uptimeSeconds: number;
+  messages: number;
+  requests: number;
+  errors: number;
+  notifications: number;
+  /** Messages per second, averaged over the last 10 seconds. */
+  ratePerSecond: number;
+  /** Messages in each of the last 60 seconds, oldest first: ready for plot(). */
+  perSecond: number[];
+  serverCount: number;
+  /** How many parties listen for notifications. */
+  listeners: number;
+  /** Who was asked, busiest first. */
+  servers: Array<{ name: string; requests: number; errors: number; avgMs: number; maxMs: number }>;
+  /** Who asked (a cell like 'lab:A16', 'ai-chat' ...), busiest first. */
+  clients: Array<{ name: string; requests: number; errors: number }>;
+  /** What was asked, busiest first. */
+  methods: Array<{ method: string; count: number; errors: number; avgMs: number }>;
+  slowest: { to: string; method: string; ms: number } | null;
+}
+
+interface McpCatalogEntry {
+  server: string;
+  description: string;
+  tools: Array<{ name: string; description: string }>;
+  resources: number | null;
+}
+
+/** A place on Earth. */
+interface WeatherPlace {
+  name: string;
+  country: string;
+  region: string;
+  lat: number;
+  lon: number;
+  timezone: string;
+}
+
+interface WeatherNow {
+  /** Local time at the place, e.g. '2026-10-13T08:30'. */
+  time: string;
+  /** °C */
+  temperature: number;
+  feelsLike: number;
+  /** % */
+  humidity: number;
+  /** km/h */
+  wind: number;
+  windDegrees: number;
+  /** Compass point the wind comes from: 'N', 'NE', ... */
+  windFrom: string;
+  /** mm in the last hour */
+  rain: number;
+  /** % of the sky covered */
+  clouds: number;
+  isDay: boolean;
+  /** WMO weather code, with a short text ('Light rain') and an emoji ('🌧'). */
+  code: number;
+  text: string;
+  icon: string;
+}
+
+interface WeatherDay {
+  date: string;
+  min: number;
+  max: number;
+  rain: number;
+  rainChance: number | null;
+  wind: number;
+  uv: number;
+  sunrise: string;
+  sunset: string;
+  code: number;
+  text: string;
+  icon: string;
+}
+
+/** A place: a name ('Amsterdam', 'Paris, France'), coordinates as text ('52.37,4.89') or { lat, lon }. */
+type WeatherPlaceInput = string | { lat: number; lon: number; name?: string };
+
+/**
+ * The weather anywhere, from open-meteo.com (free). A lookup sends the place name there; a grown-up can switch it
+ * off in the helper settings. Answers are kept for 10 minutes, so asking often is fine but pointless.
+ * const w = await weather.now('Amsterdam'); print(w.icon, w.temperature + '°C', w.text)
+ * const f = await weather.forecast('Paris, France', 5); plot(f.days.map(d => d.max))
+ */
+interface WeatherApi {
+  now(place: WeatherPlaceInput): Promise<WeatherNow & { place: WeatherPlace }>;
+  forecast(place: WeatherPlaceInput, days?: number): Promise<{ place: WeatherPlace; now: WeatherNow; days: WeatherDay[] }>;
+  find(query: string, count?: number): Promise<WeatherPlace[]>;
+  /** One sentence for print(): '🌧 Rain, 11°C (feels 9°C), wind 14 km/h from SW, humidity 88%'. */
+  text(place: WeatherPlaceInput): Promise<string>;
+}
+
+interface OllamaStatus {
+  /** Something answers at the address from the helper settings (default localhost:11434). */
+  running: boolean;
+  isOllama: boolean;
+  server: string;
+  version: string | null;
+  /** Installed models, and the ones that are in memory right now. */
+  models: string[];
+  loaded: string[];
+  /** The model chosen in the helper settings ('' when none). */
+  selected: string;
+  /** ask() can work. */
+  ready: boolean;
+  /** What is wrong and what to do about it, or a short "Ready". */
+  message: string;
+}
+
+interface OllamaModel {
+  name: string;
+  sizeGB: number;
+  family: string;
+  parameters: string;
+  quantization: string;
+  loaded: boolean;
+}
+
+interface OllamaOptions {
+  /** Which model (default: the one chosen in the helper settings, else the first installed). */
+  model?: string;
+  /** How the model should behave. */
+  system?: string;
+}
+
+/**
+ * The model on this computer (Ollama, or LM Studio): nothing leaves the computer.
+ * const s = await ollama.status(); if (!s.ready) print(s.message)
+ * print(await ollama.ask('Explain a loop to a child in two sentences.'))
+ * Ask one thing at a time (await it); the first question can be slow while the model loads.
+ */
+interface OllamaApi {
+  /** Never throws: it describes the problem (server not found, model missing ...) in plain words. */
+  status(): Promise<OllamaStatus>;
+  models(): Promise<OllamaModel[]>;
+  ask(prompt: string, options?: OllamaOptions): Promise<string>;
+  chat(messages: Array<{ role: 'user' | 'assistant'; content: string }>, options?: OllamaOptions): Promise<string>;
+}
+
+/** A control in the input panel. */
+interface InputControl<T> {
+  /** What the person set it to. */
+  readonly value: T;
+  /** Change it from code. */
+  set(value: T): void;
+  /** Take it out of the panel. */
+  remove(): void;
+}
+
+/**
+ * Answers from the person. Questions appear as a card, controls in the "Inputs" panel (bottom left), grouped by cell.
+ * A control keeps the value the person gave it when the cell runs again. Put the code that uses a value inside the function.
+ * const name = await input.ask('Your name?')                      text (null when cancelled)
+ * const speed = input.slider('speed', { min: 1, max: 10, value: 3 }, (v) => print('speed', v))
+ * input.button('reset', () => seed())
+ * input.onKey((key) => { if (key === 'ArrowLeft') ... })           keys, while not typing in a box or the editor
+ */
+interface InputApi {
+  ask(question: string, initial?: string): Promise<string | null>;
+  confirm(question: string): Promise<boolean>;
+  choose(question: string, options: string[]): Promise<string | null>;
+  slider(label: string, options?: { min?: number; max?: number; step?: number; value?: number }, fn?: (value: number) => unknown): InputControl<number>;
+  number(label: string, value?: number, fn?: (value: number) => unknown): InputControl<number>;
+  text(label: string, value?: string, fn?: (value: string) => unknown): InputControl<string>;
+  checkbox(label: string, value?: boolean, fn?: (value: boolean) => unknown): InputControl<boolean>;
+  select(label: string, options: string[], fn?: (value: string) => unknown): InputControl<string>;
+  button(label: string, fn: () => unknown): InputControl<undefined>;
+  /** fn(key, { shift, ctrl, alt, repeat }): keys are named 'a', 'ArrowLeft', 'Enter', 'Space'. Returns a stop function. */
+  onKey(fn: (key: string, info: { shift: boolean; ctrl: boolean; alt: boolean; repeat: boolean }) => unknown): () => void;
+  /** Is this key held down right now? */
+  isDown(key: string): boolean;
 }
 
 interface SheetApi {
@@ -282,6 +472,12 @@ declare function on(target: 'game', fn: (game: GameApi) => unknown): () => void;
 declare function on(target: 'sheet', event: 'rows' | 'mode', fn: (sheet: SheetApi) => unknown): () => void;
 /** Talk to other tabs over MCP (asynchronous): read their cells, watch them, click them, send them signals. */
 declare const mcp: Mcp;
+/** The weather anywhere (open-meteo.com). await weather.now('Amsterdam'). */
+declare const weather: WeatherApi;
+/** The model on this computer (Ollama). await ollama.ask('...'); await ollama.status() says what is missing. */
+declare const ollama: OllamaApi;
+/** Answers from the person: await input.ask('Name?'), input.slider(...), input.button(...), input.onKey(...). */
+declare const input: InputApi;
 /** This cell's notebook: survives re-runs and moves with the cell's code. Use it for counters and "what did I see last time". */
 declare const memory: Record<string, any>;
 /** Why this run started. reason: 'edit' (code was written or Run pressed), 'moved' (block or row moved) or 'update' (something this cell reads changed). count: runs since the code was written. */

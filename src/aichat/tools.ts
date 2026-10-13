@@ -90,9 +90,14 @@ export const TOOL_DECLS: ToolDecl[] = [
     },
   },
   {
+    name: 'discover',
+    description: 'What this app can do over MCP, in one answer: every server (tabs, router, memory, status, weather, ollama, local-ai, helper), what it is for and the names of its tools, plus what the router has counted so far. Call it when you are not sure what is possible, then use mcp_call (tools/list shows the details of one server).',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
     name: 'mcp_call',
     description:
-      'Talk MCP to the app directly, like any MCP client. Every tab is an MCP server (its id is the server name: "board", "lab", "examples"), and so are "memory" (notes and the little database), "local-ai" (the local model, if there is one) and "status" (what is going on right now). Methods: "resources/list" (the cells), "resources/read" with {"uri":"lattakker:///board/A12"}, "tools/list", "tools/call" with {"name":"get_cell"|"list_cells"|"run_cell"|"click"|"flash"|"signal","arguments":{...}}. Changing a cell\'s code is not allowed here: use suggest_code, so the person decides.',
+      'Talk MCP to the app directly, like any MCP client. Every tab is an MCP server (its id is the server name: "board", "lab", "examples"), and so are "router" (statistics, catalog, recent traffic), "memory" (notes and the little database), "weather" (tools now, forecast, find), "ollama" (the model on this computer: status, models, ask), "local-ai" (the second brain, if there is one) and "status" (what is going on right now). Methods: "resources/list" (the cells), "resources/read" with {"uri":"lattakker:///board/A12"}, "tools/list", "tools/call" with {"name":"get_cell"|"list_cells"|"run_cell"|"click"|"flash"|"signal","arguments":{...}}. Changing a cell\'s code is not allowed here: use suggest_code, so the person decides.',
     parameters: {
       type: 'object',
       properties: {
@@ -162,7 +167,7 @@ function limit(text: string, max = MAX_RESULT): string {
 const CELL_RULES = `Rules of cell code (read these first):
 - A cell is a top-level script, not a function: there is no \`return\`. Show results with print(...) (or view(text)).
 - The game is the global \`game\` (use game.phase, game.turn, game.lastMove, game.pieces('red') ...). \`mms\` does NOT exist inside cells (it is for outside AIs); inside cells use \`mcp\` and \`at()\`.
-- Never declare a variable with a name the app already uses (game, sheet, cell, memory, at, on, every, after, print, view, color, span, grid, plot, mcp, run, stop, range). A cell's own helper names must be different, or the cell fails with "Identifier ... has already been declared".
+- Never declare a variable with a name the app already uses (game, sheet, cell, memory, at, on, every, after, print, view, color, span, grid, plot, mcp, weather, ollama, input, run, stop, range). A cell's own helper names must be different, or the cell fails with "Identifier ... has already been declared".
 - game.lastMove and game.history are the moves of the battle; swaps made while arranging the army are not in them.
 `;
 
@@ -257,6 +262,19 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
         const tool = { consult_local: 'consult', teach_local: 'teach', manage_local: 'manage' }[name]!;
         const r = inner(await router.request(client, 'local-ai', 'tools/call', { name: tool, arguments: args }));
         return limit(asText(r.ok ? r.value : { error: r.value }));
+      }
+      case 'discover': {
+        const catalog = inner(await router.request(client, 'router', 'tools/call', { name: 'catalog', arguments: {} }));
+        const stats = inner(await router.request(client, 'router', 'tools/call', { name: 'stats', arguments: {} }));
+        if (!catalog.ok) return asText({ error: catalog.value });
+        const servers = ((catalog.value as { servers?: Array<{ server: string; description: string; tools: Array<{ name: string }>; resources: number | null }> }).servers ?? []).map((s) => ({
+          server: s.server,
+          for: s.description,
+          tools: s.tools.map((t) => t.name),
+          resources: s.resources,
+        }));
+        const s = (stats.value ?? {}) as { messages?: number; errors?: number; ratePerSecond?: number; servers?: Array<{ name: string; requests: number }> };
+        return limit(asText({ servers, router: { messages: s.messages, errors: s.errors, ratePerSecond: s.ratePerSecond, busiest: (s.servers ?? []).slice(0, 3) } }));
       }
       case 'mcp_call': {
         const server = String(args.server ?? '');

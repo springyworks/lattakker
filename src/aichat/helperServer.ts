@@ -29,6 +29,7 @@ const TOOLS = [
 
 export class HelperServer implements McpServer {
   readonly name = 'helper';
+  readonly description = "The page's built-in AI helper: ask it a question (only when the person allowed outside questions).";
 
   constructor(
     private readonly convo: Conversation,

@@ -83,6 +83,13 @@ export interface TileGrid {
   texts: Array<string | null>;
 }
 
+/** Where a sheet is looking: zoom and scroll position. */
+export interface SheetView {
+  scale: number;
+  left: number;
+  top: number;
+}
+
 export interface SheetCellData {
   address: string;
   col: number;
@@ -1813,6 +1820,76 @@ export class Sheet {
   }
 
   // ------------------------------------------------------------------- zoom
+
+  /** The scale and scroll position right now, so that a view can be come back to. */
+  viewState(): SheetView {
+    return { scale: this.graph.getView().getScale(), left: this.container.scrollLeft, top: this.container.scrollTop };
+  }
+
+  private flight = 0;
+
+  /** Where to look to see a cell's block large: zoomed so that the block fills most of the window, centred. */
+  viewOfCell(address: string): SheetView | null {
+    const d = this.data.get(address);
+    if (!d) return null;
+    const c = this.container;
+    const t = this.graph.getView().getTranslate();
+    const w = d.span.cols * CW;
+    const h = d.span.rows * CH;
+    const fit = Math.min((c.clientWidth * 0.85) / w, (c.clientHeight * 0.85) / h);
+    const scale = Math.min(2, Math.max(0.8, fit));
+    const cx = (ORIGIN_X + d.col * CW + w / 2 + t.x) * scale;
+    const cy = (ORIGIN_Y + d.row * CH + h / 2 + t.y) * scale;
+    return { scale, left: Math.max(0, cx - c.clientWidth / 2), top: Math.max(0, cy - c.clientHeight / 2) };
+  }
+
+  /**
+   * Flies to a view. The motion has one job: to let the eye follow where the view went, so the person keeps their
+   * sense of place. So it starts and ends gently (ease in and out; a quick start is what made it feel like a
+   * jump), it takes longer for a longer way, and on a far jump it zooms out a little halfway so the way across
+   * is seen before the zoom in. The point in the middle of the window moves in a straight line. A new flight
+   * replaces a running one.
+   */
+  flyTo(target: SheetView, ms?: number): Promise<void> {
+    const id = ++this.flight;
+    const c = this.container;
+    const from = this.viewState();
+    const end = Math.min(2.5, Math.max(0.4, target.scale));
+    const hx = c.clientWidth / 2;
+    const hy = c.clientHeight / 2;
+    // The point in the middle of the window, in units that do not depend on the zoom.
+    const a = { x: (from.left + hx) / from.scale, y: (from.top + hy) / from.scale };
+    const b = { x: (target.left + hx) / target.scale, y: (target.top + hy) / target.scale };
+    // How far, in widths of the window as seen at the lower of the two zooms.
+    const far = Math.hypot(b.x - a.x, b.y - a.y) / (c.clientWidth / Math.min(from.scale, end));
+    const duration = ms ?? Math.min(1500, 800 + 250 * far);
+    const dip = Math.min(0.45, Math.max(0, (far - 0.6) * 0.3));
+    const start = performance.now();
+    return new Promise((resolve) => {
+      const frame = (now: number): void => {
+        if (id !== this.flight) return resolve();
+        const p = Math.min(1, (now - start) / duration);
+        const e = p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+        const s = Math.max(0.4, from.scale * Math.pow(end / from.scale, e) * (1 - dip * Math.sin(Math.PI * e)));
+        this.graph.zoomTo(s, false);
+        c.scrollLeft = (a.x + (b.x - a.x) * e) * s - hx;
+        c.scrollTop = (a.y + (b.y - a.y) * e) * s - hy;
+        this.updateStickyHeaders();
+        if (p < 1) requestAnimationFrame(frame);
+        else resolve();
+      };
+      requestAnimationFrame(frame);
+    });
+  }
+
+  /** Flies to a cell's block (zooming in) and gives it a short pulse when it arrives. */
+  async flyToCell(address: string, ms?: number): Promise<boolean> {
+    const view = this.viewOfCell(address);
+    if (!view) return false;
+    await this.flyTo(view, ms);
+    this.flash(address, undefined, 600);
+    return true;
+  }
 
   zoomBy(factor: number): void {
     const view = this.graph.getView();

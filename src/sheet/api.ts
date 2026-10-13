@@ -9,6 +9,10 @@ import { router, type Traffic } from '../mcp/router';
 import { SIGNAL } from '../mcp/tabServer';
 import { CancelError, parseInterval, type RunContext } from './tasks';
 import { makePlot, type PlotOptions } from './plot';
+import { buildCatalog } from '../mcp/routerServer';
+import { findPlaces, forecast as weatherForecast, summary as weatherSummary, weatherNow, type PlaceInput } from '../services/weather';
+import { ollamaAsk, ollamaChat, ollamaModels, ollamaStatus, type OllamaMessage, type OllamaOptions } from '../services/ollama';
+import { inputPanel, type ControlKind, type ControlSpec } from '../ui/InputPanel';
 
 const MIN_INTERVAL_MS = 10;
 const MAX_OUTPUT_LINES = 300;
@@ -822,6 +826,24 @@ export function buildApi(
     },
     /** The last n messages that crossed the router (who asked whom, and what). */
     recent: (n = 10): Traffic[] => router.recent(n),
+    /** What the router has counted: messages, errors, rate, per second (last 60 s), and per server, client and method. */
+    stats: () => router.stats(),
+    /** Start the router's counters again from zero. */
+    resetStats: (): void => {
+      ctx.guard();
+      router.resetStats();
+    },
+    /** Every server with what it is for, its tools and how many resources it holds: what can be done in this app. */
+    catalog: async () => {
+      ctx.guard();
+      return buildCatalog(router, caller);
+    },
+    /** The tools of one server: [{ name, description, inputSchema }]. */
+    tools: async (server: string) => {
+      ctx.guard();
+      const result = (await router.request(caller, aim(server).server, 'tools/list')) as { tools?: unknown[] };
+      return result.tools ?? [];
+    },
     /** Watch every message as it happens: fn(message). */
     tap: (fn: (message: Traffic) => unknown): (() => void) => {
       ctx.guard();
@@ -838,6 +860,130 @@ export function buildApi(
     },
   };
 
+  /** Runs something that may take a while (a web request, the local model) so that it ends with this run: a cell that runs again cancels it. */
+  const cancellable = async <T>(work: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+    ctx.guard();
+    const abort = new AbortController();
+    const forget = ctx.addTransient(() => abort.abort());
+    try {
+      const result = await work(abort.signal);
+      ctx.guard();
+      return result;
+    } catch (err) {
+      if (ctx.cancelled) throw new CancelError();
+      throw err;
+    } finally {
+      forget();
+    }
+  };
+
+  const weather = {
+    /** The weather right now in a place ("Amsterdam", "Paris, France", "52.37,4.89" or { lat, lon }). */
+    now: (place: PlaceInput) => cancellable(() => weatherNow(place)),
+    /** The weather now and the next 1 to 7 days. */
+    forecast: (place: PlaceInput, days = 3) => cancellable(() => weatherForecast(place, days)),
+    /** Places that fit a name, best first. */
+    find: (query: string, count = 5) => cancellable(() => findPlaces(query, count)),
+    /** One sentence about the weather now, for print(). */
+    text: (place: PlaceInput) => cancellable(async () => weatherSummary((await weatherNow(place)))),
+  };
+
+  const ollama = {
+    /** Is the model server there, which models, and what to do when something is missing. Never throws. */
+    status: () => cancellable(() => ollamaStatus()),
+    /** The installed models. */
+    models: () => cancellable(() => ollamaModels()),
+    /** One question to the model on this computer; the answer arrives later (await it). */
+    ask: (prompt: string, options?: OllamaOptions) => cancellable((signal) => ollamaAsk(prompt, options, signal)),
+    /** A conversation: ollama.chat([{ role: 'user', content: 'Hi' }, ...]). */
+    chat: (messages: OllamaMessage[], options?: OllamaOptions) => cancellable((signal) => ollamaChat(messages, options, signal)),
+  };
+
+  const ownerLabel = workspace.pathOf(sheet.id, data.address);
+
+  /** A control in the input panel; `fn` runs (as an event handler of this cell) when the person changes it. */
+  const control = (kind: ControlKind, label: string, spec: Omit<ControlSpec, 'kind' | 'onChange'>, fn?: unknown) => {
+    ctx.guard();
+    if (fn !== undefined && typeof fn !== 'function') throw new Error(`input.${kind}(label, ..., fn): fn must be a function`);
+    let handle: ReturnType<typeof inputPanel.add> | null = null;
+    let forget = () => {};
+    const stop = (): void => {
+      handle?.remove();
+      forget();
+    };
+    const run = fn ? callback(fn as (...args: unknown[]) => unknown, stop) : null;
+    handle = inputPanel.add(caller, ownerLabel, String(label), {
+      ...spec,
+      kind,
+      onChange: (value) => {
+        if (run && !ctx.cancelled) void run(...(kind === 'button' ? [] : [value]));
+      },
+    });
+    forget = ctx.addTask(stop);
+    const made = handle;
+    return {
+      get value() {
+        return made.value;
+      },
+      set: (value: unknown) => made.set(value),
+      remove: stop,
+    };
+  };
+
+  /** A question card; resolves with the answer, or null when cancelled. */
+  const question = async (kind: 'ask' | 'confirm' | 'choose', text: string, extra: { initial?: string; options?: string[] } = {}) => {
+    ctx.guard();
+    const q = inputPanel.question({ kind, text: String(text), ...extra });
+    const forget = ctx.addTransient(() => q.cancel());
+    try {
+      const answer = await q.answer;
+      ctx.guard();
+      return answer;
+    } finally {
+      forget();
+    }
+  };
+
+  const input = {
+    /** Ask for a text: const name = await input.ask('Your name?'). Returns null when the person cancels. */
+    ask: (text: string, initial = '') => question('ask', text, { initial: String(initial) }) as Promise<string | null>,
+    /** Ask yes or no: if (await input.confirm('Start over?')) ... */
+    confirm: async (text: string) => (await question('confirm', text)) === true,
+    /** Pick one of some words: const colour = await input.choose('Colour?', ['red', 'blue']). Returns null when cancelled. */
+    choose: (text: string, options: string[]) => {
+      if (!Array.isArray(options) || !options.length) throw new Error("input.choose needs a list of words: input.choose('Colour?', ['red', 'blue'])");
+      return question('choose', text, { options: options.map(String) }) as Promise<string | null>;
+    },
+    slider: (label: string, options: { min?: number; max?: number; step?: number; value?: number } = {}, fn?: unknown) => control('slider', label, options, fn),
+    number: (label: string, value = 0, fn?: unknown) => control('number', label, { value }, fn),
+    text: (label: string, value = '', fn?: unknown) => control('text', label, { value }, fn),
+    checkbox: (label: string, value = false, fn?: unknown) => control('checkbox', label, { value }, fn),
+    select: (label: string, options: string[], fn?: unknown) => {
+      if (!Array.isArray(options) || !options.length) throw new Error("input.select needs a list of words: input.select('Colour', ['red', 'blue'])");
+      return control('select', label, { options: options.map(String), value: options[0] }, fn);
+    },
+    button: (label: string, fn: unknown) => control('button', label, {}, fn),
+    /** fn(key, { shift, ctrl, alt, repeat }) runs when a key is pressed (not while typing in a box or the editor). Keys: 'a', 'ArrowLeft', 'Enter', 'Space'. */
+    onKey: (fn: (key: string, info: { shift: boolean; ctrl: boolean; alt: boolean; repeat: boolean }) => unknown): (() => void) => {
+      ctx.guard();
+      if (typeof fn !== 'function') throw new Error('input.onKey needs a function: input.onKey((key) => { ... })');
+      let forget = () => {};
+      let off = () => {};
+      const stop = (): void => {
+        off();
+        forget();
+      };
+      const run = callback(fn as (...args: unknown[]) => unknown, stop);
+      off = inputPanel.onKey((key, info) => {
+        if (!ctx.cancelled) void run(key, info);
+      });
+      forget = ctx.addTask(stop);
+      return stop;
+    },
+    /** Is this key held down right now? input.isDown('ArrowLeft') */
+    isDown: (key: string): boolean => inputPanel.isDown(key),
+  };
+
   const runInfo = Object.freeze({ reason: data.runReason, count: data.runCount });
 
   return {
@@ -851,6 +997,9 @@ export function buildApi(
     span: (cols?: number, rows?: number) => self.span(cols, rows),
     grid,
     mcp,
+    weather,
+    ollama,
+    input,
     every,
     after,
     on,

@@ -9,6 +9,9 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as
 export type ApiFactory = (data: SheetCellData, ctx: RunContext) => Record<string, unknown>;
 export type Transpiler = (address: string, source: string) => Promise<TranspileResult>;
 
+/** Names that joined the cell API after cells already existed. */
+const OPTIONAL_NAMES = new Set(['weather', 'ollama', 'input']);
+
 /** Runs one cell: transpile its TypeScript, then execute it with the cell API in scope. */
 export async function runCell(data: SheetCellData, ctx: RunContext, makeApi: ApiFactory, transpile: Transpiler): Promise<void> {
   const source = data.code;
@@ -27,14 +30,23 @@ export async function runCell(data: SheetCellData, ctx: RunContext, makeApi: Api
   }
   if (ctx.cancelled) return;
   const api = makeApi(data, ctx);
-  const names = Object.keys(api);
-  const values = names.map((n) => api[n]);
+  let names = Object.keys(api);
   let fn: (...values: unknown[]) => Promise<unknown>;
-  try {
-    fn = new AsyncFunction(...names, `"use strict";\n${js}`);
-  } catch (err) {
-    data.error = err instanceof Error ? err.message : String(err);
-    return;
+  for (;;) {
+    try {
+      fn = new AsyncFunction(...names, `"use strict";\n${js}`);
+      break;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // A cell that already declares its own `input`, `weather` or `ollama` (before they were part of the API) keeps its own.
+      const clash = /Identifier '(\w+)' has already been declared/.exec(message)?.[1];
+      if (clash && OPTIONAL_NAMES.has(clash) && names.includes(clash)) {
+        names = names.filter((n) => n !== clash);
+        continue;
+      }
+      data.error = message;
+      return;
+    }
   }
-  await fn(...values);
+  await fn(...names.map((n) => api[n]));
 }

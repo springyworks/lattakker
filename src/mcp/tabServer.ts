@@ -56,6 +56,7 @@ const TOOLS: ToolSpec[] = [
 
 export class TabServer implements McpServer {
   readonly name: string;
+  readonly description: string;
   /** `${client}|${uri}` -> the way to stop sending that client updates. */
   private readonly subscriptions = new Map<string, () => void>();
 
@@ -64,6 +65,7 @@ export class TabServer implements McpServer {
     private readonly router: McpRouter,
   ) {
     this.name = tab.id;
+    this.description = `The cells of the ${tab.id} tab: read, run, click, flash, change their code, watch them.`;
     router.register(this);
   }
 

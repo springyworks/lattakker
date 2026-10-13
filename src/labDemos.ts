@@ -1235,4 +1235,157 @@ show(
   'Game phase: ' + game.phase
 )`,
   ],
+  [
+    'A35',
+    String.raw`// THE ROUTER'S DASHBOARD.
+// Every request between cells, tabs and helpers goes through one postman, the
+// MCP router, and the router counts everything it carries.
+// mcp.stats() gives you those counts (no waiting needed, it is instant).
+
+// This block is 9 columns wide and 5 rows tall.
+span(9, 5)
+
+// Paint the background a pale blue.
+color('#e6eef7')
+
+// every('500ms', f) runs f twice a second, for as long as this cell lives.
+every('500ms', () => {
+  // s is a snapshot of all the counters.
+  const s = mcp.stats()
+
+  // s.perSecond is a list: how many messages crossed in each of the last 60
+  // seconds. plot(list) draws it as a line.
+  plot(s.perSecond, { title: 'messages per second, last minute', yMin: 0 })
+
+  // s.servers is sorted busiest first, so the first one is the busiest.
+  const top = s.servers[0]
+
+  // show(text) writes the caption under the plot.
+  show(s.messages + ' messages · ' + s.errors + ' errors · busiest: ' + (top ? top.name + ' (' + top.requests + ')' : 'none yet'))
+})`,
+  ],
+  [
+    'J35',
+    String.raw`// WHAT CAN THIS APP DO? Every part of the page that can be asked something
+// is an MCP server. The catalog lists them all, with their tools.
+
+// 8 columns wide, 5 rows tall.
+span(8, 5)
+
+// Paint the background a pale green.
+color('#eef3ee')
+
+// await waits until the answer has come back from the router.
+const servers = await mcp.catalog()
+
+// One short piece of text per server: its name and how many tools it has.
+const parts = servers.map((s) => s.server + ' (' + s.tools.length + ')')
+
+// show() writes the text. The same list is the MCP tool router/catalog, so a
+// helper can ask it too. Try: print(await mcp.tools('weather'))
+show('MCP servers and their tools:\n' + parts.join(' · '))`,
+  ],
+  [
+    'R35',
+    String.raw`// STEER A DOT WITH THE ARROW KEYS. input.onKey(f) runs f for every key you
+// press, as long as you are not typing in a box or in the editor.
+
+// 8 columns wide, 5 rows tall.
+span(8, 5)
+color('#eef3ee')
+
+// A grid of 16 tiles across and 10 tiles down fills the block.
+const g = grid(16, 10)
+
+// memory keeps the dot's place when the cell runs again.
+if (!memory.pos) memory.pos = { x: 8, y: 5 }
+
+// draw clears the grid and paints the dot green.
+const draw = () => {
+  g.fill(null)
+  g.at(memory.pos.x, memory.pos.y).color('#3f8f5a')
+  show('Click here, then press the arrow keys: x ' + memory.pos.x + ', y ' + memory.pos.y)
+}
+
+// For each arrow key: how far the dot moves across and down.
+const moves = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }
+
+// f gets the name of the key. Other keys are not in "moves", so we stop.
+input.onKey((key) => {
+  const m = moves[key]
+  if (!m) return
+
+  // The % trick makes the dot come back on the other side of the grid.
+  memory.pos.x = (memory.pos.x + m[0] + g.cols) % g.cols
+  memory.pos.y = (memory.pos.y + m[1] + g.rows) % g.rows
+  draw()
+})
+draw()`,
+  ],
+  [
+    'A41',
+    String.raw`// THE WEATHER, anywhere on Earth. weather.forecast(place, days) asks
+// open-meteo.com (a free weather service). Only the place name is sent there.
+// Type another place in the Inputs panel (bottom left of the page).
+
+// 9 columns wide, 5 rows tall.
+span(9, 5)
+color('#e8f1f8')
+
+// draw looks up the weather for a place and shows it.
+const draw = async (place) => {
+  // try ... catch: if the lookup fails (no internet, unknown place), show why.
+  try {
+    // await waits until open-meteo.com has answered.
+    const f = await weather.forecast(place, 3)
+
+    // First line: icon, place, country, temperature now.
+    const lines = [f.now.icon + ' ' + f.place.name + ' (' + f.place.country + '): ' + Math.round(f.now.temperature) + '°C, ' + f.now.text + ', wind ' + Math.round(f.now.wind) + ' km/h from ' + f.now.windFrom]
+
+    // One line for each coming day: lowest..highest temperature.
+    for (const d of f.days) lines.push(d.date + '  ' + d.icon + '  ' + Math.round(d.min) + '..' + Math.round(d.max) + '°C  ' + d.text)
+
+    show(lines.join('\n'))
+  } catch (err) {
+    show('⚠ ' + err.message)
+  }
+}
+
+// input.text puts a text box in the Inputs panel. The function runs when you change it.
+const box = input.text('place', 'Amsterdam', (place) => draw(place))
+
+// Show the weather for the place in the box right now.
+draw(box.value)`,
+  ],
+  [
+    'J41',
+    String.raw`// THE MODEL ON THIS COMPUTER (Ollama). Nothing leaves your computer.
+// ollama.status() never fails: if Ollama is not running it says what to do.
+
+// 8 columns wide, 5 rows tall.
+span(8, 5)
+color('#efe6f5')
+
+// await waits for the answer.
+const s = await ollama.status()
+
+if (!s.ready) {
+  // Not ready: s.message explains in plain words what is missing.
+  show('⚠ ' + s.message)
+} else {
+  show('🧠 ' + s.message + '\nType a question in the Inputs panel.')
+
+  // The function runs each time you change the box (press Enter).
+  input.text('question', 'Why is the sky blue?', async (q) => {
+    show('🧠 thinking...')
+    try {
+      // system tells the model how to behave.
+      const answer = await ollama.ask(q, { system: 'Answer in two short sentences, for a child.' })
+      show('🧠 ' + answer)
+    } catch (err) {
+      show('⚠ ' + err.message)
+    }
+  })
+}`,
+  ],
 ];

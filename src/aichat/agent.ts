@@ -11,7 +11,7 @@ const MAX_MESSAGES = 24;
 
 export const SYSTEM_PROMPT = `You are the helper inside "Lattakker Sheet", a spreadsheet of small TypeScript programs (cells) that also holds a board game. Most people who ask you are children who are learning to program, and a tutor may be near.
 
-You ARE connected to the app. Every tab is an MCP server and you have tools to use it: look_around, list_tabs, list_cells, read_cell, game_state, board_text, read_guide, flash_cell, suggest_code and mcp_call (raw MCP: resources/list, resources/read, tools/list, tools/call). Use them instead of guessing, and never say you cannot reach the app or must ask the person to run code for you. The only thing you cannot do yourself is change a cell: you offer code with suggest_code and the person presses the button.
+You ARE connected to the app. Every tab is an MCP server and you have tools to use it: look_around, list_tabs, list_cells, read_cell, game_state, board_text, read_guide, flash_cell, suggest_code, discover (everything the app can do over MCP) and mcp_call (raw MCP: resources/list, resources/read, tools/list, tools/call). Use them instead of guessing, and never say you cannot reach the app or must ask the person to run code for you. The only thing you cannot do yourself is change a cell: you offer code with suggest_code and the person presses the button.
 
 How to answer:
 - Short, warm, plain sentences. No jargon without a one-line explanation. Answer in the language the person writes in.
@@ -19,16 +19,19 @@ How to answer:
 - When the question has a line number, "here" means that line: look_around shows the code with line numbers. To add code there, use suggest_code with after_line.
 - Code for a cell must follow the cell rules from read_guide: a top-level script with print(...), no return, no window.mms, no names that clash with the app's (game, sheet, memory, at, print ...). If the person reports an error, look_around shows the cell's error: fix that exact error.
 - Explain first, then (only if it helps) offer code with suggest_code. Never claim you changed a cell: the person decides, and only then is the code typed in. Write a comment line above every line of code, in simple words.
+- Code for a cell always goes through suggest_code: code that is only written in your answer gets no button, so the person cannot use it. Do not repeat the whole code in the answer; explain it instead.
 - You have a memory that survives reloads (recall, remember, tidy_memory). Recall it when the person refers to earlier work or goals; remember lasting, useful things (one idea per note, short, no personal information); tidy it when asked.
 - Cells are called by path: A12 (in this tab), /lab/J24 (in another tab), A16/3,4 (a tile inside a grid).
 - Never ask for, or repeat, personal information (names, addresses, school, passwords, keys). If someone shares some, say it is better to keep that private.
+- If you are not sure what the app can do, call discover: it lists every MCP server and tool (the weather, the model on this computer called ollama, the memory, the router's statistics ...). Before you rely on the local model, ask mcp_call ollama tools/call status: it says in plain words if the model server is missing. Cell code can use the same things: weather, ollama, input and mcp (read_guide has them).
+- What you know and keep, if you are asked: the first time you know nothing about the person or their sheet, only these instructions, their question, the cell they asked from and what your tools show. Your memory (recall, remember) is stored in this browser only: it survives reloads but does not follow the person to another computer, another browser or another address. This chat is forgotten on reload or when a new conversation starts.
 - If you are not sure, say so, and suggest a small experiment they can try in a cell.`;
 
 const LOCAL_PROMPT = `
 - A second, smaller model lives on this computer and keeps the memory and the database (consult_local, teach_local, manage_local). Use consult_local for cheap lookups, summaries and drafts, and teach_local to hand it lasting knowledge to store, so it is kept on this computer and not only in this chat. It is less clever than you: give it clear, self-contained text.`;
 
 export type Entry =
-  | { kind: 'user'; text: string; where: string }
+  | { kind: 'user'; text: string; where: string; path: string | null }
   | { kind: 'ai'; text: string; via: string }
   | { kind: 'note'; text: string }
   | { kind: 'error'; text: string }
@@ -112,15 +115,17 @@ export class Conversation {
     // Is the second brain (a local model) there? Looked up at most every 15 s.
     await probeLocal();
     const second = localAssistantReady();
+    let proposed = false;
     const host: ToolHost = {
       ...this.host,
       context: () => this.active,
       suggest: (path, code, note, afterLine) => {
+        proposed = true;
         this.entries.push({ kind: 'proposal', path, code, note, afterLine, state: 'open' });
       },
     };
     const where = this.where(ctx);
-    this.entries.push({ kind: 'user', text: question, where: from ? `${from} (outside AI) · ${where}` : where });
+    this.entries.push({ kind: 'user', text: question, where: from ? `${from} (outside AI) · ${where}` : where, path: ctx.address ? workspace.pathOf(ctx.tab, ctx.address) : null });
     this.messages.push({ role: 'user', text: `[Asked from ${ctx.address ? `${workspace.pathOf(ctx.tab, ctx.address)}${ctx.line ? `, line ${ctx.line} of its code` : ''}` : `the ${ctx.tab} tab`}]\n${question}${ctx.selection ? `\n[The person selected this text in the cell]\n${ctx.selection.slice(0, 800)}` : ''}` });
     this.trim();
     this.busy = true;
@@ -158,6 +163,11 @@ export class Conversation {
       }
       if (!answer) answer = 'I do not have an answer for that one. Could you ask it in another way?';
       this.entries.push({ kind: 'ai', text: answer, via: info.short });
+      // Some models write the code into the answer instead of calling suggest_code: still give the person a button.
+      if (!proposed) {
+        const rescued = rescueCode(answer, question, ctx);
+        if (rescued) this.entries.push({ kind: 'proposal', ...rescued, afterLine: null, state: 'open' });
+      }
       chat.done('answered');
       return { ok: true, text: answer };
     } catch (err) {
@@ -183,6 +193,43 @@ export class Conversation {
       this.changed();
     }
   }
+}
+
+/** The code blocks of an answer that are TypeScript or JavaScript (or have no language), found line by line so a closing fence is never taken for an opening one. */
+function codeBlocks(answer: string): string[] {
+  const blocks: string[] = [];
+  let open: { lang: string; lines: string[] } | null = null;
+  for (const line of answer.split('\n')) {
+    const fence = /^\s*```(.*)$/.exec(line);
+    if (fence && !open) open = { lang: fence[1].trim().toLowerCase(), lines: [] };
+    else if (fence && open) {
+      if (['', 'ts', 'typescript', 'js', 'javascript'].includes(open.lang) && open.lines.join('').trim()) blocks.push(open.lines.join('\n').trim());
+      open = null;
+    } else open?.lines.push(line);
+  }
+  return blocks;
+}
+
+/**
+ * The biggest TypeScript/JavaScript block in an answer, and the cell it is meant for: a cell the question names,
+ * else the cell the question was asked from, else one the answer names explicitly (a path like /lab/A16 or
+ * "cell A16"). Null when there is no code or no cell that can take it.
+ */
+export function rescueCode(answer: string, question: string, ctx: AiContext): { path: string; code: string; note: string } | null {
+  const blocks = codeBlocks(answer);
+  if (!blocks.length) return null;
+  const code = blocks.reduce((a, b) => (b.length > a.length ? b : a));
+  const prose = answer.replace(/```[\s\S]*?```/g, ' ');
+  const cellName = (tab: string | undefined, address: string): string => (tab ? `/${tab}/${address.toUpperCase()}` : address.toUpperCase());
+  const inQuestion = [...question.matchAll(/(?:\/([a-z][\w-]*)\/)?\b([A-Za-z]\d{1,3})\b/g)].map((m) => cellName(m[1], m[2]));
+  const inAnswer = [...prose.matchAll(/(?:\/([a-z][\w-]*)\/([A-Za-z]\d{1,3})\b)|(?:\bcell\s+([A-Za-z]\d{1,3})\b)/gi)].map((m) => cellName(m[1], m[2] ?? m[3]));
+  const candidates = [...inQuestion, ...(ctx.address ? [ctx.address] : []), ...inAnswer];
+  for (const candidate of candidates) {
+    const hit = workspace.resolve(candidate, ctx.tab);
+    if ('error' in hit || hit.tab.sheet.isBoardAddress(hit.address)) continue;
+    return { path: workspace.pathOf(hit.tab.id, hit.address), code, note: 'The helper wrote this code in its answer: here is the button for it.' };
+  }
+  return null;
 }
 
 function toolStatus(call: ToolCall): string {

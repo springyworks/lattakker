@@ -1,0 +1,133 @@
+import { ERR, McpError, type Json, type McpRouter, type McpServer } from './router';
+
+/**
+ * The router as an MCP server called "router": ask the page's message carrier about itself, from a cell
+ * (`mcp.tool('router', 'stats')`), from the AI helper or from an outside AI.
+ *
+ *   resources/read lattakker-router:///stats     the counters
+ *   resources/read lattakker-router:///catalog   every server with its tools: what can be done in this app
+ *   tools/call stats                             counters: messages, errors, rate, per server / client / method
+ *   tools/call catalog                           every server, what it is for, its tools and how many resources
+ *   tools/call servers                           just the names
+ *   tools/call recent {n?, server?, method?}     the last messages, optionally only one server or method
+ *   tools/call reset_stats                       start counting from zero
+ */
+
+const PROTOCOL = '2025-06-18';
+const STATS = 'lattakker-router:///stats';
+const CATALOG = 'lattakker-router:///catalog';
+
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+const TOOLS = [
+  { name: 'stats', description: 'What the router has counted: messages, errors, messages per second (now and the last 60 s), and per server, client and method: how many, how many failed, how long they took.', inputSchema: { type: 'object', properties: {} } },
+  { name: 'catalog', description: 'Everything this app can do over MCP: every server with a sentence on what it is for, its tools (name and description) and how many resources it holds. Start here when you do not know what is possible.', inputSchema: { type: 'object', properties: {} } },
+  { name: 'servers', description: 'The names of the MCP servers of this page.', inputSchema: { type: 'object', properties: {} } },
+  {
+    name: 'recent',
+    description: 'The last messages that crossed the router (who asked whom, what, how long it took).',
+    inputSchema: { type: 'object', properties: { n: { type: 'integer', description: 'How many (1 to 100, default 20).' }, server: { type: 'string', description: 'Only messages to or from this server.' }, method: { type: 'string', description: 'Only this method, e.g. tools/call.' } } },
+  },
+  { name: 'reset_stats', description: 'Start the counters again from zero. The traffic log is kept.', inputSchema: { type: 'object', properties: {} } },
+];
+
+export interface CatalogEntry {
+  server: string;
+  description: string;
+  tools: Array<{ name: string; description: string }>;
+  resources: number | null;
+}
+
+/** Asks every server what it offers. A server that does not know a question is listed without that part. */
+export async function buildCatalog(router: McpRouter, as = 'router'): Promise<CatalogEntry[]> {
+  const entries: CatalogEntry[] = [];
+  for (const server of router.names()) {
+    const entry: CatalogEntry = { server, description: router.describe(server), tools: [], resources: null };
+    // A server says in `initialize` what it has; asking for what it lacks would only count as an error in the statistics.
+    let has = { tools: true, resources: true };
+    try {
+      const init = (await router.request(as, server, 'initialize')) as { capabilities?: Record<string, unknown> };
+      if (init.capabilities) has = { tools: !!init.capabilities.tools, resources: !!init.capabilities.resources };
+    } catch {
+      // does not say: try both
+    }
+    if (has.tools) {
+      try {
+        const list = (await router.request(as, server, 'tools/list')) as { tools?: Array<{ name?: string; description?: string }> };
+        entry.tools = (list.tools ?? []).map((t) => ({ name: String(t.name ?? ''), description: String(t.description ?? '').slice(0, 200) }));
+      } catch {
+        // no tools
+      }
+    }
+    if (has.resources) {
+      try {
+        const list = (await router.request(as, server, 'resources/list')) as { resources?: unknown[] };
+        entry.resources = list.resources?.length ?? 0;
+      } catch {
+        // no resources
+      }
+    }
+    entries.push(entry);
+  }
+  return entries;
+}
+
+export class RouterServer implements McpServer {
+  readonly name = 'router';
+  readonly description = 'The message carrier of this page: statistics, the catalog of every server and tool, the recent traffic.';
+
+  constructor(private readonly router: McpRouter) {}
+
+  async handle(method: string, params: Record<string, unknown>, from: string): Promise<Json> {
+    switch (method) {
+      case 'initialize':
+        return { protocolVersion: PROTOCOL, capabilities: { resources: {}, tools: {} }, serverInfo: { name: 'lattakker-router', title: 'MCP router', version: '1' } };
+      case 'ping':
+        return {};
+      case 'resources/list':
+        return {
+          resources: [
+            { uri: STATS, name: 'stats', description: 'Counters of the router', mimeType: 'application/json' },
+            { uri: CATALOG, name: 'catalog', description: 'Every server and tool of this app', mimeType: 'application/json' },
+          ],
+        };
+      case 'resources/read': {
+        const uri = String(params.uri ?? '');
+        if (uri === STATS) return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(this.router.stats()) }] };
+        if (uri === CATALOG) return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(await buildCatalog(this.router, from)) }] };
+        throw new McpError(ERR.invalidParams, `router has no resource ${uri}`);
+      }
+      case 'tools/list':
+        return { tools: TOOLS };
+      case 'tools/call':
+        return this.call(String(params.name ?? ''), isRecord(params.arguments) ? params.arguments : {}, from);
+      default:
+        throw new McpError(ERR.methodNotFound, `router does not know the method "${method}"`);
+    }
+  }
+
+  private async call(name: string, args: Record<string, unknown>, from: string): Promise<Json> {
+    const reply = (value: Record<string, unknown>) => ({ content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: value });
+    switch (name) {
+      case 'stats':
+        return reply({ ...this.router.stats() });
+      case 'catalog':
+        return reply({ servers: await buildCatalog(this.router, from) });
+      case 'servers':
+        return reply({ servers: this.router.names() });
+      case 'recent': {
+        const n = typeof args.n === 'number' && Number.isFinite(args.n) ? Math.max(1, Math.min(100, Math.floor(args.n))) : 20;
+        const server = typeof args.server === 'string' ? args.server : '';
+        const method = typeof args.method === 'string' ? args.method : '';
+        // Filtering happens on the whole log, so ask for all of it and keep the newest n that fit.
+        const messages = this.router.recent(400).filter((m) => (!server || m.from === server || m.to === server) && (!method || m.method === method));
+        return reply({ messages: messages.slice(-n) });
+      }
+      case 'reset_stats':
+        this.router.resetStats();
+        return reply({ ok: true });
+      default:
+        throw new McpError(ERR.methodNotFound, `router has no tool "${name}". Tools: ${TOOLS.map((t) => t.name).join(', ')}`);
+    }
+  }
+}
