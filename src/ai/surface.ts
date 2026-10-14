@@ -315,10 +315,11 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
   let timer: number | null = null;
   const schedule = () => {
     if (timer !== null) return;
+    // Rebuilding the text of every cell is costly, and cells that animate change it all the time: a few times a second is plenty for a screen reader.
     timer = window.setTimeout(() => {
       timer = null;
       renderText();
-    }, 150);
+    }, 600);
   };
   const flush = () => {
     if (timer !== null) window.clearTimeout(timer);

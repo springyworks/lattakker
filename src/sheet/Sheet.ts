@@ -974,13 +974,16 @@ export class Sheet {
     }
     const cell = this.cells.get(address);
     if (!cell) return;
-    // A hosted live node (e.g. a mounted inline Monaco editor) must not be detached/reattached
-    // mid-keystroke, so skip the forced-relabel toggle for it; just reapply colours/etc.
-    if (!this.nodeLabels.has(cell.getId() ?? '')) {
-      // Changing the value forces the label to be re-read through getLabel.
-      this.graph.getDataModel().setValue(cell, (cell.getValue() ?? 0) === 0 ? 1 : 0);
-    }
-    this.applyStyle(address);
+    // One update for the value and the style: maxGraph revalidates the view once, not twice.
+    this.graph.batchUpdate(() => {
+      // A hosted live node (e.g. a mounted inline Monaco editor) must not be detached/reattached
+      // mid-keystroke, so skip the forced-relabel toggle for it; just reapply colours/etc.
+      if (!this.nodeLabels.has(cell.getId() ?? '')) {
+        // Changing the value forces the label to be re-read through getLabel.
+        this.graph.getDataModel().setValue(cell, (cell.getValue() ?? 0) === 0 ? 1 : 0);
+      }
+      this.applyStyle(address);
+    });
   }
 
   /** Redraws a cell once after the current burst of writes (painting 80 tiles is one redraw, not 80). */

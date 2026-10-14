@@ -239,6 +239,7 @@ export class Conversation {
         if (rescued) this.entries.push({ kind: 'proposal', ...rescued, afterLine: null, state: 'open' });
       }
       chat.done('answered');
+      router.notify(CLIENT, from || 'you', 'chat/answer', { characters: answer.length });
       return { ok: true, text: answer };
     } catch (err) {
       if (this.abort?.signal.aborted) {

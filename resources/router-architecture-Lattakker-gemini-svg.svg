@@ -158,13 +158,13 @@
 
   <!-- BOTTOM MANHATTAN ROUTING -->
   <!-- Async Calls -->
-  <path d="M 500 654 L 500 690 L 300 690 L 300 726" fill="none" stroke="#1e293b" stroke-width="1.5" marker-end="url(#arrow-forward)" />
+  <path d="M 500 654 L 500 690 L 300 690 L 300 726" fill="none" stroke="#1e293b" stroke-width="1.5" marker-start="url(#arrow-reverse)" marker-end="url(#arrow-forward)" />
   <!-- WebRTC Half-Duplex Marker -->
   <path d="M 600 654 L 600 726" fill="none" stroke="#1e293b" stroke-width="1.5" marker-mid="url(#half-duplex)" marker-start="url(#arrow-reverse)" marker-end="url(#arrow-forward)" />
   <!-- JSON-RPC HTTP Bridge -->
   <path d="M 700 654 L 700 690 L 900 690 L 900 726" fill="none" stroke="#1e293b" stroke-width="1.5" marker-start="url(#arrow-reverse)" marker-end="url(#arrow-forward)" />
   <!-- Outside AI to the dev server (/mcp over HTTP, then the page's WebSocket); named on purpose, it does not touch the router -->
-  <path id="link-outside_ai" d="M 900 818 L 900 794" fill="none" stroke="#1e293b" stroke-width="1.5" marker-start="url(#arrow-forward)" marker-end="url(#arrow-forward)" />
+  <path id="link-outside_ai" d="M 900 794 L 900 818" fill="none" stroke="#1e293b" stroke-width="1.5" marker-start="url(#arrow-reverse)" marker-end="url(#arrow-forward)" />
   <rect x="912" y="799" width="130" height="14" fill="#ffffff" />
   <text x="916" y="810" font-size="10" font-family="monospace" fill="#64748b">HTTP /mcp + WebSocket</text>
 
@@ -177,6 +177,51 @@
 
   <rect x="735" y="672" width="60" height="16" fill="#ffffff" />
   <text x="765" y="684" font-size="10" font-family="monospace" text-anchor="middle" fill="#64748b">JSON-RPC</text>
+
+  <!-- ========================================== -->
+  <!-- TOP LEFT: the person (a SysML actor, the stickman) and the sidebar AI chat they talk to. Every line is drawn from the router outwards. -->
+  <!-- ========================================== -->
+  <g id="node-user" class="node" data-name="user" data-pivot="90 120" stroke="#000000" stroke-width="1.5" fill="none" stroke-linecap="round">
+    <circle cx="90" cy="82" r="9" fill="#ffffff" />
+    <line x1="90" y1="91" x2="90" y2="122" />
+    <line x1="74" y1="104" x2="106" y2="104" />
+    <line x1="90" y1="122" x2="76" y2="148" />
+    <line x1="90" y1="122" x2="104" y2="148" />
+    <text x="90" y="164" font-size="11" font-weight="bold" text-anchor="middle" fill="#0f172a" stroke="none">&lt;&lt;actor&gt;&gt;</text>
+    <text x="90" y="180" font-size="14" font-weight="bold" text-anchor="middle" fill="#0f172a" stroke="none">user : Person</text>
+  </g>
+
+  <rect x="190" y="80" width="200" height="70" fill="#ffffff" stroke="#000000" stroke-width="1.5" />
+  <text x="290" y="100" font-size="11" font-weight="bold" text-anchor="middle" fill="#0f172a">&lt;&lt;panel&gt;&gt;</text>
+  <text x="290" y="120" font-size="14" font-weight="bold" text-anchor="middle" fill="#0f172a">sidebar_chat : Panel</text>
+  <text x="290" y="138" font-size="10" font-family="monospace" text-anchor="middle" fill="#64748b">AI dialog, asks the helper</text>
+  <rect x="186" y="100" width="8" height="8" fill="#ffffff" stroke="#000000" />
+  <rect x="386" y="106" width="8" height="8" fill="#ffffff" stroke="#000000" />
+  <rect x="496" y="196" width="8" height="8" fill="#ffffff" stroke="#000000" />
+
+  <!-- Person to chat (named on purpose: it does not touch the router), and chat to router -->
+  <path id="link-user" d="M 186 104 L 108 104" fill="none" stroke="#1e293b" stroke-width="1.5" marker-start="url(#arrow-reverse)" marker-end="url(#arrow-forward)" />
+  <path d="M 500 196 L 500 110 L 394 110" fill="none" stroke="#1e293b" stroke-width="1.5" marker-start="url(#arrow-reverse)" marker-end="url(#arrow-forward)" />
+
+  <!-- ========================================== -->
+  <!-- LEGEND: what the moving dots mean (the Monitor's cell A1 draws the dots in these colours and shapes) -->
+  <!-- ========================================== -->
+  <g id="legend" font-family="monospace" font-size="11" fill="#334155">
+    <rect x="40" y="520" width="340" height="142" fill="#ffffff" stroke="#000000" stroke-width="1" />
+    <text x="52" y="538" font-weight="bold" fill="#0f172a">How to read the dots</text>
+    <circle cx="58" cy="556" r="6" fill="#f97316" stroke="#ffffff" stroke-width="2" />
+    <text x="74" y="560">request: a question, runs to the box asked</text>
+    <circle cx="58" cy="574" r="5" fill="#ffffff" stroke="#16a34a" stroke-width="3" />
+    <text x="74" y="578">answer: runs back along the same lines</text>
+    <circle cx="58" cy="592" r="6" fill="#8b5cf6" stroke="#ffffff" stroke-width="2" />
+    <text x="74" y="596">signal: one way, nobody has to answer</text>
+    <circle cx="58" cy="610" r="5" fill="#ffffff" stroke="#ef4444" stroke-width="3" />
+    <text x="74" y="614">error: an answer that went wrong</text>
+    <circle cx="58" cy="628" r="6" fill="#38bdf8" stroke="#ffffff" stroke-width="2" />
+    <text x="74" y="632">heartbeat: a ping every 3 seconds</text>
+    <rect x="52" y="641" width="12" height="9" fill="none" stroke="#000000" stroke-width="1.2" stroke-dasharray="3,2" />
+    <text x="74" y="650">dashed box: a client or channel, not a server</text>
+  </g>
 
   <!-- ========================================== -->
   <!-- CHANNEL TICKERS: the last two messages over each line. Empty here; the Monitor's cell A1 writes them (data-chars = how many letters fit). -->
@@ -206,6 +251,10 @@
     <text id="tick-devserver-2" x="712" y="711" data-chars="38"></text>
     <text id="tick-outside_ai-1" x="892" y="803" text-anchor="end" data-chars="20"></text>
     <text id="tick-outside_ai-2" x="892" y="812" text-anchor="end" data-chars="20"></text>
+    <text id="tick-sidebar_chat-1" x="508" y="128" data-chars="34"></text>
+    <text id="tick-sidebar_chat-2" x="508" y="137" data-chars="34"></text>
+    <text id="tick-user-1" x="116" y="120" data-chars="14"></text>
+    <text id="tick-user-2" x="116" y="129" data-chars="14"></text>
   </g>
 
   <!-- Title / Revision Block (top right, clear of the bottom row) -->

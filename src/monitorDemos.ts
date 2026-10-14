@@ -7,9 +7,10 @@ export const MONITOR_DEMOS: ReadonlyArray<readonly [string, string]> = [
   [
     'A1',
     String.raw`// THE ROUTER, ALIVE. Every tab, helper and service in this page talks over one MCP router.
-// This drawing lights up the part that was asked, and sends a dot along its line.
+// A request is a filled dot that runs to the box that is asked; its answer is a ring that runs back (ping-pong). A signal nobody answers runs one way.
 // An AI chat outside the page (the box at the bottom, over the dev server's /mcp) shows its calls and answers here.
-// Chatting with the AI helper shows here too: the question, each time the model is asked, and each tool it uses.
+// The person (the stickman) talks with the sidebar chat: the question goes in, the answer comes back, and each time the chat asks the
+// model (the helper) or uses a tool shows too.
 span(12, 9)
 
 // svg.asset('router-architecture') is the drawing from resources/. Its boxes are called node-board,
@@ -23,7 +24,9 @@ function boxOf(name: string): string {
   if (nodes.includes(first)) return first
   if (first === 'local-ai') return 'ollama'
   if (first === 'ai') return 'outside_ai' // an AI chat outside the page, over the dev server's /mcp
-  if (first.startsWith('ai') || first === 'you') return 'helper'
+  if (first === 'ai-chat') return 'sidebar_chat' // the chat in the sidebar of this page
+  if (first === 'you') return 'user' // the person typing in it
+  if (first.startsWith('ai')) return 'helper'
   if (first === 'system') return 'devserver' // the readings come from the dev server
   if (first === 'tabs' || first === '*') return 'router'
   return 'cells'
@@ -31,8 +34,9 @@ function boxOf(name: string): string {
 
 const busy: Record<string, number> = {}
 let dots = 0
-// Light blue: the heartbeat below (a ping every 3 seconds, to show the router is alive). Orange: a question. Purple: a signal nobody has to answer. Green: the answer to the outside AI. Red: it went wrong.
-const colors = { request: '#f97316', notification: '#8b5cf6', error: '#ef4444', heartbeat: '#38bdf8' }
+// Orange dot: a question (a request). Green ring: its answer, running back. Purple: a signal nobody has to answer. Red ring: the answer went wrong.
+// Light blue: the heartbeat below (a ping every 3 seconds, to show the router is alive). The legend in the drawing says the same.
+const colors = { request: '#f97316', response: '#16a34a', notification: '#8b5cf6', error: '#ef4444', heartbeat: '#38bdf8' }
 
 // A box grows a little and shrinks back (a busy box does not flicker).
 function bump(box: string, size: number): void {
@@ -42,7 +46,7 @@ function bump(box: string, size: number): void {
   pic.el('node-' + box).animate({ scale: size }, { time: 110, yoyo: true, loop: 2 })
 }
 
-const last = pic.write(24, 856, '', { fill: '#475569', 'font-size': 20, 'font-family': 'monospace' })
+const last = pic.write(40, 840, '', { fill: '#475569', 'font-size': 12, 'font-family': 'monospace' })
 
 // Each line of the drawing has a little two-line ticker (tick-NAME-1 and tick-NAME-2 in the SVG): the last two messages over it.
 // The drawing says where they sit and how many letters fit; this only fills them in.
@@ -69,69 +73,89 @@ function tick(channel: string, kind: 'request' | 'response' | 'error' | 'notific
   row.at = t
 }
 
-// A dot runs along a list of lines, one after the other: [line, backwards?]. Every line is drawn from the router to its box.
-function travel(hops: Array<[string, boolean]>, color: string): void {
+// The drawing is a tree: the router in the middle, boxes around it. Two boxes hang behind another one: the person behind the sidebar chat,
+// the outside AI behind the dev server.
+const parent: Record<string, string> = { user: 'sidebar_chat', outside_ai: 'devserver' }
+const up = (box: string): string[] => (box === 'router' ? ['router'] : [box, ...up(parent[box] ?? 'router')])
+
+// The lines a message crosses: up from the sender to where the two ways meet, then down to the receiver.
+// Every line is drawn from the router outwards, so going up is going backwards.
+function route(a: string, b: string): { hops: Array<[string, boolean]>; meet: string } {
+  const from = up(a)
+  const to = up(b)
+  const meet = from.find((n) => to.includes(n)) ?? 'router'
+  const hops: Array<[string, boolean]> = [
+    ...from.slice(0, from.indexOf(meet)).map((n): [string, boolean] => ['link-' + n, true]),
+    ...to.slice(0, to.indexOf(meet)).reverse().map((n): [string, boolean] => ['link-' + n, false]),
+  ]
+  return { hops, meet }
+}
+
+// A dot runs along a list of lines, one after the other: [line, backwards?]. The promise is done when it has arrived.
+// A question is a filled dot, its answer a ring (see the legend in the drawing).
+function travel(hops: Array<[string, boolean]>, color: string, ring = false): Promise<void> {
   const way = hops.filter(([id]) => pic.ids.includes(id))
-  if (!way.length || dots >= 30) return
+  if (!way.length || dots >= 30) return Promise.resolve()
   dots++
-  const dot = pic.add('circle', { r: 8, fill: color, stroke: '#ffffff', 'stroke-width': 2 })
+  const dot = ring ? pic.add('circle', { r: 6, fill: '#ffffff', stroke: color, 'stroke-width': 4 }) : pic.add('circle', { r: 8, fill: color, stroke: '#ffffff', 'stroke-width': 2 })
   let run: Promise<unknown> = Promise.resolve()
-  for (const [id, back] of way) run = run.then(() => dot.animate({ along: '#' + id }, { time: 380, reverse: back }))
+  for (const [id, back] of way) run = run.then(() => dot.animate({ along: '#' + id }, { time: 330, reverse: back }))
   // When the cell runs again the drawing is gone: the dot has nothing left to remove.
-  run.then(() => {
+  return run.then(() => {
     dot.remove()
     dots--
   }).catch(() => {})
 }
 
+// PING-PONG: a question runs to the box that is asked. When the answer comes, it waits until the question has arrived
+// and then runs back the same way. So you see both: the request going there, and the reply coming back.
+const asked: Record<string, Array<Promise<void>>> = {}
+
 // mcp.tap(fn) runs for every message that crosses the router, as it happens.
 mcp.tap((m) => {
-  const failed = m.kind === 'error' // an error travels back: the box that failed is the one at the far end
-  const to = boxOf(failed ? m.from : m.to)
-  const from = boxOf(failed ? m.to : m.from)
-
-  // The ticker of the line this message crossed: a question goes to its box, an answer comes from it.
+  const answer = m.kind === 'response' || m.kind === 'error'
+  const failed = m.kind === 'error'
+  // For an answer, "from" is the box that was asked and "to" is the one that asked.
+  const from = boxOf(m.from)
+  const to = boxOf(m.to)
+  const { hops, meet } = route(from, to)
   const method = m.method.replace('notifications/', '')
-  const outside = from === 'outside_ai' || boxOf(m.to) === 'outside_ai'
-  if (m.kind === 'response' || failed) tick(boxOf(m.from), m.kind, (failed ? '✕ ' + m.detail : '← ' + method + (m.ms !== undefined ? ' ' + m.ms + 'ms' : '')))
-  else tick(boxOf(m.to), m.kind, '→ ' + m.from + ' ' + method)
-  if (outside) {
+
+  // The ticker of the line this message crossed: a question on the line it arrives by, an answer on the line it leaves by.
+  const line = answer ? hops[0] : hops[hops.length - 1]
+  if (line) tick(line[0].slice(5), m.kind, answer ? (failed ? '✕ ' + m.detail : '← ' + method + (m.ms !== undefined ? ' ' + m.ms + 'ms' : '')) : '→ ' + m.from + ' ' + method)
+  if (from === 'outside_ai' || to === 'outside_ai') {
     // The way in and out of the page for an outside AI is the dev server: both lines carry its messages.
-    const who = m.kind === 'request' || m.kind === 'notification' ? m.to : m.from
-    const line = (m.kind === 'request' || m.kind === 'notification' ? '→ ' : '← ') + who + ' ' + method
-    tick('devserver', m.kind, line)
-    tick('outside_ai', m.kind, line)
+    const text = (answer ? '← ' : '→ ') + (answer ? m.from : m.to) + ' ' + method
+    tick('devserver', m.kind, text)
+    tick('outside_ai', m.kind, text)
   }
 
-  // The AI chat outside the page (VS Code, Claude ...): its words come in over the dev server, its answers go back the same way.
-  if (from === 'outside_ai' && m.kind !== 'response' && !failed) {
-    bump('outside_ai', 1.05)
-    bump('devserver', 1.04)
-    bump('router', 1.02)
-    bump(to, 1.05)
-    last.text(m.from + ' -> ' + m.to + ' ' + m.method.replace('notifications/', '').slice(0, 30))
-    travel([['link-outside_ai', true], ['link-devserver', true], ['link-' + to, false]], colors[m.kind] ?? colors.request)
-    return
-  }
-  if (boxOf(m.to) === 'outside_ai') {
-    bump(boxOf(m.from), 1.03)
-    travel([['link-' + boxOf(m.from), true], ['link-devserver', false], ['link-outside_ai', false]], failed ? colors.error : '#16a34a')
+  const key = (answer ? m.to + '>' + m.from : m.from + '>' + m.to) + ' ' + m.method
+  if (answer) {
+    last.text('↩ ' + m.from + ' -> ' + m.to + ' ' + method.slice(0, 24) + (m.ms !== undefined ? ' ' + m.ms + 'ms' : ''))
+    const question = asked[key]?.shift() ?? Promise.resolve()
+    // When the cell runs again the drawing is gone: the late steps of a trip have nothing left to draw on.
+    question.then(() => {
+      bump(from, 1.03)
+      return travel(hops, failed ? colors.error : colors.response, true)
+    }).then(() => bump(to, 1.03)).catch(() => {})
     return
   }
 
-  // Answers are not drawn: the question already lit the way, and the numbers below count both.
-  if (m.kind === 'response') return
-  bump(to, 1.05)
-  if (from !== to) bump(from, 1.03)
-  last.text(m.from + ' -> ' + m.to + ' ' + m.method.replace('notifications/', '').slice(0, 30))
-  travel([['link-' + to, false]], m.method === 'ping' ? colors.heartbeat : (colors[m.kind] ?? colors.request))
+  last.text('→ ' + m.from + ' -> ' + m.to + ' ' + method.slice(0, 30))
+  bump(from, 1.03)
+  if (meet === 'router') bump('router', 1.02)
+  const trip = travel(hops, m.method === 'ping' ? colors.heartbeat : (colors[m.kind] ?? colors.request)).then(() => bump(to, 1.05)).catch(() => {})
+  if (m.kind === 'request') (asked[key] ??= []).push(trip)
+  if ((asked[key]?.length ?? 0) > 40) asked[key].shift()
 })
 
 // A little heartbeat, so something happens even when nobody does anything.
 every('3s', () => mcp.call('status', 'ping'))
 
 // The numbers at the bottom of the drawing.
-const label = pic.write(24, 884, '', { fill: '#475569', 'font-size': 20, 'font-family': 'monospace' })
+const label = pic.write(40, 858, '', { fill: '#475569', 'font-size': 12, 'font-family': 'monospace' })
 every('1s', () => {
   const s = mcp.stats()
   label.text(s.messages + ' messages so far, ' + s.ratePerSecond + ' per second, ' + s.serverCount + ' servers, ' + s.errors + ' errors')

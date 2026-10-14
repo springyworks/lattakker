@@ -506,6 +506,40 @@ body.hdr-pull * {
   display: none;
 }
 
+/* − 100% + at the bottom right of the sheet: zooms the board and cells without zooming the browser page. */
+.zoom-controls {
+  position: fixed;
+  z-index: 45;
+  display: flex;
+  align-items: stretch;
+  background: #ffffff;
+  border: 1px solid #1f2933;
+  border-radius: 16px;
+  box-shadow: 0 2px 8px rgba(31, 41, 51, 0.35);
+  overflow: hidden;
+  font: 600 13px system-ui, sans-serif;
+}
+.zoom-controls button {
+  min-width: 30px;
+  padding: 4px 8px;
+  font: inherit;
+  color: #1f2933;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.zoom-controls .zoom-level {
+  min-width: 52px;
+  border-left: 1px solid #d5dbe1;
+  border-right: 1px solid #d5dbe1;
+}
+.zoom-controls button:hover {
+  background: #e6edf3;
+}
+.zoom-controls[hidden] {
+  display: none;
+}
+
 /* Long-sheet navigator: a "Go to" box and a miniature of the whole sheet along the right edge. */
 .sheet-nav {
   position: fixed;

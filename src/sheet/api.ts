@@ -69,7 +69,10 @@ export function buildApi(
   ctx.flush = () => {
     const entries = [...ctx.touched];
     ctx.touched.clear();
-    for (const [address, before] of entries) if (signature(address) !== before) sheet.notifyChanged(address);
+    const changed: string[] = [];
+    for (const [address, before] of entries) if (signature(address) !== before) changed.push(address);
+    // The cells that changed are redrawn in one update.
+    sheet.graph.batchUpdate(() => changed.forEach((address) => sheet.notifyChanged(address)));
   };
 
   // ------------------------------------------------- cells in another tab (read-only)
@@ -213,7 +216,7 @@ export function buildApi(
         markWrite(address);
         d.output.push(values.map(fmt).join(' '));
         if (d.output.length > MAX_OUTPUT_LINES) d.output.splice(0, d.output.length - MAX_OUTPUT_LINES);
-        sheet.refreshCell(address);
+        sheet.refreshSoon(address);
         return ref;
       },
       clear() {
@@ -221,37 +224,37 @@ export function buildApi(
         d.output = [];
         d.plot = null;
         d.tiles = null;
-        sheet.refreshCell(address);
+        sheet.refreshSoon(address);
         return ref;
       },
       show(...values: unknown[]) {
         markWrite(address);
         d.output = [values.map(fmt).join(' ')];
-        sheet.refreshCell(address);
+        sheet.refreshSoon(address);
         return ref;
       },
       plot(data: unknown, options?: PlotOptions) {
         markWrite(address);
         d.plot = makePlot(data, options);
-        sheet.refreshCell(address);
+        sheet.refreshSoon(address);
         return ref;
       },
       view(text: string) {
         markWrite(address);
         d.viewText = String(text);
-        sheet.refreshCell(address);
+        sheet.refreshSoon(address);
         return ref;
       },
       color(fill: string) {
         markWrite(address);
         d.codeVisual = { ...d.codeVisual, fill: String(fill) };
-        sheet.applyStyle(address);
+        sheet.refreshSoon(address);
         return ref;
       },
       textColor(color: string) {
         markWrite(address);
         d.codeVisual = { ...d.codeVisual, fontColor: String(color) };
-        sheet.applyStyle(address);
+        sheet.refreshSoon(address);
         return ref;
       },
       span(cols?: number, rows?: number) {

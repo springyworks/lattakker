@@ -182,6 +182,7 @@ const TOPICS: Record<string, Topic> = {
       para('This page is a game board and a spreadsheet at once. The cells hold small programs (TypeScript) that you can read, change and run.'),
       list(['🎲 Game board: play Lattakker, and write cells under the board.', '🧪 Lab: live demos. Double-click one to change it.', '📚 Examples: a notebook of ideas to copy.', '📡 Monitor: the page and this computer, live (graphs and an animated drawing).', '➕ Make a tab of your own with the + at the end of the tabs.', '🤖 AI: a helper that can explain, go to a cell, run it, even write for you.']),
       para('Press F1 any time to get help for the thing you are pointing at. Every ? button does the same.'),
+      para('Zoom the board and cells on their own: Ctrl + mouse wheel, Ctrl + and Ctrl − (Ctrl 0 goes back to 100%), or the − + buttons at the bottom right.'),
       actions(['👀 Show me around', startTour], ['🤖 Open the helper', () => aiBridge.toggleSide()]),
     ],
   },

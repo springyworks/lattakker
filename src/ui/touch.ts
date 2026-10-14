@@ -30,16 +30,7 @@ export function installPinchZoom(sheet: Sheet): void {
     },
     { passive: true },
   );
-  // Trackpad pinch and Ctrl + mouse wheel arrive as wheel events with ctrlKey set.
-  el.addEventListener(
-    'wheel',
-    (e) => {
-      if (!e.ctrlKey) return;
-      e.preventDefault();
-      sheet.zoomAround(Math.exp(-e.deltaY * 0.01), e.clientX, e.clientY);
-    },
-    { passive: false },
-  );
+  // (Ctrl + mouse wheel and trackpad pinch zoom on every screen: see ZoomControls.)
   el.addEventListener('touchend', (e) => {
     if (e.touches.length < 2) lastDistance = 0;
   });

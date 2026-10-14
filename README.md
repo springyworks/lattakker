@@ -8,6 +8,16 @@ Monaco editor is used for code editing.
 
 Live demo: https://springyworks.github.io/lattakker/
 
+> **For AIs and for people who instruct them:** this README is the one always-current
+> manual of the app. Point your AI at it by its GitHub address, so it reads the same
+> text as everybody else and never a stale copy:
+> `https://github.com/springyworks/lattakker/blob/main/README.md`
+> (raw text: `https://raw.githubusercontent.com/springyworks/lattakker/main/README.md`).
+> The machine-readable guides next to it are made from the real sources on every build:
+> [public/llms.txt](public/llms.txt) (start here), [ai-docs/rules.md](ai-docs/rules.md) (how to behave and the rules of cell code),
+> and `ai/cell-api.d.ts`, `ai/examples.md`, `ai/lab-demos.md` on the live demo.
+> See [11 Working with an AI helper](#11-working-with-an-ai-helper).
+
 ![Lattakker in action: playing the board, editing a cell, the Lab and the Examples tab](resources/animated_screen_recording.gif)
 
 <a id="contents"></a>
@@ -249,6 +259,13 @@ Code that names other cells is kept up to date when they move. See
 [6.1 Code follows the cells it names](#61-code-follows-the-cells-it-names),
 and for very large sheets [6.2 Long sheets](#62-long-sheets).
 
+**Zooming the board and the cells** works on its own, without zooming the browser page
+(so the tab strip and the buttons keep their size): hold **Ctrl** and turn the mouse
+wheel (a trackpad pinch does the same), press **Ctrl +** and **Ctrl −**, and **Ctrl 0**
+goes back to 100%. A small **− 100% +** control sits at the bottom right of every sheet
+(click the percentage to go back to 100%). The sheet zooms between 40% and 250%, around the
+point under the pointer (or the middle of the window for the keys). On a touch screen, pinch.
+
 ### 6.1 Code follows the cells it names
 
 [↑ Contents](#contents)
@@ -397,16 +414,31 @@ Tabs can also be made from code (`tabs.ensure('plots', 'Plots')`, see
 [8.17](#817-making-tabs-from-code-the-tabs-global)) and over MCP (the server `tabs`).
 
 **📡 Monitor** is a tab of the page itself (it cannot be closed): the router drawing
-from `resources/router-architecture-Lattakker-gemini-svg.svg`, alive. Every message
-that crosses the MCP router lights up the box it goes to and sends a dot along its
-line. The AI helper's chat (the question, each model call, each tool) shows too, and so does
-an AI chat outside the page (the `outside_ai` box at the bottom, over the dev server's `/mcp`):
-its calls run in a dot along the whole way, and the answer comes back. Every line also has a tiny two-line ticker with the last two messages over it
-(`→` a question going to the box, `←` its answer with the time it took, `✕` an error). Next to it, live graphs of this computer (processor and graphics card load,
+from `resources/router-architecture-Lattakker-gemini-svg.svg` (a SysML internal block
+diagram), alive. MCP is ask-and-answer, and the drawing shows both halves as a
+**ping-pong** along the real lines:
+
+- a **request** is a filled **orange dot** that runs from the asker, through the router, to the box it asks;
+- its **answer** is a **green ring** that starts when the answer really comes and runs back the same way
+  (a failed answer is a **red ring**);
+- a **notification** (a signal nobody answers, such as "this cell changed") is a **purple dot** that runs one way;
+- the heartbeat (a `ping` to `status` every 3 seconds, so something always happens) is a **light blue dot**.
+
+The drawing has a legend with the same colours. A box grows a little when it is busy. **Solid boxes**
+are `<<mcp_server>>` blocks (the tabs and services that answer); **dashed boxes** are not servers but a
+client, a channel or an endpoint: the cell scripts (`mcp.*` in cells), the WebRTC channel, the dev server's `/mcp`
+and the outside AI. Top left, a **stickman (the SysML actor `user : Person`)** is attached to the **`sidebar_chat : Panel`**
+box, the AI dialog of the sidebar: you ask, the question goes into the chat, the chat asks the model (`helper` or
+`ollama`) and each tool it uses through the router, and the answer comes back to you. An AI chat outside the page
+(the `outside_ai` box at the bottom, over the dev server's `/mcp`, see [11.3](#113-connect-an-external-ai-chat-mcp)) runs
+its calls in along the whole way, and the answer comes back. Every line also has a tiny two-line ticker with the last two messages
+over it (`→` a question going to the box, `←` its answer with the time it took, `✕` an error). To watch it
+busy, open the page with `?mcp` on the dev server and run `node scripts/mcp-smoke.mjs` (a scripted outside AI).
+Next to the drawing: live graphs of this computer (processor and graphics card load,
 temperatures, memory, frames per second), the router's messages per second and the
 weather. They are ordinary cells: change them, copy them into a tab of your own.
 Right-click the Monitor tab (or press **↺ Restore monitor**) to put the starting cells
-back.
+back. (Press it once after an update of the app: a Monitor you saved keeps its old cells until then.)
 
 A web page cannot see the processor or the temperatures of the computer it runs on.
 While the page is served by the dev server (`npm run dev`) that server reads them
@@ -979,7 +1011,20 @@ computer. If the server is not found, every call says so: install
 chat's header shows the same warning in orange whenever a local model is chosen but
 does not answer. Ask one thing at a time (`await` it); the first question can be
 slow while the model loads, and a third question at the same time is refused when two
-are already running. LM Studio and other servers with the OpenAI-style door work
+are already running.
+
+**Keeping the model loaded (no reloading again and again).** Ollama reloads a model when
+a request asks for another context size (`num_ctx`) than the one loaded, or when a second model
+needs the memory. The chat asks for the size in its settings (⚙, default 16384), while a
+plain `/v1` call (curl, an editor) gets the server's own default, so they push each other out.
+For one model that is always ready, give the server the same size for everybody and keep one
+model loaded: `sudo sh scripts/ollama-persistent.sh` (it writes a systemd drop-in with
+`OLLAMA_KEEP_ALIVE=-1`, `OLLAMA_CONTEXT_LENGTH=32768`, `OLLAMA_MAX_LOADED_MODELS=1`,
+`OLLAMA_NUM_PARALLEL=1`, `OLLAMA_FLASH_ATTENTION=1`, and loads the model after every start;
+`MODEL=... CTX=... sudo -E sh scripts/ollama-persistent.sh` to change them), and set the same
+"memory of the chat" in ⚙. `ollama ps` shows what is loaded and at what context. A reasoning
+model such as `qwen3.6` answers over `/v1` with its thinking in a separate `reasoning` field, so
+give it a generous `max_tokens`. LM Studio and other servers with the OpenAI-style door work
 for `ask` and `chat`; `status` then says it is not Ollama itself. Over MCP: the
 server `ollama` (`status`, `models`, `ask`; outside AIs may only `ask` when the
 person allowed outside questions). Try the Lab's **J41**.
@@ -1898,7 +1943,7 @@ the shift. The rules are the same as for moved cells, see
 src/sheet/        Sheet model: cells, addresses, dependency tracking (reactivity.ts), run contexts and timers (tasks.ts), the cell API (api.ts)
 src/editor/       Monaco integration, popup editor, inline per-cell editor
 src/game/     Game rules, board state, AI move suggestions
-src/ui/           Control panel, phone dock, touch gestures, the tab strip (Tabs.ts, drawn by TabStrip.ts), the Share window (ShareDialog.ts), the Examples notebook (Notebook.ts), SheetPane.ts (everything one sheet needs; used by the board and the Lab) and the ⋮ menu (CellMenu.ts, HoverMenu.ts)
+src/ui/           Control panel, phone dock, touch gestures, the tab strip (Tabs.ts, drawn by TabStrip.ts), the Share window (ShareDialog.ts), the Examples notebook (Notebook.ts), SheetPane.ts (everything one sheet needs; used by the board and the Lab), the ⋮ menu (CellMenu.ts, HoverMenu.ts) and ZoomControls.ts (Ctrl + wheel / Ctrl + - 0 zoom and the − 100% + control)
 src/mcp/          The MCP layer: router.ts (the page's message router and traffic log), tabServer.ts (one MCP server per tab)
 src/workspace.ts  The workspace: every tab, cell paths (/lab/J24, @uid), where you and the other person are
 src/share/        Sharing: link.ts (the WebRTC link and its copy-paste codes), session.ts (what travels, and the checks on it)
@@ -1914,7 +1959,7 @@ src/theme.ts      The colour palette
 src/examples.ts   The code cells shown on first load. Like labDemos.ts and recipes.ts, every line is explained by a // comment above it in plain words for beginners: keep it that way when you add or change a cell
 public/llms.txt   Plain-words guide for AI helpers
 resources/        Piece icons (original) and reference files, see its README
-scripts/          make-piece-svgs.mjs writes resources/pieces/; mcp-bridge.ts is the dev-server /mcp endpoint; mcp-smoke.mjs plays a scripted outside AI against it
+scripts/          make-piece-svgs.mjs writes resources/pieces/; mcp-bridge.ts is the dev-server /mcp endpoint; mcp-smoke.mjs plays a scripted outside AI against it; ollama-persistent.sh keeps one Ollama model loaded at one context size (run with sudo, once)
 ```
 
 ## 14 Licence and artwork

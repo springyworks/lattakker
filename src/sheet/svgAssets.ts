@@ -12,7 +12,7 @@ const num = (el: Element, name: string): number => Number.parseFloat(el.getAttri
 /** The name a box in the router drawing goes by: "board : Tab" is board, "mcp_router : Router" is router, "outside_ai : Client" is outside_ai ... */
 function nodeName(text: string): string | null {
   const t = text.trim();
-  const m = /^(\w+) : (Tab|Service|Router|Client)$/.exec(t);
+  const m = /^(\w+) : (Tab|Service|Router|Client|Panel)$/.exec(t);
   if (m) return m[1] === 'mcp_router' ? 'router' : m[1];
   if (/^Cell Scripts/.test(t)) return 'cells';
   if (/^WebRTC/.test(t)) return 'webrtc';
