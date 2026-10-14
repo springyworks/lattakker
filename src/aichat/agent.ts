@@ -10,6 +10,8 @@ import { memoryInfo } from './memory';
 import { addressHints } from './cellPaths';
 import { ammo, fit, kilo } from './ammo';
 import { RULES, docUrls } from './docs';
+import { bibleFor } from '../ai/bible';
+import { markOriented } from '../ai/orientation';
 
 const MAX_ROUNDS = 6;
 const MAX_MESSAGES = 24;
@@ -186,7 +188,11 @@ export class Conversation {
         const small = isSmallModel();
         let tools = round < MAX_ROUNDS ? toolsFor({ small, second, tight: false }) : [];
         const write = tools.some((t) => t.name === 'write_code');
-        const system = `${buildPrompt({ small, write })}${second && !small ? LOCAL_PROMPT : ''}\n${small ? '' : `(Your memory holds ${memoryInfo().count} notes.)`}`;
+        // A model on this computer has no way to open the README itself: it is given the Bible (the rules and the README chapters that fit) up front.
+        const local = getSettings().provider === 'local';
+        const bible = local ? await bibleFor(getSettings().local.context, 0.35) : null;
+        if (bible?.hasReadme) markOriented('helper');
+        const system = `${bible ? `${bible.text}\n\n` : ''}${buildPrompt({ small, write })}${second && !small ? LOCAL_PROMPT : ''}\n${small ? '' : `(Your memory holds ${memoryInfo().count} notes.)`}`;
         // The model can only hold so much in mind. Make the conversation fit (shortening old, long tool answers first) and say so.
         let fitted = fit(system, tools, this.messages);
         if (fitted.tooBig && tools.length) {

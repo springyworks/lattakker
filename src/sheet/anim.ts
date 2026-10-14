@@ -20,6 +20,8 @@ export interface ClipHost extends SceneHost {
 export interface ShowOptions {
   /** Put the picture into this drawing instead of making a new one. */
   scene?: SvgScene;
+  /** With `scene`: put the picture INSIDE this part of the drawing (a group), so it moves, turns and fades with the part. x and y are then the part's own coordinates. */
+  into?: SvgEl;
   /** Where the picture goes in the drawing, and how big. Default: the top left, at its own size. */
   x?: number;
   y?: number;
@@ -264,7 +266,8 @@ export class Clip {
     const scene = options.scene ?? this.host.newScene(innerW + pad * 2, h + (controls ? BAR_H : 0) + pad * 2);
     const x = options.x ?? pad + (innerW - w) / 2;
     const y = options.y ?? pad;
-    const holder = scene.add('foreignObject', { x, y, width: w, height: h });
+    if (options.into && !options.scene) throw new Error('clip.show: `into` needs `scene` too: clip.show({ scene: pic, into: pic.el(\'screen\') })');
+    const holder = options.into ? options.into.add('foreignObject', { x, y, width: w, height: h }) : scene.add('foreignObject', { x, y, width: w, height: h });
     this.canvas.style.cssText = 'width:100%;height:100%;display:block';
     holder.node.append(this.canvas);
     if (controls) this.addControls(scene, own ? pad + (innerW - BAR_W) / 2 : Math.max(0, ((scene.svg.viewBox.baseVal.width || BAR_W) - BAR_W) / 2), y + h + 4);

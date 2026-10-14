@@ -234,6 +234,11 @@ automatically in this browser's own storage (`localStorage`, key
 where you stopped. Nothing is sent anywhere. To start completely fresh, run
 `localStorage.removeItem('lattakker:v1')` in the browser console and reload.
 
+If the cells are loaded but nothing runs (the tabs show empty grey cells), the code engine did not start, for
+example because the page was opened while the dev server was busy. After about 12 seconds the page notices that
+no cell has finished a run, reloads itself once, and if it is still stuck says so in the speech bubble. The
+orange ⟳ Reload button does the same by hand; your saved cells stay.
+
 ## 6 The sheet
 
 [↑ Contents](#contents)
@@ -505,6 +510,9 @@ Everything you can use inside a cell is listed in [8 Programmer's manual: the ce
 **Tabs.** Three tabs sit above the page:
 
 - **Game board**: the battle and your cells.
+  The address decides which tab opens first (`/#board`, `/#lab`, `/#examples`, `/#monitor`). The splash (the board
+  zoomed in on the flag, "Click anywhere to play") only shows when the page opens on the board; a page opened on
+  `#monitor` or `#lab` (and a reload of it, also with the orange ⟳ button) goes straight to that tab.
 - **Lab** (`/#lab`): a second sheet with exactly the same abilities as the one
   under the board (cell addresses, TypeScript in cells and merged cell-blocks,
   the popup and inline editors, menus, reactivity, `plot()`), but no playing
@@ -1167,7 +1175,7 @@ pic.frame((t, dt) => pic.el('man').move(Math.sin(t) * 20, 0))   // every screen 
   any attribute (numbers and colours), and `along: '#path-id'` to ride a path.
   Options: `time`, `ease` (`linear`, `in`, `out`, `inOut`, `bounce`, `elastic`, `back`), `delay`, `loop`,
   `yoyo`, `reverse`. It returns something you can `await`, with `.stop()`.
-- `svg.asset('stickman')` and `svg.asset('router-architecture')` come with the app (see `svg.assets()`).
+- `svg.asset('stickman')`, `svg.asset('tvman')` (a man with an empty screen in his belly, a control panel and three wires, see 8.18) and `svg.asset('router-architecture')` come with the app (see `svg.assets()`).
   The router drawing is the file in `resources/`; its boxes get the ids `node-board`, `node-lab`,
   `node-weather` ... `node-outside_ai` and its lines `link-board` ... `link-outside_ai` when it is loaded.
   Every line is drawn from the router to its box (`link-outside_ai` runs from the outside AI to the dev server). The tickers are `tick-NAME-1` and `tick-NAME-2`
@@ -1227,12 +1235,16 @@ clip.onFrame((n) => print('frame', n))
   `input.button(...)` handler.
 - `clip.show()` makes the cell's drawing. `clip.show({ controls: false })` is only the picture.
   `clip.show({ scene: pic, x, y, width })` puts it into a drawing made with `svg()`: shapes added before it are
-  behind the (see-through) picture, shapes added after it are in front.
+  behind the (see-through) picture, shapes added after it are in front. With `into: pic.el('screen')` the
+  picture sits *inside* that part of the drawing (x and y are the part's own), so it moves, turns and fades
+  with the part: the asset `tvman` has an empty `screen` in the belly of a stick figure, wired to a lever, a
+  dial and a lamp. The Examples **A51** lets the frames swing his arm and light the lamp, runs dots along the
+  wires while the film plays, and the lever and the dial play, pause and change the speed.
 - Control: `play()`, `pause()`, `toggle()`, `step(n)` (goes round at the ends), `seek(i)`, `seekTime(ms)`,
   `speed`, `loop`. Read: `frame`, `frameCount`, `playing`, `duration`, `time`, `width`, `height`, `durations`,
   `canvas`. Events: `onFrame(fn)`, `onEnd(fn)` (for `loop = false`).
 - All frames are kept in memory (up to about 256 MB), and are released when the cell runs again.
-  Needs a browser with `ImageDecoder` (Chrome, Edge). See the Lab's **A53** and **K53**, and the Examples **A45** and **K45**.
+  Needs a browser with `ImageDecoder` (Chrome, Edge). See the Lab's **A53** and **K53**, and the Examples **A45**, **K45** and **A51**. The picture files live in `public/anim/` (kept small on purpose, under 1 MB each, so they load fast from GitHub Pages).
 
 ## 9 How the cell code is run (internals)
 
@@ -2022,6 +2034,15 @@ before it does anything (the text is the "First contact" part of `ai-docs/rules.
   say it too.
 - **The built-in helper**: its instructions say so, and its first tool call of a page session is answered with the
   same note until it has called `read_docs` with `doc: "readme"` (which now reads the GitHub copy first).
+- **Models on this computer** (Ollama, LM Studio): they cannot open links, so they get the README in their
+  instructions. `src/ai/bible.ts` fetches the README from GitHub and puts the rules first, then as many
+  chapters as fit in a share of the model's memory (its context window, set in ⚙: 4k to 32k tokens; the whole
+  README is about 30k tokens): what Lattakker is, how it is played (4), the first program (7), the cell API
+  (8.x) and so on, most useful first. The chapters that did not fit are named, so the model knows what
+  exists (the helper can ask for them with `read_docs`). This goes to the second brain (`local-ai`:
+  `consult`, `teach`, `manage`) with half of the window, and to the main helper when the helper itself is the
+  local model, with about a third. A bigger window means more of the README. A small model still makes
+  mistakes, but it no longer knows nothing about the pieces and the cells.
 - This is the one place where the page fetches something by itself on behalf of an AI: the README from
   `raw.githubusercontent.com`, only when an AI asks for it.
 

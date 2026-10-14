@@ -428,7 +428,8 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
   try {
     // First contact: the helper reads the README (the place of truth, on GitHub) before its first tool does anything.
     const readsReadme = name === 'read_docs' && (args.doc === 'readme' || args.doc === 'rules');
-    if (!isOriented(HELPER) && !readsReadme) {
+    // Only the main helper is sent to the README; the second brain (local-ai) is given it in its instructions (see ai/bible.ts).
+    if (client === CLIENT && !isOriented(HELPER) && !readsReadme) {
       return asText({ ...orientation('helper', name), how: 'Call read_docs with doc "readme" now (no query gives the list of its headings; a few words as query give the parts that answer them). Then repeat your call.' });
     }
     announceDirect(host, name, args, client);

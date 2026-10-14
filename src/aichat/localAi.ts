@@ -2,6 +2,7 @@ import { ERR, McpError, type Json, type McpServer } from '../mcp/router';
 import { getKey, getSettings } from './config';
 import { jobs } from './jobs';
 import { memoryInfo } from './memory';
+import { bibleFor } from '../ai/bible';
 import { OpenAiCompatProvider, friendly, type ChatMsg, type ModelProvider, type ToolDecl } from './providers';
 import { DB_DECLS, LIBRARIAN_TOOLS, runTool, TOOL_DECLS, type ToolHost } from './tools';
 
@@ -173,6 +174,8 @@ export class LocalAiServer implements McpServer {
     if (!(await probeLocal())) return failure(`The local model is not answering: ${localState.error || 'not set up'}.`);
     if (this.busy) return failure('The local model is busy with another job. Try again in a moment.');
     const provider = makeLocalProvider()!;
+    // Like every AI here, the local model starts from the README (the Bible) and the rules: it knows nothing about Lattakker otherwise.
+    const bible = await bibleFor(getSettings().local.context, 0.5);
     const text = (key: string): string => (typeof args[key] === 'string' ? (args[key] as string).trim().slice(0, 6000) : '');
     const task = name === 'consult' ? text('question') : name === 'teach' ? `Please store this knowledge:\n${text('material')}${text('how') ? `\n\nWishes: ${text('how')}` : ''}` : text('task');
     if (!task || task.endsWith(':\n')) return failure(`${name === 'consult' ? 'question' : name === 'teach' ? 'material' : 'task'} must be some text`);
@@ -190,7 +193,7 @@ export class LocalAiServer implements McpServer {
       const run = (jobTask: string): Promise<string> =>
         runSubAgent({
         provider,
-        system: name === 'consult' ? CONSULT : LIBRARIAN,
+        system: `${bible.text}\n\n${name === 'consult' ? CONSULT : LIBRARIAN}`,
         task: jobTask,
         tools,
         exec: (tool, a) => (allowed.has(tool) ? runTool(this.host(), tool, a, this.name) : Promise.resolve(JSON.stringify({ error: `you may not use ${tool} here` }))),

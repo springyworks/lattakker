@@ -202,11 +202,13 @@ function showOnBoard(address: string): void {
   pane.selectCodeCell(address);
 }
 
+const FEATURED = ['A45', 'K45', 'A51'];
 // The Examples tab is a notebook: a sheet of its own with big blocks (see ui/Notebook.ts).
 const notebook = createNotebook(
   view,
   { sheet, show: showOnBoard },
-  EXAMPLES.map(([address, code]) => ({ address, code })),
+  // The animated pictures come first in the notebook: they are the most fun to look at (their cells stay where they are on the board).
+  [...FEATURED.flatMap((a) => EXAMPLES.filter(([address]) => address === a)), ...EXAMPLES.filter(([address]) => !FEATURED.includes(address))].map(([address, code]) => ({ address, code })),
   smallScreen,
 );
 lab.root.after(notebook.root);
@@ -307,3 +309,32 @@ Object.assign(window as unknown as Record<string, unknown>, { sheet, game: view.
 const surface = installAiSurface({ sheet, view, hud, editor });
 // The AI helper (chat, pop-up, "// AI:" watcher): silent until someone chooses a helper in its settings.
 installAiChat({ surface, strip: tabs.strip, say: (text) => hud.say(text, 'info') });
+
+// A watchdog for "the cells are there but nothing ran" (the code engine, Monaco's TypeScript worker, did not start, for
+// example because the page was loaded while the dev server was busy). Once the page has been visible for a while, tabs
+// with code in which no run has finished are reported, and the page reloads itself once (saved work stays).
+window.setTimeout(function stallCheck() {
+  if (document.visibilityState !== 'visible') {
+    window.setTimeout(stallCheck, 5000);
+    return;
+  }
+  const stuck = workspace.list().filter((t) => {
+    const h = t.sheet.health();
+    return h.codeCells > 0 && h.finished === 0;
+  });
+  if (!stuck.length) return;
+  console.error('Lattakker: cells are loaded but none has finished running in', stuck.map((t) => `${t.id} (${t.sheet.health().started} started)`).join(', '));
+  let retried = false;
+  try {
+    const last = Number(sessionStorage.getItem('lattakker:stall-reload') ?? 0);
+    retried = Date.now() - last < 120000;
+    if (!retried) sessionStorage.setItem('lattakker:stall-reload', String(Date.now()));
+  } catch {
+    retried = true;
+  }
+  if (!retried) {
+    location.reload();
+    return;
+  }
+  hud.say('⚠ The cells did not start running: the code engine looks stuck. Press the orange ⟳ Reload button. Your cells stay saved.', 'bad');
+}, 12000);

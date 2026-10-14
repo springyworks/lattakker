@@ -657,7 +657,7 @@ interface SvgApi {
   (markup?: string | { width?: number; height?: number }): SvgScene;
   /** A drawing that comes with the app, as SVG text: svg(svg.asset('stickman')). */
   asset(name: string): string;
-  /** The names of the drawings that come with the app: 'stickman', 'router-architecture'. */
+  /** The names of the drawings that come with the app: 'stickman', 'tvman', 'router-architecture'. */
   assets(): string[];
 }
 /**
@@ -702,9 +702,10 @@ interface AnimClip {
   /**
    * Shows the picture in this cell as a drawing, with a bar of buttons and a slider under it.
    * clip.show({ controls: false }) is only the picture. clip.show({ scene: pic, x: 20, y: 10, width: 120 }) puts it
-   * into a drawing you made with svg(), so shapes can go behind and in front of it.
+   * into a drawing you made with svg(), so shapes can go behind and in front of it. Add into: pic.el('screen') and the picture sits INSIDE that
+   * part of the drawing (x and y are the part's own), so it moves, turns and fades with it: a screen in a robot's belly.
    */
-  show(options?: { scene?: SvgScene; x?: number; y?: number; width?: number; controls?: boolean }): SvgScene;
+  show(options?: { scene?: SvgScene; into?: SvgEl; x?: number; y?: number; width?: number; controls?: boolean }): SvgScene;
 }
 interface AnimApi {
   /**

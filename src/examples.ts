@@ -1643,4 +1643,50 @@ clip.speed = 0.7
 clip.loop = false
 print(clip.frameCount + ' frames, press the play button to see it again')`,
   ],
+  [
+    'A51',
+    `// A stick-figure with a film in his belly: an animated WebP inside a drawing.
+// A picture can sit INSIDE a part of an svg drawing, so it moves with that part.
+span(8, 6)
+
+// svg.asset('tvman') comes with the app: a man, a control panel and three wires.
+const pic = svg(svg.asset('tvman'))
+const clip = await anim.load('truck')
+
+// into: the part called 'screen' (the dark box in his belly). x, y and width are in the drawing's units.
+clip.show({ scene: pic, into: pic.el('screen'), x: 108, y: 80, width: 84, controls: false })
+clip.play()
+
+// The film drives the machine: his right arm swings with the frames, and the lamp lights up when it starts again.
+const arm = pic.el('armR')
+const lamp = pic.el('lamp')
+clip.onFrame((n) => {
+  arm.rotate(-30 * Math.sin((n / clip.frameCount) * 2 * Math.PI))
+  lamp.fill(n < 2 ? 'gold' : '#475569')
+})
+
+// Dots run along the wires while the film plays. flow(false) stops them.
+let dots = []
+const flow = (on) => {
+  dots.forEach((d) => d.stop())
+  dots = on ? [1, 2, 3].map((i) => pic.el('pulse' + i).animate({ along: '#wire' + i }, { time: (0.8 + i * 0.3) + 's', ease: 'linear', loop: true })) : []
+}
+flow(true)
+
+// Click the lever: play or pause. Click the dial: a new speed.
+const lever = pic.el('lever')
+lever.on('click', () => {
+  clip.toggle()
+  flow(clip.playing)
+  lever.animate({ rotate: clip.playing ? 0 : 55 }, { time: '200ms' })
+})
+const speeds = [0.5, 1, 2]
+let speedNo = 1
+pic.el('dialFace').on('click', () => {
+  speedNo = (speedNo + 1) % speeds.length
+  clip.speed = speeds[speedNo]
+  pic.el('needle').animate({ rotate: (speedNo - 1) * 55 }, { time: '250ms' })
+})
+pic.el('caption').text('Click the lever and the dial')`,
+  ],
 ];

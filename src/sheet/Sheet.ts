@@ -44,7 +44,7 @@ import type { SvgScene } from './svgScene';
 const RUN_SLICE_MS = 150;
 
 export const COLS = 26;
-export const ROWS = 54;
+export const ROWS = 60;
 /** Hard ceilings for auto-grow: addresses stay at most two letters and three digits (ZZ999-style). */
 export const MAX_COLS = 52;
 export const MAX_ROWS = 999;
@@ -2153,6 +2153,14 @@ export class Sheet {
     }, 0);
   }
 
+  private runsStarted = 0;
+  private runsFinished = 0;
+
+  /** How the cells are doing: how many hold code, and how many runs began and ended since the page started. */
+  health(): { codeCells: number; started: number; finished: number } {
+    return { codeCells: this.codeCells().length, started: this.runsStarted, finished: this.runsFinished };
+  }
+
   async runAll(): Promise<void> {
     if (!this.runner) return;
     if (this.running) {
@@ -2206,6 +2214,7 @@ export class Sheet {
           d.runReason = this.nextReason.get(address) ?? 'update';
           this.nextReason.delete(address);
           d.runCount += 1;
+          this.runsStarted++;
           const finished = Promise.resolve()
             .then(() => this.runner!(d, ctx))
             .catch((err) => {
@@ -2213,6 +2222,7 @@ export class Sheet {
             })
             .then(() => {
               ctx.tracking = false;
+              this.runsFinished++;
             });
           let slice = 0;
           const inTime = await Promise.race([
