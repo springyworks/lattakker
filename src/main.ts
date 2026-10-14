@@ -13,6 +13,7 @@ import { Splash, gameViewFor } from './ui/Splash';
 import { Tabs } from './ui/Tabs';
 import { createNotebook } from './ui/Notebook';
 import { fitBoardToWidth, installGrabGesture, installPinchZoom } from './ui/touch';
+import { installMouseGestures } from './ui/MouseGestures';
 import { GAME_NODE } from './sheet/reactivity';
 import { SheetPane } from './ui/SheetPane';
 import { createLab } from './lab';
@@ -172,6 +173,7 @@ view.init(restored);
 view.quickStart();
 changedSquares();
 
+installMouseGestures(sheet);
 if (smallScreen) {
   installPinchZoom(sheet);
   installGrabGesture(sheet);
@@ -233,6 +235,20 @@ tabManager.makeBuiltIn(
 tabManager.restore();
 installHelp({ stripRect: (id) => tabs.strip.rectOf(id) });
 tabs.strip.onHelp = () => toggleHelp();
+tabs.strip.onReload = () => {
+  // Only the page and its cached files are refreshed; localStorage (cells, games, tabs) is left alone and is written again on pagehide.
+  void (async () => {
+    try {
+      const regs = (await navigator.serviceWorker?.getRegistrations()) ?? [];
+      await Promise.all(regs.map((r) => r.unregister()));
+      if ('caches' in window) await Promise.all((await caches.keys()).map((k) => caches.delete(k)));
+      await fetch(location.href, { cache: 'reload' });
+    } catch {
+      // reloading below still works
+    }
+    location.reload();
+  })();
+};
 const share = new ShareDialog(tabs.strip);
 
 // The strip always says where you are, as a cell path: click a cell (or a tile) and it follows.

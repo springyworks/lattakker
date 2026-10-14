@@ -38,6 +38,16 @@ if (names.length === 0) {
   process.exit(1);
 }
 
+// First contact: a new participant is told to read the README before its first call is carried out (the page remembers who has).
+const first = await tool('get_state');
+if (first.orientation) {
+  check('a first call is answered with the README and the rules', typeof first.read_first === 'string' && first.read_first.includes('README.md') && !!first.rules, first.read_first);
+  const readme = await tool('read_readme');
+  check('read_readme fetches the README and lifts the gate', readme.ok === true && readme.parts >= 1 && readme.text.length > 1000, `${readme.source}, part ${readme.part} of ${readme.parts}`);
+} else {
+  console.log('  (this participant has read the README already: the gate is open)');
+}
+
 // Down: AI reads the page.
 const state = await tool('get_state');
 check('get_state ok', state.ok === true, JSON.stringify(state).slice(0, 90));

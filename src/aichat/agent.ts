@@ -2,7 +2,7 @@ import { friendly, makeProvider, type ChatMsg, type ToolCall } from './providers
 import { localAssistantReady, probeLocal } from './localAi';
 import { router } from '../mcp/router';
 import { getSettings } from './config';
-import { CLIENT, runTool, toolsFor, WriteLedger, type AiContext, type ToolHost } from './tools';
+import { CLIENT, runTool, setTurnTrace, toolsFor, WriteLedger, type AiContext, type ToolHost } from './tools';
 import { workspace } from '../workspace';
 import { jobs } from './jobs';
 import { describeModel, isSmallModel } from './modelInfo';
@@ -50,7 +50,7 @@ const SMALL_RULES = `
 
 /** The fixed instructions, shaped for this model: the shared rules (ai-docs/rules.md), how to use the tools, and where the documents are. A small model gets no memory tools. */
 export function buildPrompt(options: { small: boolean; write: boolean }): string {
-  return `${BASE_PROMPT} ${options.write ? CHANGE_RULE_WRITE : CHANGE_RULE_ASK}\n\nRules (the same for every AI that helps here):\n${RULES.behave}\n\nHow to work:\n${RULES.coder}\n\nCell code:\n${RULES.cell}\n${TOOL_HINTS}${options.small ? SMALL_RULES : MEMORY_RULES}${pointers()}`;
+  return `${BASE_PROMPT} ${options.write ? CHANGE_RULE_WRITE : CHANGE_RULE_ASK}\n\nFirst contact (your very first tool call: read_docs with doc "readme"):\n${RULES.first}\n\nRules (the same for every AI that helps here):\n${RULES.behave}\n\nHow to work:\n${RULES.coder}\n\nCell code:\n${RULES.cell}\n${TOOL_HINTS}${options.small ? SMALL_RULES : MEMORY_RULES}${pointers()}`;
 }
 
 const LOCAL_PROMPT = `
@@ -170,7 +170,8 @@ export class Conversation {
     // The seconds of "last sign of life" are re-drawn once a second; they are measured, not invented (see jobs.ts).
     this.ticker = window.setInterval(() => this.changed(), 1000);
     const info = describeModel();
-    router.notify(from || 'you', CLIENT, 'chat/question', { characters: question.length });
+    // Every message of this turn says what caused it, so the whole chain can be followed back to the question (router tool 'trace').
+    let link = router.notify(from || 'you', CLIENT, 'chat/question', { characters: question.length });
     const chat = jobs.start('chat', `answering “${question.slice(0, 40)}${question.length > 40 ? '…' : ''}”`, { stallAfterSeconds: 3600 });
     const stopWatching = jobs.onCancel(() => this.abort?.abort());
     this.changed();
@@ -203,9 +204,10 @@ export class Conversation {
         chat.say(`memory check: about ${kilo(fitted.estimate)} of ${fitted.room ? kilo(fitted.room) : '?'} tokens${fitted.shortened || fitted.dropped ? ' (shortened to fit)' : ''}`, false);
         // The model is reached by fetch, not over the router, so the router is told: the chat shows up in its traffic.
         const modelBox = getSettings().provider === 'local' ? 'ollama' : 'helper';
-        router.notify(CLIENT, modelBox, 'llm/complete', { round: round + 1, messages: this.messages.length, tools: tools.length });
+        link = router.notify(CLIENT, modelBox, 'llm/complete', { round: round + 1, messages: this.messages.length, tools: tools.length }, link);
         const reply = await provider.complete(system, this.messages, tools, this.abort.signal);
-        router.notify(modelBox, CLIENT, 'llm/reply', { toolCalls: reply.toolCalls.length, characters: reply.text.length });
+        link = router.notify(modelBox, CLIENT, 'llm/reply', { toolCalls: reply.toolCalls.length, characters: reply.text.length }, link);
+        setTurnTrace(link);
         this.messages.push({ role: 'assistant', text: reply.text, toolCalls: reply.toolCalls, raw: reply.raw });
         if (reply.text.trim()) answer = reply.text.trim();
         if (!reply.toolCalls.length) break;
@@ -239,7 +241,7 @@ export class Conversation {
         if (rescued) this.entries.push({ kind: 'proposal', ...rescued, afterLine: null, state: 'open' });
       }
       chat.done('answered');
-      router.notify(CLIENT, from || 'you', 'chat/answer', { characters: answer.length });
+      router.notify(CLIENT, from || 'you', 'chat/answer', { characters: answer.length }, link);
       return { ok: true, text: answer };
     } catch (err) {
       if (this.abort?.signal.aborted) {
@@ -259,6 +261,7 @@ export class Conversation {
     } finally {
       window.clearInterval(this.ticker);
       stopWatching();
+      setTurnTrace(undefined);
       this.busy = false;
       this.abort = null;
       this.changed();

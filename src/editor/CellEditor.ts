@@ -277,6 +277,8 @@ export class CellEditor {
     bar.addEventListener('dblclick', () => this.toggleMaximize());
   }
 
+  private openedAt = 0;
+
   open(address: string): void {
     if (this.address === address && this.editor) {
       this.editor.focus();
@@ -287,6 +289,7 @@ export class CellEditor {
     const geo = this.sheet.geometryOf(address);
     if (!data || !geo) return;
     this.address = address;
+    this.openedAt = performance.now();
     this.hooks.onOpen?.(address);
 
     const graph = this.sheet.graph;
@@ -499,6 +502,11 @@ export class CellEditor {
   run(): void {
     if (!this.address || !this.editor) return;
     this.hooks.onRun(this.address, this.editor.getValue());
+  }
+
+  /** Closes an editor that was opened a moment ago by a double-click that turned out to be the start of a mouse gesture. */
+  closeIfJustOpened(ms: number): void {
+    if (this.frame && performance.now() - this.openedAt < ms) this.close(false);
   }
 
   close(save: boolean): void {

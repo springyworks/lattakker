@@ -1610,4 +1610,37 @@ mcp.tap((m) => {
 // Draw once now.
 draw()`,
   ],
+  [
+    'A45',
+    `// A comic that opens its doors: an animated WebP you can step through.
+// A WebP is a little film made of frames. anim.load() cuts it into frames,
+// so you can pause it and step through it, which a plain picture cannot do.
+span(8, 6)
+
+// 'truck' is a picture that comes with the app (anim.assets() lists them).
+const clip = await anim.load('truck')
+
+// show() draws it here with buttons (first, back, play, forward) and a slider.
+clip.show()
+clip.play()
+
+// Try these in the editor: clip.speed = 0.5   clip.step(1)   clip.seek(10)
+print(clip.frameCount + ' frames')`,
+  ],
+  [
+    'K45',
+    `// The same comic as an animated GIF. A GIF has no see-through parts and fewer colours.
+// anim.load cuts a GIF into frames just like a WebP.
+span(8, 6)
+
+// A name with an ending picks that file: 'truck.gif'.
+const clip = await anim.load('truck.gif')
+clip.show()
+clip.play()
+
+// Slower, and it stops at the end instead of starting again:
+clip.speed = 0.7
+clip.loop = false
+print(clip.frameCount + ' frames, press the play button to see it again')`,
+  ],
 ];

@@ -343,6 +343,8 @@ export class AiChatUi {
       return;
     }
     input.value = '';
+    // Pressing the Ask button takes the cursor away from the box; give it back.
+    input.focus();
     void this.convo.ask(text, ctx());
   }
 
@@ -366,7 +368,8 @@ export class AiChatUi {
       }
     }
     const busy = this.convo.busy;
-    for (const input of [this.sideInput, this.miniInput]) input.disabled = busy;
+    // The boxes stay enabled while the helper answers, so the cursor stays where it is and you can already type the next question (Enter waits until the answer is there).
+    for (const input of [this.sideInput, this.miniInput]) input.classList.toggle('busy', busy);
     this.side.classList.toggle('settings', this.settingsOpen);
     if (this.settingsOpen) {
       this.sideLog.hidden = true;

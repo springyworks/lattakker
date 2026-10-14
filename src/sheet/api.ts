@@ -11,6 +11,7 @@ import { CancelError, parseInterval, type RunContext } from './tasks';
 import { makePlot, type PlotOptions } from './plot';
 import { SvgScene, type SceneHost } from './svgScene';
 import { svgAsset, svgAssetNames } from './svgAssets';
+import { animAssetNames, loadClip, pickClip, type ClipHost } from './anim';
 import { buildCatalog } from '../mcp/routerServer';
 import { findPlaces, forecast as weatherForecast, summary as weatherSummary, weatherNow, type PlaceInput } from '../services/weather';
 import { tabManager, type CreateTabOptions } from '../tabManager';
@@ -602,6 +603,18 @@ export function buildApi(
     return Object.assign(make, { asset: (name: string) => svgAsset(name), assets: () => svgAssetNames() });
   })();
 
+  /** anim.load('bouncer') cuts an animated WebP, GIF or APNG into frames that the code can play, pause and step through; see anim.ts. */
+  const animApi = (() => {
+    const host: ClipHost = {
+      guard: () => ctx.guard(),
+      addTask: (stop) => ctx.addTask(stop),
+      wrap: (fn, stop) => callback(fn, stop),
+      changed: () => sheet.refreshSoon(data.address),
+      newScene: (width, height) => svgApi({ width, height }),
+    };
+    return { load: (src: string | Blob | ArrayBuffer | Uint8Array) => loadClip(src, host), pick: () => pickClip(host), assets: () => animAssetNames() };
+  })();
+
   const after = (first: unknown, second?: unknown): (() => void) => {
     ctx.guard();
     const fn = typeof first === 'function' ? first : second;
@@ -858,6 +871,13 @@ export function buildApi(
     },
     /** The last n messages that crossed the router (who asked whom, and what). */
     recent: (n = 10): Traffic[] => router.recent(n),
+    /** Follows a message by its id: where it went, what led to it and what it led to (see router.ts, Trace). */
+    trace: (id: string) => {
+      const message = router.message(String(id));
+      return message ? { message, path: message.hops.join(' → '), because: router.chain(message.id).slice(0, -1), ledTo: router.effects(message.id) } : null;
+    },
+    /** Who changed cells over MCP (a cell's code replaced ...), with the code before and after; oldest first. */
+    history: (subject?: string) => router.history(subject === undefined ? undefined : String(subject)),
     /** What the router has counted: messages, errors, rate, per second (last 60 s), and per server, client and method. */
     stats: () => router.stats(),
     /** Start the router's counters again from zero. */
@@ -1052,6 +1072,7 @@ export function buildApi(
     span: (cols?: number, rows?: number) => self.span(cols, rows),
     grid,
     svg: svgApi,
+    anim: animApi,
     mcp,
     weather,
     system,

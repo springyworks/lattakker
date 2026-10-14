@@ -3,6 +3,7 @@ import { CELL_API_DTS } from '../sheet/apiTypes';
 import { EXAMPLES } from '../examples';
 import { LAB_DEMOS } from '../labDemos';
 import { MONITOR_DEMOS } from '../monitorDemos';
+import { fetchReadme } from '../ai/orientation';
 
 /**
  * What a human coder has when she joins a project, for the helper: the rules, the API (exact names and
@@ -58,10 +59,11 @@ const parts = sections(rulesRaw);
 
 /** The rules the built-in helper is given (the same file is published for outside AIs). */
 export const RULES = {
+  first: (parts['first contact'] ?? '').replaceAll('{{GITHUB_README_RAW}}', `${GITHUB_RAW}README.md`).replaceAll('{{GITHUB_README}}', `${GITHUB}README.md`),
   behave: parts['how to behave'] ?? '',
   coder: parts['work like a coder'] ?? '',
   cell: parts['cell code rules'] ?? '',
-  all: rulesRaw.replaceAll('{{SITE}}ai/', `${site()}ai/`).replaceAll('{{GITHUB_README}}', `${GITHUB}README.md`),
+  all: rulesRaw.replaceAll('{{SITE}}ai/', `${site()}ai/`).replaceAll('{{GITHUB_README_RAW}}', `${GITHUB_RAW}README.md`).replaceAll('{{GITHUB_README}}', `${GITHUB}README.md`),
 };
 
 // ---------------------------------------------------------------- chunks
@@ -124,10 +126,10 @@ function exampleChunks(): Chunk[] {
 
 let readmePromise: Promise<Chunk[]> | null = null;
 
-/** The README by heading. It is the copy published next to the page, so it works offline once the page has loaded it. */
+/** The README by heading, as it is on GitHub (the place of truth); the copy published next to the page is the fallback. */
 function readmeChunks(): Promise<Chunk[]> {
-  readmePromise ??= fetch(`${site()}ai/README.md`)
-    .then((r) => (r.ok ? r.text() : Promise.reject(new Error(`HTTP ${r.status}`))))
+  readmePromise ??= fetchReadme()
+    .then(({ text }) => text)
     .then((text) => {
       const out: Chunk[] = [];
       let title = '';

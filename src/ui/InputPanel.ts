@@ -71,6 +71,23 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text 
   return node;
 };
 
+const OPEN_KEY = 'lattakker:inputs-open';
+function readOpen(): boolean | null {
+  try {
+    const v = localStorage.getItem(OPEN_KEY);
+    return v === null ? null : v === '1';
+  } catch {
+    return null;
+  }
+}
+function rememberOpen(open: boolean): void {
+  try {
+    localStorage.setItem(OPEN_KEY, open ? '1' : '0');
+  } catch {
+    // not remembered in a private window
+  }
+}
+
 const clip = (text: unknown, max: number): string => String(text ?? '').slice(0, max);
 
 /** The name a key goes by in cell code: 'a', 'ArrowLeft', 'Enter', 'Space'. */
@@ -260,9 +277,11 @@ class InputPanel {
     if (this.root) return;
     const root = el('div', 'input-panel');
     root.hidden = true;
+    // Docked (folded to its title) unless the person opened it before; the choice is remembered in this browser.
+    root.classList.toggle('folded', readOpen() !== true);
     this.title = el('button', 'input-title');
-    this.title.title = 'The controls that the cells of this page made. Click to fold them.';
-    this.title.onclick = () => root.classList.toggle('folded');
+    this.title.title = 'The controls that the cells of this page made. Click to open or dock them.';
+    this.title.onclick = () => rememberOpen(!root.classList.toggle('folded'));
     this.body = el('div', 'input-body');
     root.append(this.title, helpButton('inputs', 'help-icon input-help'), this.body);
     document.body.append(root);

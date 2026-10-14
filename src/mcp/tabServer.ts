@@ -1,6 +1,6 @@
 import { clickNode } from '../sheet/reactivity';
 import { parsePath, workspace, type WorkspaceTab } from '../workspace';
-import { ERR, McpError, type Json, type McpRouter, type McpServer } from './router';
+import { ERR, McpError, type Json, type McpRouter, type McpServer, type Trace } from './router';
 
 /**
  * The MCP server of one tab. It offers the tab's code cells as *resources* (a resource is a thing you can
@@ -104,7 +104,7 @@ export class TabServer implements McpServer {
     };
   }
 
-  async handle(method: string, params: Record<string, unknown>, from: string): Promise<Json> {
+  async handle(method: string, params: Record<string, unknown>, from: string, trace?: Trace): Promise<Json> {
     const sheet = this.tab.sheet;
     switch (method) {
       case 'initialize':
@@ -149,13 +149,13 @@ export class TabServer implements McpServer {
       case 'tools/list':
         return { tools: TOOLS };
       case 'tools/call':
-        return this.callTool(String(params.name ?? ''), isRecord(params.arguments) ? params.arguments : {}, from);
+        return this.callTool(String(params.name ?? ''), isRecord(params.arguments) ? params.arguments : {}, from, trace);
       default:
         throw new McpError(ERR.methodNotFound, `${this.name} does not know the method "${method}"`);
     }
   }
 
-  private callTool(name: string, args: Record<string, unknown>, from: string): Json {
+  private callTool(name: string, args: Record<string, unknown>, from: string, trace?: Trace): Json {
     const sheet = this.tab.sheet;
     const reply = (value: Record<string, unknown>) => ({ content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: value });
     const failure = (message: string) => ({ content: [{ type: 'text', text: message }], isError: true });
@@ -177,7 +177,10 @@ export class TabServer implements McpServer {
           const addr = this.cellOf(args.address);
           if (typeof args.code !== 'string' || args.code.length > MAX_CODE_CHARS) return failure(`code must be text of at most ${MAX_CODE_CHARS} characters`);
           if (sheet.isBoardAddress(addr)) return failure(`${addr} is a board square, not a code cell`);
+          const before = sheet.dataAt(addr)?.code ?? '';
           sheet.setCode(addr, args.code);
+          // Written down for whoever asks later who changed this cell (router tool 'history'), with the old code so it can be put back.
+          this.router.noteChange(trace, { subject: `${this.tab.id}/${addr}`, action: 'set_code', before, after: args.code });
           return reply({ path: workspace.pathOf(this.tab.id, addr), written: args.code.length });
         }
         case 'click': {

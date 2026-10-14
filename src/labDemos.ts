@@ -1469,4 +1469,65 @@ man.on('click', async () => {
 // A line of text under the picture.
 print('Click the man')`,
   ],
+  [
+    'A53',
+    String.raw`// ANIMATED PICTURES you can control. A WebP (or GIF) is a little film made of frames.
+// A web page can play one, but it cannot pause it or step through it. anim.load() cuts
+// the picture into its frames, so YOU decide what happens: play, pause, step, jump, slow down.
+
+// The block is 5 cells wide and 6 tall.
+span(5, 6)
+
+// anim.load('bouncer') loads a picture that comes with the app (anim.assets() lists them).
+// It can also be a web address, or a file you choose (see the cell next to this one).
+// "await" waits until the picture is ready.
+const clip = await anim.load('bouncer')
+
+// show() puts the picture in this block with a bar of buttons under it:
+//   ⏮ first frame   ❘◀ one back   ▶ play / pause   ▶❘ one on   and a slider to scrub.
+clip.show()
+clip.play()
+
+// The code can use the clip too: clip.speed = 0.5 plays at half speed, -1 plays backwards,
+// clip.loop = false stops at the end, clip.seek(10) jumps to frame 10, clip.step(1) goes one frame on.
+// clip.onFrame(fn) runs fn every time the frame changes (the cell next to this one uses it).
+print(clip.frameCount + ' frames, ' + clip.width + '×' + clip.height + ' pixels')
+print('Drag the slider, or press ❘◀ and ▶❘ to step.')`,
+  ],
+  [
+    'K53',
+    String.raw`// A see-through (WebP) picture on a drawing of your own, with your own controls.
+// WebP and PNG pictures can be partly transparent (that is called an alpha channel):
+// the dark rectangle behind the spinner shows through the empty parts.
+// Open the Inputs panel (bottom left) to use the slider and the buttons.
+span(6, 6)
+
+const clip = await anim.load('spinner')
+
+// svg() makes a blank drawing 300 wide and 230 tall. A rectangle goes in first, so it is behind.
+const pic = svg({ width: 300, height: 230 })
+pic.add('rect', { x: 10, y: 8, width: 280, height: 214, rx: 14, fill: '#2a3440' })
+
+// Put the clip in that drawing: x and y say where, width how big. No built-in control bar this time.
+clip.show({ scene: pic, x: 70, y: 20, width: 160, controls: false })
+
+// Shapes added AFTER the clip are in front of it.
+const label = pic.write(150, 208, '', { 'text-anchor': 'middle', fill: '#fff' })
+clip.onFrame((n) => label.text('frame ' + (n + 1) + ' of ' + clip.frameCount))
+clip.play()
+
+// 1 is normal speed, 2 twice as fast, a negative number runs backwards.
+input.slider('speed', { min: -2, max: 3, step: 0.25, value: 1 }, (v) => (clip.speed = v))
+input.button('play / pause', () => clip.toggle())
+input.button('one frame on', () => clip.step(1))
+input.button('one frame back', () => clip.step(-1))
+
+// Your own file: pick() opens the "choose a file" window. It must run inside a click, like here.
+input.button('show my own WebP or GIF', async () => {
+  clip.pause()
+  const mine = await anim.pick()
+  mine.show()
+  mine.play()
+})`,
+  ],
 ];

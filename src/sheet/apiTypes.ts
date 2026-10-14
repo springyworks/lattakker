@@ -169,6 +169,32 @@ interface McpMessage {
   method: string;
   /** The parameters or the answer, shortened to one line. */
   detail: string;
+  /** The id of this message (unique across pages), who started the chain it belongs to, and the message that caused it (null at the start). */
+  id: string;
+  origin: string;
+  cause: string | null;
+  /** The way it went, from the one who started it to the receiver: ['you', 'ai-chat', 'router', 'board']. */
+  hops: string[];
+}
+
+/** One recorded change made over MCP: who, through which message, and the code before and after. */
+interface McpChange {
+  n: number;
+  at: string;
+  /** What changed: 'lab/J24'. */
+  subject: string;
+  /** The tool that did it, like 'set_code'. */
+  action: string;
+  /** Who started the chain (a cell, 'you', 'ai-chat', 'outside-ai:...'), the parties it passed through, and the message that carried it. */
+  by: string;
+  lineage: string[];
+  msg: string;
+  cause: string | null;
+  beforeHash: string;
+  afterHash: string;
+  /** The code before and after (shortened to 4000 characters): put "before" back to undo it. */
+  before?: string;
+  after?: string;
 }
 
 /** A cell of any tab as a plain object, read over MCP. */
@@ -213,6 +239,14 @@ interface Mcp {
   recent(n?: number): McpMessage[];
   /** fn(message) runs for every message as it happens. Returns a stop function. */
   tap(fn: (message: McpMessage) => unknown): () => void;
+  /**
+   * Follows a message by its id (see recent()): the way it went, the messages that led to it (oldest first), and the ones it led to.
+   * Every message says who started its chain (origin) and which message caused it (cause), so what happened can be followed back.
+   * const m = mcp.recent(1)[0]; print(mcp.trace(m.id)?.path)       'lab:A16 → router → weather'
+   */
+  trace(id: string): { message: McpMessage; path: string; because: McpMessage[]; ledTo: McpMessage[] } | null;
+  /** Who changed cells over MCP, oldest first, with the code before and after (all of them, or only one cell: mcp.history('lab/J24')). */
+  history(subject?: string): McpChange[];
   /**
    * What the router has counted since the page started: messages, errors, messages per second, who asked what.
    * Not a dependency: read it again from every('1s', ...). The same numbers are the MCP tool mcp.tool('router', 'stats').
@@ -632,6 +666,66 @@ interface SvgApi {
  * await pic.el('armR').pivot('top').animate({ rotate: -140 }, { time: '300ms' })
  */
 declare const svg: SvgApi;
+/** An animated picture (WebP, GIF or APNG) cut into frames, with controls. Made by anim.load(). */
+interface AnimClip {
+  /** Size of one frame in pixels, and how many frames there are. */
+  readonly width: number;
+  readonly height: number;
+  readonly frameCount: number;
+  /** How long each frame shows, in milliseconds. */
+  readonly durations: readonly number[];
+  /** The frame that is showing now (0 is the first), and whether it is playing. */
+  readonly frame: number;
+  readonly playing: boolean;
+  /** Length of one run in milliseconds, and where in it we are. */
+  readonly duration: number;
+  readonly time: number;
+  /** true: start again at the end (the default). false: stop at the last frame. */
+  loop: boolean;
+  /** 1 is the speed of the file; 2 twice as fast, 0.5 half, -1 backwards. */
+  speed: number;
+  /** The canvas that holds the current frame (with its transparency). */
+  readonly canvas: HTMLCanvasElement;
+  play(): AnimClip;
+  pause(): AnimClip;
+  toggle(): AnimClip;
+  /** Goes this many frames on (negative: back), going round at the ends, and pauses. clip.step() is one frame on. */
+  step(count?: number): AnimClip;
+  /** Shows frame number i. */
+  seek(i: number): AnimClip;
+  /** Shows the frame that is on screen this many milliseconds after the start. */
+  seekTime(ms: number): AnimClip;
+  /** fn(frame) runs every time the frame changes. Returns a stop function. */
+  onFrame(fn: (frame: number) => unknown): () => void;
+  /** fn() runs when a clip with loop = false reaches its end. */
+  onEnd(fn: () => unknown): () => void;
+  /**
+   * Shows the picture in this cell as a drawing, with a bar of buttons and a slider under it.
+   * clip.show({ controls: false }) is only the picture. clip.show({ scene: pic, x: 20, y: 10, width: 120 }) puts it
+   * into a drawing you made with svg(), so shapes can go behind and in front of it.
+   */
+  show(options?: { scene?: SvgScene; x?: number; y?: number; width?: number; controls?: boolean }): SvgScene;
+}
+interface AnimApi {
+  /**
+   * Loads an animated picture: the name of one that comes with the app ('bouncer', 'spinner', 'truck', 'truck.gif'), a web address,
+   * or a File. Transparency is kept. WebP, GIF and APNG work.
+   */
+  load(source: string | Blob | ArrayBuffer | Uint8Array): Promise<AnimClip>;
+  /** Opens the "choose a file" window and loads that picture. It only works inside a click: input.button('Choose', async () => { const clip = await anim.pick(); clip.show() }). */
+  pick(): Promise<AnimClip>;
+  /** The names of the pictures that come with the app. */
+  assets(): string[];
+}
+/**
+ * Animated pictures you can control. A browser plays a WebP or GIF but cannot pause it or step through it; this can.
+ * const clip = await anim.load('bouncer')
+ * clip.show()                     the picture with play / step / slider controls
+ * clip.speed = 0.5                half speed (negative runs backwards)
+ * clip.step(1)                    one frame on, and pause
+ * clip.onFrame((n) => print(n))   know which frame is showing
+ */
+declare const anim: AnimApi;
 /** Talk to other tabs over MCP (asynchronous): read their cells, watch them, click them, send them signals. */
 declare const mcp: Mcp;
 /** The weather anywhere (open-meteo.com). await weather.now('Amsterdam'). */

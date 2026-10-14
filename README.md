@@ -56,6 +56,7 @@ Live demo: https://springyworks.github.io/lattakker/
   - [8.15 Animated drawings: the svg global](#815-animated-drawings-the-svg-global)
   - [8.16 How this computer is doing: the system global](#816-how-this-computer-is-doing-the-system-global)
   - [8.17 Making tabs from code: the tabs global](#817-making-tabs-from-code-the-tabs-global)
+  - [8.18 Animated pictures you control: the anim global](#818-animated-pictures-you-control-the-anim-global)
 - [9 How the cell code is run (internals)](#9-how-the-cell-code-is-run-internals)
   - [9.1 When does a cell run?](#91-when-does-a-cell-run)
   - [9.2 Is this reactive programming?](#92-is-this-reactive-programming)
@@ -942,7 +943,7 @@ one, and they all sit on the same router:
 | Server | What it is for | Tools |
 | --- | --- | --- |
 | `board`, `lab`, `examples` | the cells of a tab | `list_cells`, `get_cell`, `run_cell`, `set_code`, `click`, `flash`, `signal` |
-| `router` | the router itself | `stats`, `catalog`, `servers`, `recent`, `reset_stats` |
+| `router` | the router itself | `stats`, `catalog`, `servers`, `recent`, `reset_stats`, `trace`, `history`, `change`, `endpoints`, `self_check` |
 | `weather` | the weather ([8.12](#812-the-weather)) | `now`, `forecast`, `find` |
 | `ollama` | the model on this computer ([8.13](#813-the-model-on-this-computer-ollama)) | `status`, `models`, `ask` |
 | `memory` | the helper's notes and little database | `remember`, `recall`, `db_put` ... |
@@ -968,6 +969,90 @@ request, answer, error and notification that crossed the router since the page
 started (nothing is estimated). Reading it is not a dependency: use
 `every('1s', ...)` to follow it. The Lab's **A35** is a live dashboard and **J35**
 lists the servers.
+
+#### 8.11.1 Who sent it: message ids, origin, hops and the record of changes
+
+Every message that crosses the router carries its provenance, like the headers of an
+e-mail or `git log` for traffic:
+
+- `id`: unique across pages (`k3f9-152`: the page's session code and a counter).
+- `origin`: who started the whole chain (a cell like `lab:A16`, `you`, `ai-chat`, `outside-ai:<client>`).
+- `cause`: the id of the message that made this one happen (an answer's cause is its request; a tool
+  call of the built-in helper is caused by the model's reply, which is caused by the question).
+- `hops`: the way it went, for example `['outside-ai:claude', 'mcp-bridge', 'ai', 'router', 'lab']`.
+
+A party that handles a message and sends another because of it passes the trace it got
+(`router.request(from, to, method, params, trace)`). An outside party says the same inside the message,
+in the standard `_meta` place: `params._meta['lattakker/trace'] = { origin, lineage: [...], id }`. The
+router strips it before the server sees the arguments and writes it into the record.
+
+Changes made over MCP (`set_code` on a cell) are also written down, in a short list (the last 100)
+with the code from before, so that **who changed what** can be asked afterwards and a change can be
+put back by hand (`set_code` with the old code):
+
+```ts
+const m = mcp.recent(1)[0]
+print(mcp.trace(m.id)?.path)                      // 'lab:A16 → router → weather'
+print(mcp.history('lab/J24'))                     // who changed that cell: by, lineage, msg, beforeHash, afterHash, before, after
+await mcp.tool('router', 'trace', { id: m.id })   // the same for an AI: the message, what led to it, what it led to
+await mcp.tool('router', 'history', { subject: 'lab/J24' })    // the list, without the code
+await mcp.tool('router', 'change', { n: 3 })                   // one change in full: the code before and after
+await mcp.tool('router', 'endpoints')                          // the servers of this page, and who this page is
+```
+
+It is bookkeeping only, kept in memory (the log keeps the last 400 messages): it costs a few
+counters per message and is gone when the page is reloaded.
+
+#### 8.11.2 The router checks itself, and a script exercises it
+
+The router is an MCP server like the others, so it can be its own client: the tool
+`self_check` sends messages as `router-selfcheck` and then reads the record back through its
+own tools (`trace`, `history`, `change`, `endpoints`), the way an outside AI would. It checks
+that every message gets an id, an origin and its hops; that an answer names the request it
+answers; that a follow-up names its cause and keeps the origin of the chain; that a trace
+arriving in `_meta` is taken over; that a change is recorded with the code before; and that the
+request that asked for the check is itself in the log. It answers `{ ok, checks: [{ name, ok, detail }] }`
+and leaves a few messages in the traffic log and one entry (`selfcheck/probe`) in the record of changes.
+
+```ts
+const r = await mcp.tool('router', 'self_check')
+print(r.ok ? 'the enhanced MCP works' : 'something is wrong')
+print(r.checks.filter((c) => !c.ok))
+```
+
+`scripts/mcp-exerciser.py` (plain Python 3, nothing to install) talks to the dev server's `/mcp`
+like an outside AI. It keeps the router busy with a gentle mix of reads until you press Ctrl+C
+and then prints what it did, so the Monitor tab's router drawing has something to show (dots
+running to the boxes and back, the `outside_ai` client lighting up). It never calls the
+weather, the model or the helper, and without `--writes` it changes nothing.
+
+```
+npm run dev                                   # 1. the dev server
+# 2. open http://localhost:5178/?mcp and show the Monitor tab (the ?mcp connects the page to /mcp)
+python3 scripts/mcp-exerciser.py              # 3. run until Ctrl+C (about one call a second)
+python3 scripts/mcp-exerciser.py --interval 0.3 --client brain-demo --writes
+python3 scripts/mcp-exerciser.py --check --writes     # no loop: check the enhanced MCP, exit code 0 or 1
+```
+
+What the address means: `http://localhost:5178/?mcp#monitor` is three parts. `localhost:5178` is the dev
+server of `npm run dev`. `?mcp` is a switch: only a page opened with it connects to the dev server's `/mcp`
+endpoint, so an outside AI or the script can drive it (a page without it is never driven from outside). `#monitor`
+is the tab to show; the tabs are `#board`, `#lab`, `#examples` and `#monitor`, and a link with `#lab` opens the
+Lab straight away. They can be combined in any order of use: `/?mcp#lab`.
+
+`--client` is the name that shows as the origin in the traffic (`outside-ai:brain-demo`).
+`--check` runs the router's own `self_check` and then tests from outside: that its calls
+are recognised (origin, and hops through `mcp-bridge`), that a request relayed for somebody
+else keeps the whole way (`_meta`), that `trace` gives the way as text, that `history` and `change`
+keep who changed a scratch cell and the code from before (`--writes`), and that the endpoints
+name this page. A passing run looks like `21 of 21 checks passed`.
+
+A remark that came with this: the router drawing looks a lot like a brain. One central
+dispatcher, every message passing through it, and specialised areas around it: the tabs as the
+parts that see and hold the cells, the weather, the model and the memory as the senses and the
+stores, the helper as speech, and `outside_ai` as the hands of someone else. What the new record adds
+is what a brain has and a plain bus lacks: each message remembers where it came from and what made
+it happen, so the chain of commands can be followed back, and a change can be traced to who made it.
 
 ### 8.12 The weather
 
@@ -1118,6 +1203,36 @@ Use `ensure` in a cell that can run again; `create` makes one more tab on every 
 tabs (`board`, `lab`, `examples`, `monitor`) cannot be renamed or closed. Over MCP: server `tabs`, tools
 `list`, `create`, `ensure`, `rename`, `close`, `select`. The built-in AI helper may list and select tabs;
 making, renaming and closing them needs the helper setting that lets it write code.
+
+### 8.18 Animated pictures you control: the anim global
+
+[↑ Contents](#contents)
+
+A browser plays an animated WebP or GIF but cannot pause it or step through it. `anim.load()` cuts the
+file into its frames (with the browser's own `ImageDecoder`, so transparency is kept) and gives back a
+clip with the controls.
+
+```ts
+span(5, 6)
+const clip = await anim.load('bouncer')    // a picture that comes with the app, a web address, or a File
+clip.show()                                // the picture with ⏮ ❘◀ ▶/⏸ ▶❘ buttons and a slider
+clip.speed = 0.5                           // half speed; -1 runs backwards
+clip.step(1)                               // one frame on, and pause
+clip.onFrame((n) => print('frame', n))
+```
+
+- `anim.load(source)` takes a name from `anim.assets()` (`'bouncer'`, `'spinner'`, `'truck'`, `'truck.gif'`), a web
+  address (the site must allow other pages to read it), a `File`/`Blob` or bytes. WebP, GIF and APNG work.
+  `await anim.pick()` opens the "choose a file" window; it only works inside a click, e.g. in an
+  `input.button(...)` handler.
+- `clip.show()` makes the cell's drawing. `clip.show({ controls: false })` is only the picture.
+  `clip.show({ scene: pic, x, y, width })` puts it into a drawing made with `svg()`: shapes added before it are
+  behind the (see-through) picture, shapes added after it are in front.
+- Control: `play()`, `pause()`, `toggle()`, `step(n)` (goes round at the ends), `seek(i)`, `seekTime(ms)`,
+  `speed`, `loop`. Read: `frame`, `frameCount`, `playing`, `duration`, `time`, `width`, `height`, `durations`,
+  `canvas`. Events: `onFrame(fn)`, `onEnd(fn)` (for `loop = false`).
+- All frames are kept in memory (up to about 256 MB), and are released when the cell runs again.
+  Needs a browser with `ImageDecoder` (Chrome, Edge). See the Lab's **A53** and **K53**, and the Examples **A45** and **K45**.
 
 ## 9 How the cell code is run (internals)
 
@@ -1892,6 +2007,23 @@ or the helper) has a see-through amber frame, so its own content stays readable.
 **The chat's width** is changed by dragging the thin bar at its left edge (it sticks
 softly at 380, 480 and 600 px), with the arrow keys, or by double-click to reset; it is
 remembered.
+
+#### 11.4.7b First contact: every AI reads this README first
+
+The README on GitHub is the place of truth, and every AI that starts to work with the internals is told so
+before it does anything (the text is the "First contact" part of `ai-docs/rules.md`):
+
+- **Outside AIs** (over `/mcp` or WebMCP): the first tool call of a new participant is *not carried out*; it is
+  answered with the README address and the rules. The participant is let through when it calls `read_readme`
+  (the page fetches the README from GitHub for it, part by part, 12 000 characters each; if GitHub cannot be
+  reached the published copy is the fallback) or `confirm_readme` with one sentence on what it learned. The
+  page remembers who has (until it is reloaded). The window.mms console is not gated, but `mms.help()` starts
+  with the same instruction. The bridge's `initialize` reply, `llms.txt`, the page's `<head>` and `ai/rules.md`
+  say it too.
+- **The built-in helper**: its instructions say so, and its first tool call of a page session is answered with the
+  same note until it has called `read_docs` with `doc: "readme"` (which now reads the GitHub copy first).
+- This is the one place where the page fetches something by itself on behalf of an AI: the README from
+  `raw.githubusercontent.com`, only when an AI asks for it.
 
 #### 11.4.8 Documents for AIs: rules, API, examples, README
 

@@ -228,7 +228,7 @@ const TOPICS: Record<string, Topic> = {
     title: '🎛 The Inputs panel',
     build: () => [
       para('Cells can ask you things: sliders, boxes, buttons. They gather in this little panel at the bottom left, grouped by the cell that made them.'),
-      list(['Click the title to fold it.', 'Click a blue cell name to fly to the cell that made the control.']),
+      list(['It starts docked, as just its title. Click the title to open it, and again to dock it (your choice is remembered).', 'Click a blue cell name to fly to the cell that made the control.']),
       actions(['👀 Show me the panel', () => spotlight(rectOf('.input-panel'), 'The controls of the cells live here')]),
     ],
   },
@@ -261,6 +261,9 @@ const TOPICS: Record<string, Topic> = {
         ['Drag over cells', 'pick a group (a rubber band)'],
         ['Shift+click', 'pick everything from the first cell to this one'],
         ['Ctrl+click', 'add or remove one cell'],
+        ['Ctrl+drag', 'pan the view (the sheet, or the code inside an editor)'],
+        ['Click, then press and hold', 'Morse: dit, dah-hold. Drag to pan the view'],
+        ['Click, click, then press and hold', 'Morse: dit, dit, dah-hold. Drag up to zoom in, down to zoom out'],
         ['Enter', 'edit the picked cell, or make one block of the picked cells'],
         ['Delete', 'clear the picked cells (press twice)'],
         ['Ctrl+Enter', 'run a cell again'],

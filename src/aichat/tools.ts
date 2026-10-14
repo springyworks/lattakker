@@ -1,4 +1,13 @@
-import { router } from '../mcp/router';
+import { router, type Trace } from '../mcp/router';
+import { isOriented, markOriented, orientation } from '../ai/orientation';
+
+/** The message the running chat turn is answering: what the tools ask the router is marked as caused by it (see mcp/router.ts, Trace). */
+/** The built-in helper, as a participant that has to read the README once (see ai/orientation.ts). */
+const HELPER = 'helper';
+let turnTrace: Trace | undefined;
+export const setTurnTrace = (t: Trace | undefined): void => {
+  turnTrace = t;
+};
 import { nav } from '../nav';
 import { workspace } from '../workspace';
 import { resolveSmart } from './cellPaths';
@@ -290,7 +299,7 @@ async function readCell(host: ToolHost, path: string): Promise<unknown> {
   const here = host.context();
   const hit = resolveSmart(path, here.tab);
   if ('error' in hit) return { error: hit.error };
-  const answer = await router.request(CLIENT, hit.tab.id, 'tools/call', { name: 'get_cell', arguments: { address: hit.address } });
+  const answer = await router.request(CLIENT, hit.tab.id, 'tools/call', { name: 'get_cell', arguments: { address: hit.address } }, turnTrace);
   const { ok, value } = inner(answer);
   if (!ok) return { error: value };
   // What is in the open editor is newer than what is saved (the person may still be typing), and line numbers make "here" exact.
@@ -411,12 +420,17 @@ function announceDirect(host: ToolHost, name: string, args: Args, client: string
   const path = typeof args.path === 'string' ? args.path : '';
   const hit = path && !guide ? workspace.resolve(path, host.context().tab) : null;
   const tab = hit && !('error' in hit) ? hit.tab.id : host.context().tab;
-  router.notify(client, guide ? 'cells' : tab, `tools/${name}`, args);
+  router.notify(client, guide ? 'cells' : tab, `tools/${name}`, args, turnTrace);
 }
 
 /** Runs one tool the model asked for. The answer is always text; a problem is reported in it, never thrown at the model. */
 export async function runTool(host: ToolHost, name: string, args: Args, client: string = CLIENT): Promise<string> {
   try {
+    // First contact: the helper reads the README (the place of truth, on GitHub) before its first tool does anything.
+    const readsReadme = name === 'read_docs' && (args.doc === 'readme' || args.doc === 'rules');
+    if (!isOriented(HELPER) && !readsReadme) {
+      return asText({ ...orientation('helper', name), how: 'Call read_docs with doc "readme" now (no query gives the list of its headings; a few words as query give the parts that answer them). Then repeat your call.' });
+    }
     announceDirect(host, name, args, client);
     switch (name) {
       case 'look_around': {
@@ -429,7 +443,7 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
       case 'list_cells': {
         const id = typeof args.tab === 'string' && args.tab ? args.tab : host.context().tab;
         if (!workspace.get(id)) return asText({ error: `There is no tab "${id}". Tabs: ${workspace.list().map((t) => t.id).join(', ')}.` });
-        const answer = await router.request(CLIENT, id, 'tools/call', { name: 'list_cells', arguments: {} });
+        const answer = await router.request(CLIENT, id, 'tools/call', { name: 'list_cells', arguments: {} }, turnTrace);
         return limit(asText(inner(answer).value));
       }
       case 'read_cell':
@@ -442,7 +456,9 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
         return limit(await cellGuide(), 9500);
       case 'read_docs': {
         if (typeof args.doc !== 'string') return asText({ error: 'doc must be api, examples, readme or rules' });
-        return await readDocs({ doc: args.doc, query: typeof args.query === 'string' ? args.query : undefined, path: typeof args.path === 'string' ? args.path : undefined }, ammo.resultChars(6000));
+        const text = await readDocs({ doc: args.doc, query: typeof args.query === 'string' ? args.query : undefined, path: typeof args.path === 'string' ? args.path : undefined }, ammo.resultChars(6000));
+        if (args.doc === 'readme' && !text.startsWith('{"error"')) markOriented(HELPER);
+        return text;
       }
       case 'recall':
       case 'remember':
@@ -455,7 +471,7 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
           tool = { duplicates: 'find_duplicates', update: 'update_note', forget: 'forget', stats: 'stats' }[action] ?? '';
           if (!tool) return asText({ error: 'action must be duplicates, update, forget or stats' });
         }
-        const answer = await router.request(client, 'memory', 'tools/call', { name: tool, arguments: a });
+        const answer = await router.request(client, 'memory', 'tools/call', { name: tool, arguments: a }, turnTrace);
         const r = inner(answer);
         return limit(asText(r.ok ? r.value : { error: r.value }));
       }
@@ -464,19 +480,19 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
       case 'db_query':
       case 'db_delete':
       case 'db_collections': {
-        const r = inner(await router.request(client, 'memory', 'tools/call', { name, arguments: args }));
+        const r = inner(await router.request(client, 'memory', 'tools/call', { name, arguments: args }, turnTrace));
         return limit(asText(r.ok ? r.value : { error: r.value }));
       }
       case 'consult_local':
       case 'teach_local':
       case 'manage_local': {
         const tool = { consult_local: 'consult', teach_local: 'teach', manage_local: 'manage' }[name]!;
-        const r = inner(await router.request(client, 'local-ai', 'tools/call', { name: tool, arguments: args }));
+        const r = inner(await router.request(client, 'local-ai', 'tools/call', { name: tool, arguments: args }, turnTrace));
         return limit(asText(r.ok ? r.value : { error: r.value }));
       }
       case 'discover': {
-        const catalog = inner(await router.request(client, 'router', 'tools/call', { name: 'catalog', arguments: {} }));
-        const stats = inner(await router.request(client, 'router', 'tools/call', { name: 'stats', arguments: {} }));
+        const catalog = inner(await router.request(client, 'router', 'tools/call', { name: 'catalog', arguments: {} }, turnTrace));
+        const stats = inner(await router.request(client, 'router', 'tools/call', { name: 'stats', arguments: {} }, turnTrace));
         if (!catalog.ok) return asText({ error: catalog.value });
         const servers = ((catalog.value as { servers?: Array<{ server: string; description: string; tools: Array<{ name: string }>; resources: number | null }> }).servers ?? []).map((s) => ({
           server: s.server,
@@ -507,12 +523,12 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
           return asText({ error: 'Making, renaming and closing tabs is switched off for you (a grown-up can allow it in the helper settings, "Let the helper write code"). You can list tabs and select one; ask the person to use the ＋ in the tab strip.' });
         }
         if (method === 'tools/call' && String(params.name ?? '') === 'set_code') return asText({ error: 'set_code is not allowed for you. Use suggest_code: the person looks at the code and decides.' });
-        return limit(asText(await router.request(CLIENT, server, method, params)));
+        return limit(asText(await router.request(CLIENT, server, method, params, turnTrace)));
       }
       case 'flash_cell': {
         const hit = resolveSmart(String(args.path ?? ''), host.context().tab);
         if ('error' in hit) return asText({ error: hit.error });
-        const answer = await router.request(CLIENT, hit.tab.id, 'tools/call', { name: 'flash', arguments: { address: hit.address } });
+        const answer = await router.request(CLIENT, hit.tab.id, 'tools/call', { name: 'flash', arguments: { address: hit.address } }, turnTrace);
         return asText({ ...(inner(answer).value as object), note: hit.note });
       }
       case 'goto_cell': {
@@ -522,7 +538,7 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
         if (!nav.goTo(full)) return asText({ error: `Could not go to ${full}.` });
         // The screen flies there for a moment; the blink comes when it has arrived.
         await sleep(900);
-        await router.request(CLIENT, hit.tab.id, 'tools/call', { name: 'flash', arguments: { address: hit.address } });
+        await router.request(CLIENT, hit.tab.id, 'tools/call', { name: 'flash', arguments: { address: hit.address } }, turnTrace);
         const d = hit.tab.sheet.dataAt(hit.address);
         return asText({ path: full, there: true, hasCode: !!d?.code.trim(), firstLine: d?.code.split('\n').find((l) => l.trim())?.slice(0, 100) ?? null, note: hit.note });
       }

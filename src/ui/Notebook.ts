@@ -12,11 +12,12 @@ import { MAX_COLS } from '../sheet/Sheet';
 import { SheetPane, type Tone } from './SheetPane';
 import { helpButton } from './help';
 import { installGrabGesture, installPinchZoom } from './touch';
+import { installMouseGestures } from './MouseGestures';
 
 /**
  * The Examples tab, as a notebook. It is a real sheet, like the game board's and the Lab's (headers, grid, the
- * ⋮ menu, popups, the editor), but its blocks are big: one example under the other, each with its code at full
- * size on top and its live output underneath, like the strip under the floating editor.
+ * ⋮ menu, popups, the editor), but its blocks are roomy: one example under the other, each with its code on top
+ * (about a dozen lines show; click into it to scroll the rest) and its live output underneath, like the strip under the floating editor.
  *
  * The shipped examples were written for the board (they read A12, paint the squares of the board, write to
  * L12 ...), so they run where they live, in their own cells on the game board. A notebook block is a large
@@ -49,6 +50,8 @@ export interface Notebook {
 const ENTRY_COLS = 14;
 const HEAD_H = 38;
 const LINE_H = 19;
+/** A block shows this many lines of its code; the rest scrolls inside it. The fun is the output, so the code stays small. */
+const CODE_LINES = 12;
 const START_BATCH = 4;
 const MORE_BATCH = 3;
 const NEW_COLS = 10;
@@ -79,8 +82,8 @@ function askedSpan(code: string): { cols: number; rows: number } {
 function sizeOf(code: string): { rows: number; outH: number } {
   const lines = code.split('\n').length;
   const outH = Math.min(300, Math.max(96, askedSpan(code).rows * CH + 18));
-  const codeH = Math.min(720, lines * LINE_H + 24);
-  return { rows: Math.max(5, Math.ceil((HEAD_H + codeH + outH + 10) / CH)), outH };
+  const codeH = Math.min(CODE_LINES * LINE_H + 24, lines * LINE_H + 24);
+  return { rows: Math.max(4, Math.ceil((HEAD_H + codeH + outH + 10) / CH)), outH };
 }
 
 interface Entry {
@@ -356,6 +359,8 @@ export function createNotebook(view: GameView, board: NotebookBoard, examples: R
     e.refs = { chip, primary, out, outCell };
     sheet.setNodeLabel(`sheet:${address}`, host);
     e.editor = createNotebookEditor(codeBox, previewModel(e));
+    // The mouse wheel scrolls the page over a block's code, until you click into the code: then it scrolls the code.
+    codeBox.addEventListener('wheel', (ev) => { if (!e.editor?.hasTextFocus() && !ev.ctrlKey) ev.stopPropagation(); }, { capture: true, passive: true });
     e.editor.layout();
     e.editor.onDidChangeModelContent(() => {
       if (!e.bound || e.syncing) return;
@@ -479,6 +484,7 @@ export function createNotebook(view: GameView, board: NotebookBoard, examples: R
   }
   startExamplesAutoSave(sheet);
 
+  installMouseGestures(sheet);
   if (smallScreen) {
     installPinchZoom(sheet);
     installGrabGesture(sheet);

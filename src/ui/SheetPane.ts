@@ -277,6 +277,10 @@ export class SheetPane {
 
   private installListeners(): void {
     const { sheet, hooks } = this;
+    // Two quick clicks open the editor; if a hold follows (a Morse gesture: dit, dit, dah), that was not an edit.
+    window.addEventListener('lattakker:gesture', (e) => {
+      if ((e as CustomEvent<{ pattern: string }>).detail.pattern.startsWith('..')) this.editor.closeIfJustOpened(1500);
+    });
     sheet.setListeners({
       onCellClick: (address, evt) => {
         const tile = sheet.takeTileClick(address);

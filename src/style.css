@@ -32,6 +32,23 @@ html, body {
 body.grab-ctrl .sheet-pane, body.grab-ctrl .sheet-pane * {
   cursor: grab !important;
 }
+body.gesture-active, body.gesture-active * {
+  cursor: grabbing !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+.morse-cue {
+  position: fixed;
+  z-index: 1000;
+  padding: 3px 9px;
+  border-radius: 12px;
+  background: #1f2933;
+  color: #fff;
+  font: 600 13px system-ui, sans-serif;
+  letter-spacing: 1px;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
 body.grab-armed .sheet-pane, body.grab-armed .sheet-pane * {
   cursor: grabbing !important;
 }
@@ -1235,6 +1252,9 @@ body.ai-open .sheet-tab-panel {
   gap: 6px;
   align-items: flex-end;
   padding: 6px 10px 10px;
+}
+.ai-input.busy {
+  background: #f6f7f9;
 }
 .ai-input {
   flex: 1 1 auto;

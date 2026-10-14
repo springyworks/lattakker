@@ -33,19 +33,69 @@ export class McpError extends Error {
   }
 }
 
+/**
+ * Where a message comes from, so any message can be followed back to whoever started it (like the headers of an
+ * e-mail, or `git log` for traffic). Every message gets an id; a message that is sent because of another one says
+ * which (`cause`), and keeps the `origin` and the `lineage` (the parties the chain passed through) of that one.
+ *
+ * A party that handles a message and sends another because of it passes the trace it got as the last argument
+ * (`router.request(from, to, method, params, trace)`). An outside party (another page, a client over /mcp) can say
+ * the same in the standard place: `params._meta['lattakker/trace'] = { origin, lineage, id }`.
+ */
+export interface Trace {
+  /** Unique across pages: the page's session code, a dash and a counter ('k3f9-152'). */
+  id: string;
+  /** Who started the whole chain: a cell ('lab:A16'), 'you', 'ai-chat', 'outside-ai' ... */
+  origin: string;
+  /** Every party the chain passed through, first to last; the last is the sender of this message. */
+  lineage: string[];
+  /** The message that made this one happen, or null at the start of a chain. */
+  cause: string | null;
+}
+
 export interface McpServer {
   /** The name other parties use: 'board', 'lab'. */
   readonly name: string;
   /** One sentence on what this server is for (shown in the router's catalog). */
   readonly description?: string;
-  handle(method: string, params: Record<string, unknown>, from: string): Promise<Json> | Json;
+  /** `trace` says where the request came from; a server that asks others because of it passes it on. */
+  handle(method: string, params: Record<string, unknown>, from: string, trace?: Trace): Promise<Json> | Json;
 }
 
-export type Listener = (from: string, method: string, params: Record<string, unknown>) => void;
+export type Listener = (from: string, method: string, params: Record<string, unknown>, trace?: Trace) => void;
+
+/** One recorded change to something (a cell's code ...): who made it, through which message, and what it was before. */
+export interface Change {
+  n: number;
+  /** Milliseconds since the page started, and the clock time. */
+  time: number;
+  at: string;
+  /** What changed: 'lab/J24', or the cell's uid 'c-1a2b3c4d'. */
+  subject: string;
+  /** What was done: the tool, like 'set_code'. */
+  action: string;
+  /** Who started it, the parties it passed through, and the message that carried it. */
+  by: string;
+  lineage: string[];
+  msg: string;
+  cause: string | null;
+  /** Short fingerprints of the content before and after: equal means nothing really changed. */
+  beforeHash: string;
+  afterHash: string;
+  /** The content itself (shortened to MAX_KEPT_CHARS), so a change can be undone from the record. */
+  before?: string;
+  after?: string;
+}
 
 /** One line of the traffic log. */
 export interface Traffic {
   n: number;
+  /** The message id (see Trace), who started the chain it belongs to, and the message that caused it. */
+  id: string;
+  origin: string;
+  cause: string | null;
+  /** The way it went, from the one who started it to the receiver: ['you', 'ai-chat', 'router', 'board']. */
+  hops: string[];
   /** Milliseconds since the page started. */
   time: number;
   from: string;
@@ -59,6 +109,14 @@ export interface Traffic {
 }
 
 const MAX_LOG = 400;
+const MAX_CHANGES = 100;
+const MAX_KEPT_CHARS = 4000;
+const MAX_LINEAGE = 8;
+/** Where a trace rides inside the params of a message that comes from outside: params._meta[TRACE_META]. */
+export const TRACE_META = 'lattakker/trace';
+const META_KEY = TRACE_META;
+/** Tells pages apart: ids made here start with it. */
+const SESSION = Math.random().toString(36).slice(2, 6);
 const DETAIL_CHARS = 110;
 /** Most distinct servers, clients and methods the statistics keep apart; the rest are counted together as '(other)'. */
 const MAX_KEYS = 200;
@@ -114,6 +172,15 @@ function bump(map: Map<string, Tally>, key: string, ms: number, failed: boolean)
   t.maxMs = Math.max(t.maxMs, ms);
 }
 
+/** A short fingerprint of a text (FNV-1a), enough to see whether two versions are the same. */
+function fingerprint(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+const short = (v: unknown, max = 80): string => String(v ?? '').slice(0, max);
+
 const clone = <T>(value: T): T => (value === undefined ? value : (JSON.parse(JSON.stringify(value)) as T));
 
 function brief(value: unknown): string {
@@ -132,6 +199,13 @@ export class McpRouter {
   private readonly log: Traffic[] = [];
   private readonly taps = new Set<(t: Traffic) => void>();
   private counter = 0;
+  private readonly changes: Change[] = [];
+  private changeCounter = 0;
+  /** When each server joined, and when it was last asked. */
+  private readonly joined = new Map<string, { since: number; seen: number }>();
+  /** The page's own code for itself in a trace: ids made here start with it. */
+  readonly session = SESSION;
+  private readonly started = Date.now();
   private readonly count = { requests: 0, errors: 0, notifications: 0, messages: 0 };
   private readonly byServer = new Map<string, Tally>();
   private readonly byClient = new Map<string, Tally>();
@@ -144,11 +218,63 @@ export class McpRouter {
 
   register(server: McpServer): void {
     this.servers.set(server.name, server);
+    this.joined.set(server.name, { since: Math.round(performance.now()), seen: 0 });
   }
 
   /** A server goes away (its tab was closed). */
   unregister(name: string): void {
     this.servers.delete(name);
+    this.joined.delete(name);
+  }
+
+  /** The servers of this page, who they are and how much they have been asked: the endpoints that identify themselves in the traffic. */
+  endpoints(): Array<{ name: string; description: string; since: number; lastAsked: number | null; asked: number; errors: number }> {
+    return [...this.servers.values()].map((s) => {
+      const j = this.joined.get(s.name);
+      const t = this.byServer.get(s.name);
+      return { name: s.name, description: s.description ?? '', since: j?.since ?? 0, lastAsked: j?.seen ? j.seen : null, asked: t?.requests ?? 0, errors: t?.errors ?? 0 };
+    });
+  }
+
+  /** Who this page is, as a party in a trace. */
+  identity(): { session: string; started: string; page: string } {
+    return { session: SESSION, started: new Date(this.started).toISOString(), page: typeof location === 'undefined' ? 'unknown' : location.host };
+  }
+
+  /**
+   * The start of a chain for a party that is not an MCP server of this page: an outside AI that came in over
+   * /mcp (`router.origin('outside-ai', ['mcp-bridge'])`), a person typing. Pass the result as the last argument of request().
+   */
+  origin(origin: string, relays: string[] = []): Trace {
+    return { id: '', origin: short(origin), lineage: [short(origin), ...relays.map((r) => short(r))].slice(0, MAX_LINEAGE), cause: null };
+  }
+
+  /** A trace that came in as `params._meta['lattakker/trace']` (from another page or an outside client), made safe to use. */
+  private metaTrace(params: Record<string, unknown>): Trace | undefined {
+    const meta = params._meta;
+    const raw = typeof meta === 'object' && meta !== null ? (meta as Record<string, unknown>)[META_KEY] : undefined;
+    if (typeof raw !== 'object' || raw === null) return undefined;
+    const t = raw as Record<string, unknown>;
+    if (typeof t.origin !== 'string' || !t.origin) return undefined;
+    const lineage = Array.isArray(t.lineage) ? t.lineage.filter((x): x is string => typeof x === 'string').slice(0, MAX_LINEAGE).map((x) => short(x)) : [short(t.origin)];
+    return { id: typeof t.id === 'string' ? short(t.id, 40) : '', origin: short(t.origin), lineage: lineage.length ? lineage : [short(t.origin)], cause: null };
+  }
+
+  /** The server gets the arguments without the trace that rode along in `_meta` (it has the trace as its own argument). */
+  private stripMeta(wire: Record<string, unknown>, own: Trace | undefined): void {
+    if (!own || typeof wire._meta !== 'object' || !wire._meta) return;
+    delete (wire._meta as Record<string, unknown>)[META_KEY];
+    if (!Object.keys(wire._meta).length) delete wire._meta;
+  }
+
+  /** The trace of the message being sent: it continues `via` (the message that caused it) or starts a new chain at `from`. */
+  private stamp(from: string, via: Trace | undefined, own: Trace | undefined): Trace {
+    const id = `${SESSION}-${this.counter + 1}`;
+    // A trace that rides in the message itself (from another page or client) says more than the one the local code passes.
+    const base = own ?? via;
+    if (!base) return { id, origin: from, lineage: [from], cause: null };
+    const lineage = base.lineage[base.lineage.length - 1] === from ? base.lineage : [...base.lineage, from].slice(-MAX_LINEAGE);
+    return { id, origin: base.origin, lineage, cause: base.id || null };
   }
 
   /** The names of the servers that can be asked something. */
@@ -162,49 +288,62 @@ export class McpRouter {
   }
 
   /** Asks a server something and waits for the answer. `from` says who is asking (it shows in the log and tells the server whom to notify). */
-  async request(from: string, to: string, method: string, params: Record<string, unknown> = {}): Promise<Json> {
+  async request(from: string, to: string, method: string, params: Record<string, unknown> = {}, via?: Trace): Promise<Json> {
     const server = this.servers.get(to);
     if (!server) throw new McpError(ERR.invalidParams, `There is no MCP server "${to}". Servers: ${this.names().join(', ')}.`);
     const wire = clone(params);
+    const own = this.metaTrace(wire);
+    this.stripMeta(wire, own);
     const started = performance.now();
-    this.record({ from, to, kind: 'request', method, detail: brief(wire) });
+    const trace = this.stamp(from, via, own);
+    const joined = this.joined.get(to);
+    if (joined) joined.seen = Math.round(started);
+    this.record({ from, to, kind: 'request', method, detail: brief(wire) }, trace, [...trace.lineage, 'router', to]);
     // An answer never comes back in the same breath, just like over a real connection.
     await Promise.resolve();
     try {
-      const result = clone(await server.handle(method, wire, from));
+      const result = clone(await server.handle(method, wire, from, trace));
       const ms = round1(performance.now() - started);
       this.tally(from, to, method, ms, false);
-      this.record({ from: to, to: from, kind: 'response', method, detail: brief(result), ms });
+      this.record({ from: to, to: from, kind: 'response', method, detail: brief(result), ms }, { ...trace, id: `${SESSION}-${this.counter + 1}`, cause: trace.id, lineage: [...trace.lineage, to].slice(-MAX_LINEAGE) }, [to, 'router', ...trace.lineage.slice().reverse()]);
       return result;
     } catch (err) {
       const error = err instanceof McpError ? err : new McpError(ERR.internal, err instanceof Error ? err.message : String(err));
       const ms = round1(performance.now() - started);
       this.tally(from, to, method, ms, true);
-      this.record({ from: to, to: from, kind: 'error', method, detail: `${error.code} ${error.message}`, ms });
+      this.record({ from: to, to: from, kind: 'error', method, detail: `${error.code} ${error.message}`, ms }, { ...trace, id: `${SESSION}-${this.counter + 1}`, cause: trace.id, lineage: [...trace.lineage, to].slice(-MAX_LINEAGE) }, [to, 'router', ...trace.lineage.slice().reverse()]);
       throw error;
     }
   }
 
-  /** A server tells one client something. A notification has no answer. */
-  notify(from: string, to: string, method: string, params: Record<string, unknown> = {}): void {
+  /** A server tells one client something. A notification has no answer. Returns its trace, for a message that follows from it. */
+  notify(from: string, to: string, method: string, params: Record<string, unknown> = {}, via?: Trace): Trace {
     const wire = clone(params);
-    this.record({ from, to, kind: 'notification', method, detail: brief(wire) });
-    this.deliver(this.listeners.get(to), from, method, wire);
+    const own = this.metaTrace(wire);
+    this.stripMeta(wire, own);
+    const trace = this.stamp(from, via, own);
+    this.record({ from, to, kind: 'notification', method, detail: brief(wire) }, trace, [...trace.lineage, 'router', to]);
+    this.deliver(this.listeners.get(to), from, method, wire, trace);
+    return trace;
   }
 
   /** Tells everybody who listens (a signal that is for no one in particular). */
-  broadcast(from: string, method: string, params: Record<string, unknown> = {}): void {
+  broadcast(from: string, method: string, params: Record<string, unknown> = {}, via?: Trace): Trace {
     const wire = clone(params);
-    this.record({ from, to: '*', kind: 'notification', method, detail: brief(wire) });
-    for (const set of this.listeners.values()) this.deliver(set, from, method, wire);
+    const own = this.metaTrace(wire);
+    this.stripMeta(wire, own);
+    const trace = this.stamp(from, via, own);
+    this.record({ from, to: '*', kind: 'notification', method, detail: brief(wire) }, trace, [...trace.lineage, 'router', '*']);
+    for (const set of this.listeners.values()) this.deliver(set, from, method, wire, trace);
+    return trace;
   }
 
-  private deliver(set: Set<Listener> | undefined, from: string, method: string, params: Record<string, unknown>): void {
+  private deliver(set: Set<Listener> | undefined, from: string, method: string, params: Record<string, unknown>, trace: Trace): void {
     if (!set) return;
     for (const listener of [...set]) {
       queueMicrotask(() => {
         try {
-          listener(from, method, clone(params));
+          listener(from, method, clone(params), trace);
         } catch (err) {
           console.warn('MCP listener failed', err);
         }
@@ -244,12 +383,12 @@ export class McpRouter {
     this.bucketSecond = second;
   }
 
-  private record(entry: Omit<Traffic, 'n' | 'time'>): void {
+  private record(entry: Omit<Traffic, 'n' | 'time' | 'id' | 'origin' | 'cause' | 'hops'>, trace: Trace, hops: string[]): void {
     this.count.messages++;
     if (entry.kind === 'notification') this.count.notifications++;
     this.advance(Math.floor(performance.now() / 1000));
     this.buckets[HISTORY_SECONDS - 1]++;
-    const line: Traffic = { n: ++this.counter, time: Math.round(performance.now()), ...entry };
+    const line: Traffic = { n: ++this.counter, id: trace.id, origin: trace.origin, cause: trace.cause, hops, time: Math.round(performance.now()), ...entry };
     this.log.push(line);
     if (this.log.length > MAX_LOG) this.log.splice(0, this.log.length - MAX_LOG);
     for (const tap of [...this.taps]) {
@@ -303,6 +442,71 @@ export class McpRouter {
   /** The last `n` messages that crossed the router, oldest first. */
   recent(n = 10): Traffic[] {
     return this.log.slice(-Math.max(1, Math.min(MAX_LOG, Math.floor(n))));
+  }
+
+  // ------------------------------------------------------------------ provenance: following a message back
+
+  /** One message from the log by its id, or undefined (it may be older than the log keeps). */
+  message(id: string): Traffic | undefined {
+    return this.log.find((m) => m.id === id);
+  }
+
+  /** What led to a message: the message that caused it, and the one that caused that ... oldest first, ending with the message itself. */
+  chain(id: string): Traffic[] {
+    const out: Traffic[] = [];
+    let at = this.message(id);
+    for (let i = 0; at && i < 50; i++) {
+      out.unshift(at);
+      at = at.cause ? this.message(at.cause) : undefined;
+    }
+    return out;
+  }
+
+  /** What a message led to: the messages it caused, and what those caused (breadth first, up to `limit`). */
+  effects(id: string, limit = 40): Traffic[] {
+    const out: Traffic[] = [];
+    const queue = [id];
+    while (queue.length && out.length < limit) {
+      const parent = queue.shift()!;
+      for (const m of this.log) {
+        if (m.cause === parent && out.length < limit) {
+          out.push(m);
+          queue.push(m.id);
+        }
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Writes down that something was changed because of a message: who made the change, through which message, and
+   * what it was before (so it can be undone from the record). A short list, oldest dropped first.
+   */
+  noteChange(trace: Trace | undefined, change: { subject: string; action: string; before?: string; after?: string }): Change {
+    const clip = (t: string | undefined): string | undefined => (t === undefined ? undefined : t.length > MAX_KEPT_CHARS ? t.slice(0, MAX_KEPT_CHARS) : t);
+    const entry: Change = {
+      n: ++this.changeCounter,
+      time: Math.round(performance.now()),
+      at: new Date().toISOString(),
+      subject: change.subject,
+      action: change.action,
+      by: trace?.origin ?? '?',
+      lineage: trace?.lineage ?? [],
+      msg: trace?.id ?? '',
+      cause: trace?.cause ?? null,
+      beforeHash: fingerprint(change.before ?? ''),
+      afterHash: fingerprint(change.after ?? ''),
+      before: clip(change.before),
+      after: clip(change.after),
+    };
+    this.changes.push(entry);
+    if (this.changes.length > MAX_CHANGES) this.changes.splice(0, this.changes.length - MAX_CHANGES);
+    return entry;
+  }
+
+  /** The recorded changes, oldest first; only those of one subject when given. */
+  history(subject?: string): Change[] {
+    return subject ? this.changes.filter((c) => c.subject === subject || c.subject.endsWith(`/${subject}`)) : [...this.changes];
   }
 
   /** Watch every message as it happens. Returns the way to stop. */

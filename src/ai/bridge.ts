@@ -3,6 +3,8 @@
  * Only a page opened with ?mcp connects, so a normal visit is never driven from outside.
  */
 
+import { throughChannel } from './entry';
+
 export interface BridgeTool {
   name: string;
   description: string;
@@ -28,11 +30,11 @@ export function installMcpBridge(tools: BridgeTool[]): void {
   announce();
   window.setInterval(announce, HEARTBEAT_MS);
 
-  hot.on('mms:call', async (msg: { id: string; name: string; args?: Record<string, unknown> }) => {
+  hot.on('mms:call', async (msg: { id: string; name: string; args?: Record<string, unknown>; client?: string }) => {
     const tool = tools.find((t) => t.name === msg.name);
     let result: unknown;
     try {
-      result = tool ? await tool.run(msg.args ?? {}) : { ok: false, error: `No tool named ${msg.name}` };
+      result = tool ? await throughChannel('mcp-bridge', msg.client, () => tool.run(msg.args ?? {})) : { ok: false, error: `No tool named ${msg.name}` };
     } catch (err) {
       result = { ok: false, error: err instanceof Error ? err.message : String(err) };
     }

@@ -9,6 +9,8 @@ import { BOARD_COLS, BOARD_ROWS, isLake, rankGlyph, type Piece } from '../game/m
 import { installMcpBridge } from './bridge';
 import { workspace, type WorkspaceTab } from '../workspace';
 import { McpError, router } from '../mcp/router';
+import { outsideTrace, participant, throughChannel } from './entry';
+import { README_URL, isOriented, markOriented, orientation, readReadme } from './orientation';
 import { docUrls } from '../aichat/docs';
 
 /**
@@ -40,6 +42,9 @@ const LEGEND =
   "row 1 is Blue's back row, row 10 is Red's back row. Red (the player, and the AI helping them) moves up the board.";
 
 const HELP = `LATTAKKER SHEET - window.mms guide (everything runs locally in this page; free, no tracking, no network unless the player starts a Share session or sets up the optional built-in helper, the 🤖 AI button)
+
+FIRST, BEFORE ANYTHING ELSE: read the README, the place of truth: ${README_URL}
+(raw text: https://raw.githubusercontent.com/springyworks/lattakker/main/README.md). If you cannot open links, call the tool read_readme (it fetches it from GitHub, part 1, 2 ...) or confirm_readme with one sentence on what you learned. An AI that comes in over /mcp or WebMCP has its first call answered with the rules until it has done so. Everything you do through the router is recorded (who started it, through whom, what it changed): see the router tools trace, history, change.
 
 The page is a Lattakker board that is also a spreadsheet. Red is the child/player, Blue is the computer. Cells below the board (A12, E12, ...) hold TypeScript that runs live.
 Every mms method returns plain JSON. Errors never throw: you get { ok: false, error: "..." }. Success is { ok: true, ... }.
@@ -642,7 +647,7 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
       if (typeof server !== 'string' || typeof method !== 'string') return fail("mcp(server, method, params) needs two strings, for example mcp('lab', 'resources/list')");
       const args = typeof params === 'object' && params !== null && !Array.isArray(params) ? (params as Record<string, unknown>) : {};
       try {
-        return ok({ server, method, result: await router.request('ai', server, method, args) });
+        return ok({ server, method, result: await router.request('ai', server, method, args, outsideTrace()) });
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err), { code: err instanceof McpError ? err.code : undefined });
       }
@@ -831,6 +836,38 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
       run: (a) => api.writeCodeLive(a.address, a.code, a.tab),
     },
     {
+      name: 'read_readme',
+      description:
+        `Read the README of this project, the place of truth, fetched from GitHub (${README_URL}). Everybody starts here: until you have read it (or called confirm_readme), your first call is answered with the rules instead of being carried out. Part 1 comes first and begins with the table of contents; call again with part 2, 3 ... for the rest.`,
+      inputSchema: obj({ part: { type: 'integer', description: 'Which part, from 1 (default 1).' } }),
+      readOnly: true,
+      run: async (a) => {
+        // Who is calling is known only until the first await.
+        const who = participant();
+        try {
+          const r = await readReadme(typeof a.part === 'number' ? a.part : 1);
+          if (who) markOriented(who);
+          return ok({ ...r, next: r.part < r.parts ? `call read_readme with part ${r.part + 1}` : 'that was the last part' });
+        } catch (err) {
+          return fail(err instanceof Error ? err.message : String(err));
+        }
+      },
+    },
+    {
+      name: 'confirm_readme',
+      description: `Say that you read the README (${README_URL}) by opening it yourself, with one sentence on what you learned from it. This lets your calls through, like read_readme does.`,
+      inputSchema: obj({ summary: { type: 'string', description: 'One sentence: what the README says this app is and how you should behave.' } }, ['summary']),
+      readOnly: true,
+      run: (a) => {
+        const summary = typeof a.summary === 'string' ? a.summary.trim() : '';
+        if (summary.length < 20) return fail('Say in a sentence what you learned from the README (at least 20 characters). If you have not read it, call read_readme.');
+        const who = participant();
+        if (who) markOriented(who);
+        router.notify(who ?? 'ai', 'router', 'ai/readme-confirmed', { summary: summary.slice(0, 200) }, outsideTrace());
+        return ok({ welcome: 'Thank you. Your calls go through now.', summary: summary.slice(0, 200) });
+      },
+    },
+    {
       name: 'get_requests',
       description:
         "List the questions the player wrote to you inside cells. A request is a comment line that starts with `// AI:` (or `// @ai`, `//ai`, `//help`), for example `// AI: make this cell blue`; a bare `//ai` or `//help` means: look at my code here and help me. This also reads text the player is still typing in the open editor (unsaved: true). By default only unanswered requests are returned; each has address, uid, line and text. Answer with reply_to_request.",
@@ -909,11 +946,21 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
     if (name === 'get_docs') return 'cells';
     return 'board';
   };
+  // First contact: an AI that came in from outside (the bridge, WebMCP) reads the README before its first call is carried out.
+  const OPEN = new Set(['read_readme', 'confirm_readme']);
+  for (const t of tools) {
+    const run = t.run.bind(t);
+    t.run = (args) => {
+      const who = participant();
+      if (who && !OPEN.has(t.name) && !isOriented(who)) return fail(`Read the README first (${README_URL}); your call to ${t.name} was not carried out.`, orientation(who, t.name));
+      return run(args);
+    };
+  }
   for (const t of tools) {
     if (t.name === 'mcp_request') continue;
     const run = t.run.bind(t);
     t.run = (args) => {
-      router.notify('ai', targetOf(t.name, args), `tools/${t.name}`, args);
+      router.notify('ai', targetOf(t.name, args), `tools/${t.name}`, args, outsideTrace());
       return run(args);
     };
   }
@@ -954,7 +1001,7 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
             const input = (args && typeof args === 'object' ? args : {}) as Json;
             let result: Result;
             try {
-              result = await t.run(input);
+              result = await throughChannel('webmcp', undefined, () => t.run(input));
             } catch (err) {
               result = fail(err instanceof Error ? err.message : String(err));
             }

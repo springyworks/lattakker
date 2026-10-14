@@ -5,6 +5,7 @@ import { helpButton } from './ui/help';
 import { restoreCells, type SavedCell } from './storage';
 import type { Mode } from './sheet/Sheet';
 import { installGrabGesture, installPinchZoom } from './ui/touch';
+import { installMouseGestures } from './ui/MouseGestures';
 
 export interface SheetTab {
   id: string;
@@ -173,6 +174,7 @@ export function createSheetTab(view: GameView, smallScreen: boolean, opts: Sheet
   }
   stopSave = opts.startSave(sheet);
 
+  installMouseGestures(sheet);
   if (smallScreen) {
     installPinchZoom(sheet);
     installGrabGesture(sheet);

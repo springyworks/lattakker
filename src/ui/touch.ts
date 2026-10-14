@@ -50,7 +50,7 @@ const DOUBLE_GAP_PX = 44;
 
 /**
  * "Double-tap, then hold" (tap, tap-and-keep-the-finger-down) arms a grab: the finger now carries the
- * thing under it instead of scrolling the sheet. Holding Ctrl (Cmd) does the same with a mouse.
+ * thing under it instead of scrolling the sheet. (With a mouse, Ctrl+drag pans the view: see installCtrlPan.)
  * A plain double-tap that is released at once still just means "edit this cell".
  */
 export function installGrabGesture(sheet: Sheet): void {

@@ -19,6 +19,7 @@ const TAB_TOP = 7;
 const TAB_GAP = 6;
 const PATH_H = 24;
 const NAV_W = 30;
+const RELOAD_W = 82;
 
 const INK = '#1f2933';
 const INK_SOFT = '#3e4c59';
@@ -34,6 +35,7 @@ export class TabStrip {
   private forwardCell!: Cell;
   private remoteCell!: Cell;
   private helpCell!: Cell;
+  private reloadCell!: Cell;
   private addCell!: Cell;
   /** What a click on the ＋ does: make a new tab. */
   onAdd: () => void = () => {};
@@ -41,6 +43,8 @@ export class TabStrip {
   onTabMenu: (id: string, x: number, y: number) => void = () => {};
   /** What a click on the little ? does: open the help. */
   onHelp: () => void = () => {};
+  /** What a click on the orange reload button does: reload the page from the server, keeping the browser's saved work. */
+  onReload: () => void = () => {};
   /** What a click on the share button does (set by whoever owns the share dialog). */
   onShare: () => void = () => {};
   /** What a click on the 🤖 helper button does. */
@@ -59,6 +63,8 @@ export class TabStrip {
   private pathText = '';
   private flashing = false;
   private flashTimer = 0;
+  private reloadHover = false;
+  private pathHover = false;
 
   constructor(
     readonly container: HTMLElement,
@@ -92,8 +98,9 @@ export class TabStrip {
         if (id === 'strip:share') return 'Work together with a tutor or a friend: a direct link between two browsers, no server';
         if (id === 'strip:remote') return 'Where the other person is pointing right now';
         if (id === `strip:${ADD_ID}`) return 'A new tab with a sheet of its own (right-click a tab to rename or close it)';
-        if (id === 'strip:path') return "Where you are, written as a cell path. Click to copy it. Code can use it: at('/lab/J24')";
+        if (id === 'strip:path') return "Where you are, written as a cell path (click to copy it). Code can use it: at('/lab/J24')";
         if (id === 'strip:help') return 'Help and show me (F1)';
+        if (id === 'strip:reload') return 'Hard reload: fetch the newest page from the server. Your cells and games stay saved in this browser';
         return this.tabs.find((t) => `strip:${t.id}` === id)?.hint ?? '';
       };
     }
@@ -157,6 +164,14 @@ export class TabStrip {
         size: [NAV_W, PATH_H],
         style: this.navStyle(true),
       });
+      this.reloadCell = graph.insertVertex({
+        parent: graph.getDefaultParent(),
+        id: 'strip:reload',
+        value: '⟳ Reload',
+        position: [x + 210 + NAV_W * 3 + 12, (STRIP_H - PATH_H) / 2 + 2],
+        size: [RELOAD_W, PATH_H],
+        style: this.reloadStyle(false),
+      });
       graph.getDataModel().setVisible(this.remoteCell, false);
       this.pathCell = graph.insertVertex({
         parent: graph.getDefaultParent(),
@@ -175,6 +190,7 @@ export class TabStrip {
       else if (id === 'strip:share') this.onShare();
       else if (id === 'strip:ai') this.onAi();
       else if (id === 'strip:help') this.onHelp();
+      else if (id === 'strip:reload') this.onReload();
       else if (id === 'strip:back') {
         if (this.canBack) this.onBack();
       } else if (id === 'strip:forward') {
@@ -189,7 +205,9 @@ export class TabStrip {
       mouseDown: () => {},
       mouseMove: (_s: unknown, me: { getCell(): Cell | null }) => {
         const id = me.getCell()?.getId() ?? '';
-        const over = id.startsWith('strip:') && !['strip:path', 'strip:share', 'strip:ai', 'strip:remote', 'strip:back', 'strip:forward', 'strip:help'].includes(id) ? id.slice(6) : null;
+        const over = id.startsWith('strip:') && !['strip:path', 'strip:share', 'strip:ai', 'strip:remote', 'strip:back', 'strip:forward', 'strip:help', 'strip:reload'].includes(id) ? id.slice(6) : null;
+        if (id === 'strip:reload' || this.reloadHover) this.hoverReload(id === 'strip:reload');
+        if (id === 'strip:path' || this.pathHover) this.hoverPath(id === 'strip:path');
         if (over !== this.hovered) {
           this.hovered = over;
           this.paintTabs();
@@ -206,6 +224,8 @@ export class TabStrip {
       this.onTabMenu(id.slice(6), e.clientX, e.clientY);
     });
     container.addEventListener('pointerleave', () => {
+      this.hoverReload(false);
+      this.hoverPath(false);
       if (this.hovered) {
         this.hovered = null;
         this.paintTabs();
@@ -266,9 +286,9 @@ export class TabStrip {
     return { ...this.tabStyle(false, hover), fillColor: hover ? '#e9edf1' : '#e6eaee', strokeColor: '#c5ccd3', fontSize: 16, spacingTop: 4, fontColor: INK_SOFT };
   }
 
-  /** Where a control of the strip is on screen: 'tabs' (all the tabs), 'ai', 'share', 'back', 'forward', 'help' or 'path'. */
+  /** Where a control of the strip is on screen: 'tabs' (all the tabs), 'ai', 'share', 'back', 'forward', 'help', 'reload' or 'path'. */
   rectOf(id: string): DOMRect | null {
-    const named: Record<string, Cell | undefined> = { ai: this.aiCell, share: this.shareCell, back: this.backCell, forward: this.forwardCell, help: this.helpCell, path: this.pathCell };
+    const named: Record<string, Cell | undefined> = { ai: this.aiCell, share: this.shareCell, back: this.backCell, forward: this.forwardCell, help: this.helpCell, reload: this.reloadCell, path: this.pathCell };
     const cells = id === 'tabs' ? [...this.tabCells.values()] : named[id] ? [named[id]!] : [];
     const view = this.graph.getView();
     const boxes = cells.map((c) => view.getState(c)).filter((s): s is NonNullable<typeof s> => !!s);
@@ -300,15 +320,17 @@ export class TabStrip {
     };
   }
 
+  /** The "you are here" text is a plain label, not a button: no frame, and it only underlines when the pointer is over it (a click copies it). */
   private pathStyle(): Record<string, unknown> {
     return {
       shape: 'rectangle',
       rounded: true,
       arcSize: 40,
-      fillColor: this.flashing ? '#d9e8dd' : '#f6f7f9',
-      strokeColor: EDGE,
-      strokeWidth: 1,
-      fontColor: INK,
+      fillColor: this.flashing ? '#d9e8dd' : 'none',
+      strokeColor: 'none',
+      strokeWidth: 0,
+      fontStyle: this.pathHover ? 4 : 0,
+      fontColor: this.flashing ? INK : INK_SOFT,
       fontSize: 12,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
       align: 'center',
@@ -337,6 +359,22 @@ export class TabStrip {
 
   private aiStyle(): Record<string, unknown> {
     return { ...this.shareStyle(), fillColor: this.aiOn ? '#d9e8dd' : '#f6f7f9', strokeColor: this.aiOn ? '#5b9a74' : EDGE };
+  }
+
+  private reloadStyle(hover: boolean): Record<string, unknown> {
+    return { ...this.shareStyle(), fillColor: hover ? '#ff9b3d' : '#ff8a1f', strokeColor: '#c25e00', fontColor: '#ffffff' };
+  }
+
+  private hoverPath(on: boolean): void {
+    if (on === this.pathHover) return;
+    this.pathHover = on;
+    this.paintPath();
+  }
+
+  private hoverReload(on: boolean): void {
+    if (on === this.reloadHover) return;
+    this.reloadHover = on;
+    this.graph.getDataModel().setStyle(this.reloadCell, this.reloadStyle(on));
   }
 
   private navStyle(enabled: boolean): Record<string, unknown> {
@@ -370,7 +408,7 @@ export class TabStrip {
   }
 
   private remoteStyle(): Record<string, unknown> {
-    return { ...this.pathStyle(), fillColor: '#e8def8', strokeColor: '#a68bd0' };
+    return { ...this.pathStyle(), fillColor: '#e8def8', strokeColor: '#a68bd0', strokeWidth: 1, fontStyle: 0, fontColor: INK };
   }
 
   /** The share button: its words and whether a session is running. */
@@ -469,7 +507,9 @@ export class TabStrip {
     move(this.backCell, aiX + 72 + 8, NAV_W);
     move(this.forwardCell, aiX + 72 + 8 + NAV_W + 4, NAV_W);
     move(this.helpCell, aiX + 72 + 8 + NAV_W * 2 + 4 + 8, NAV_W);
-    const rightOfButtons = aiX + 72 + 8 + NAV_W * 3 + 4 + 8 + 12;
+    const reloadX = aiX + 72 + 8 + NAV_W * 3 + 4 + 8 + 4;
+    move(this.reloadCell, reloadX, RELOAD_W);
+    const rightOfButtons = reloadX + RELOAD_W + 12;
     const pathText = this.flashing ? 'copied ✓' : `📍 ${this.pathText}`;
     const pathW = widthFor(pathText, 90);
     const available = this.container.clientWidth;

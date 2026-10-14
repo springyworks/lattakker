@@ -62,7 +62,7 @@ export function buildDocs(root: string, site: string): AiDoc[] {
   const read = (p: string): string => readFileSync(join(root, p), 'utf8');
   // Links between these files: absolute on the published site, plain file names when read from the files themselves.
   const at = (file: string): string => (site ? `${site}ai/${file}` : file);
-  const fill = (text: string): string => text.replaceAll('{{SITE}}ai/', site ? `${site}ai/` : '').replaceAll('{{GITHUB_README}}', `${BLOB}README.md`);
+  const fill = (text: string): string => text.replaceAll('{{SITE}}ai/', site ? `${site}ai/` : '').replaceAll('{{GITHUB_README_RAW}}', `${RAW}README.md`).replaceAll('{{GITHUB_README}}', `${BLOB}README.md`);
   const api = String(evalConst(join(root, 'src/sheet/apiTypes.ts'), 'CELL_API_DTS')).trim();
   const examples = evalConst(join(root, 'src/examples.ts'), 'EXAMPLES') as Array<[string, string]>;
   const demos = evalConst(join(root, 'src/labDemos.ts'), 'LAB_DEMOS') as Array<[string, string]>;

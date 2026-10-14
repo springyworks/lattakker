@@ -15,6 +15,7 @@ const NO_PAGE =
   'No Lattakker page is connected. Ask the player to run "npm run dev" and open http://localhost:5178/?mcp in a browser, then try again.';
 const INSTRUCTIONS =
   'Lattakker sheet: a Lattakker board game (Red = the child, Blue = the computer) that is also a spreadsheet whose cells hold TypeScript. ' +
+  'FIRST read the README, the place of truth: https://github.com/springyworks/lattakker/blob/main/README.md (raw: https://raw.githubusercontent.com/springyworks/lattakker/main/README.md). If you cannot open links, call read_readme (it fetches it for you) or confirm_readme: until you have, your first tool call is answered with the rules instead of being carried out. ' +
   'Start with get_state and get_board. Every cell has a stable uid (c-xxxxxxxx) that follows its content when cells move; resolve_cell turns an address or uid into the current address.';
 
 interface Tool {
@@ -80,7 +81,7 @@ export function mcpBridge(): Plugin {
 
       const livePage = (): PageLink | null => (page && Date.now() - page.seen < PAGE_TTL_MS ? page : null);
 
-      function callPage(name: string, args: unknown): Promise<unknown> {
+      function callPage(name: string, args: unknown, client?: string): Promise<unknown> {
         const target = livePage();
         if (!target) return Promise.resolve({ ok: false, error: NO_PAGE });
         const id = String(nextId++);
@@ -91,7 +92,7 @@ export function mcpBridge(): Plugin {
           }, CALL_TIMEOUT_MS);
           pending.set(id, { resolve, timer });
           try {
-            target.send('mms:call', { id, name, args });
+            target.send('mms:call', { id, name, args, client });
           } catch (err) {
             pending.delete(id);
             clearTimeout(timer);
@@ -100,7 +101,7 @@ export function mcpBridge(): Plugin {
         });
       }
 
-      async function handleRpc(msg: JsonRpc): Promise<object | null> {
+      async function handleRpc(msg: JsonRpc, client?: string): Promise<object | null> {
         const id = msg.id ?? null;
         const isRequest = msg.id !== undefined && msg.id !== null;
         const reply = (result: unknown) => ({ jsonrpc: '2.0', id, result });
@@ -122,7 +123,7 @@ export function mcpBridge(): Plugin {
           case 'tools/call': {
             const name = String(msg.params?.name ?? '');
             if (!tools.some((t) => t.name === name)) return failure(-32602, `Unknown tool: ${name}`);
-            const result = (await callPage(name, msg.params?.arguments ?? {})) as { ok?: boolean };
+            const result = (await callPage(name, msg.params?.arguments ?? {}, client)) as { ok?: boolean };
             return reply({ content: [{ type: 'text', text: JSON.stringify(result, null, 2) }], isError: result?.ok !== true });
           }
           default:
@@ -147,8 +148,10 @@ export function mcpBridge(): Plugin {
           return sendJson(res, 400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error: body must be JSON-RPC' } });
         }
 
+        // Who is calling, as far as the HTTP request says: shown in the page's traffic as the origin of what this call causes.
+        const client = String(req.headers['user-agent'] ?? '').replace(/[^\w ./:()-]/g, '').slice(0, 60) || undefined;
         const batch = Array.isArray(parsed) ? parsed : [parsed];
-        const replies = (await Promise.all(batch.map((m) => handleRpc(m)))).filter((r): r is object => r !== null);
+        const replies = (await Promise.all(batch.map((m) => handleRpc(m, client)))).filter((r): r is object => r !== null);
         if (replies.length === 0) return sendJson(res, 202, undefined);
         return sendJson(res, 200, Array.isArray(parsed) ? replies : replies[0]);
       });

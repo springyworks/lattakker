@@ -44,7 +44,7 @@ import type { SvgScene } from './svgScene';
 const RUN_SLICE_MS = 150;
 
 export const COLS = 26;
-export const ROWS = 46;
+export const ROWS = 54;
 /** Hard ceilings for auto-grow: addresses stay at most two letters and three digits (ZZ999-style). */
 export const MAX_COLS = 52;
 export const MAX_ROWS = 999;
@@ -879,7 +879,16 @@ export class Sheet {
     }
     if (d.scene && !d.error && !showCode) {
       const caption = d.output.length ? `<div class="cell-text out svg-caption">${escapeHtml(d.output.join('\n'))}</div>` : '';
-      return `<div class="cell-svg">${new XMLSerializer().serializeToString(d.scene.svg)}${caption}</div>`;
+      // A snapshot: the canvas of an animated picture (anim) would serialize empty, so it becomes a still image of its current frame.
+      const copy = d.scene.svg.cloneNode(true) as SVGSVGElement;
+      const live = d.scene.svg.querySelectorAll('canvas');
+      copy.querySelectorAll('canvas').forEach((c, i) => {
+        const still = document.createElement('img');
+        still.src = live[i].toDataURL();
+        still.style.cssText = 'width:100%;height:100%;display:block';
+        c.replaceWith(still);
+      });
+      return `<div class="cell-svg">${new XMLSerializer().serializeToString(copy)}${caption}</div>`;
     }
     if (d.tiles && !d.error && !showCode) {
       const geo = this.cells.get(address)?.getGeometry();
@@ -1372,6 +1381,17 @@ export class Sheet {
   isGrabEvent(e: Event): boolean {
     const m = e as MouseEvent;
     return !!(m.ctrlKey || m.metaKey) || this.grabArmed();
+  }
+
+  /** A Ctrl-drag pan took over this press: drop the block drag or rubber band it started, and ignore the click that ends it. */
+  beginPan(): void {
+    this.cancelContentDrag();
+    this.cancelRubber();
+    this.rubberEndedAt = performance.now();
+  }
+
+  endPan(): void {
+    this.rubberEndedAt = performance.now();
   }
 
   /** A finger that has not armed the grab gesture belongs to the browser (it scrolls the sheet). */
