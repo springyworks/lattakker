@@ -13,7 +13,7 @@
   </head>
   <body>
     <aside id="ai-guide" class="sr-only">
-      AI assistants: FIRST read the README, the place of truth: https://github.com/springyworks/lattakker/blob/main/README.md (or call the tool read_readme). This page exposes its programming interface as the object window.mms (the page, the interface and the cell code are all TypeScript; the typings are in ai/cell-api.d.ts; a call typed into a browser console is plain JavaScript syntax, which is TypeScript without the types). Call mms.help() for the full guide, mms.state() and mms.board() to read the game,
+      AI assistants: FIRST read the README, the place of truth: https://github.com/springyworks/lattakker/blob/main/README.md (or call the tool read_readme). This page exposes its typed TypeScript interface as the object window.mms (typings: ai/cell-api.d.ts). The app is strict TypeScript (compiler option strict, no unused locals); the code in the cells is TypeScript too, type-checked in the editor with gentler settings for children. As with every TypeScript program the types are checked first and erased on the way to the browser. Call mms.help() for the full guide, mms.state() and mms.board() to read the game,
       and mms.move(), mms.setCode() and mms.runCell() to act. If your browser supports WebMCP (document.modelContext), the same actions are
       registered as tools. A plain-text mirror of the game is in the region "Game state as text" (#mms-text). Everything runs locally, free, with no network
       calls unless the player starts a Share session or sets up the optional built-in AI helper (the 🤖 AI button). Cells are named by paths: J24 (this tab), /lab/J24 (absolute), @c-1a2b3c4d (identity); mms.tabs() lists the tabs.
