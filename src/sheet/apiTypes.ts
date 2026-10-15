@@ -162,6 +162,8 @@ interface McpMessage {
   n: number;
   /** Milliseconds since the page started. */
   time: number;
+  /** The moment of the initiative that started the chain this message belongs to: Unix time in milliseconds (Date.now()); the same for every message of a chain, answers included. */
+  startedAt: number;
   /** Who sent it: a cell like 'board:A15', a tab like 'lab', or 'ai'. */
   from: string;
   to: string;
@@ -182,6 +184,8 @@ interface McpPacket {
   n: number;
   id: string;
   time: number;
+  /** The moment of the initiative (Unix time in milliseconds), see McpMessage. */
+  startedAt: number;
   origin: string;
   from: string;
   to: string;
@@ -247,6 +251,8 @@ interface McpAnswer {
 interface McpChange {
   n: number;
   at: string;
+  /** The moment of the initiative that led to the change: Unix time in milliseconds. */
+  startedAt: number;
   /** What changed: 'lab/J24'. */
   subject: string;
   /** The tool that did it, like 'set_code'. */

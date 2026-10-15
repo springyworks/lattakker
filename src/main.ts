@@ -1,3 +1,4 @@
+import { watchCells } from './stallWatch';
 import '@maxgraph/core/css/common.css';
 import './style.css';
 import { Sheet } from './sheet/Sheet';
@@ -310,31 +311,15 @@ const surface = installAiSurface({ sheet, view, hud, editor });
 // The AI helper (chat, pop-up, "// AI:" watcher): silent until someone chooses a helper in its settings.
 installAiChat({ surface, strip: tabs.strip, say: (text) => hud.say(text, 'info') });
 
-// A watchdog for "the cells are there but nothing ran" (the code engine, Monaco's TypeScript worker, did not start, for
-// example because the page was loaded while the dev server was busy). Once the page has been visible for a while, tabs
-// with code in which no run has finished are reported, and the page reloads itself once (saved work stays).
-window.setTimeout(function stallCheck() {
-  if (document.visibilityState !== 'visible') {
-    window.setTimeout(stallCheck, 5000);
-    return;
-  }
-  const stuck = workspace.list().filter((t) => {
-    const h = t.sheet.health();
-    return h.codeCells > 0 && h.finished === 0;
-  });
-  if (!stuck.length) return;
-  console.error('Lattakker: cells are loaded but none has finished running in', stuck.map((t) => `${t.id} (${t.sheet.health().started} started)`).join(', '));
-  let retried = false;
-  try {
-    const last = Number(sessionStorage.getItem('lattakker:stall-reload') ?? 0);
-    retried = Date.now() - last < 120000;
-    if (!retried) sessionStorage.setItem('lattakker:stall-reload', String(Date.now()));
-  } catch {
-    retried = true;
-  }
-  if (!retried) {
-    location.reload();
-    return;
-  }
-  hud.say('⚠ The cells did not start running: the code engine looks stuck. Press the orange ⟳ Reload button. Your cells stay saved.', 'bad');
-}, 12000);
+// The page heals itself when the code engine does not start (see stallWatch.ts, which is imported first so it is there even if this file fails).
+watchCells({
+  stalled: () =>
+    workspace
+      .list()
+      .filter((t) => {
+        const h = t.sheet.health();
+        return h.codeCells > 0 && h.finished === 0;
+      })
+      .map((t) => t.id),
+  say: (text, tone) => hud.say(text, tone),
+});

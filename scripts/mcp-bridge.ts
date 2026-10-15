@@ -40,6 +40,8 @@ interface Caller {
   protocol?: string;
   key?: string;
   note?: string;
+  /** The moment the caller took the initiative (this request arrived): Unix time in milliseconds. */
+  startedAt?: number;
 }
 
 /** What one HTTP request says about its sender, before the JSON-RPC message is looked at. */
@@ -118,7 +120,7 @@ export function mcpBridge(): Plugin {
           sessions.set(key, { ...sessions.get(key), ...clean });
         }
       };
-      const callerOf = (msg: JsonRpc, who: Who): Caller => {
+      const callerOf = (msg: JsonRpc, who: Who, startedAt: number): Caller => {
         const meta = record(msg.params?._meta);
         const stored = { ...sessions.get(who.address), ...(who.sid ? sessions.get(who.sid) : undefined) };
         const product = /^([^\s/]+)(?:\/(\S+))?/.exec(who.agent ?? '');
@@ -130,6 +132,7 @@ export function mcpBridge(): Plugin {
           protocol: stored.protocol,
           key: who.sid ?? who.address,
           note: stored.note,
+          startedAt,
         };
       };
 
@@ -158,8 +161,11 @@ export function mcpBridge(): Plugin {
       async function handleRpc(msg: JsonRpc, who: Who): Promise<object | null> {
         const id = msg.id ?? null;
         const isRequest = msg.id !== undefined && msg.id !== null;
-        const reply = (result: unknown) => ({ jsonrpc: '2.0', id, result });
-        const failure = (code: number, message: string) => ({ jsonrpc: '2.0', id, error: { code, message } });
+        // The initiative: the moment the caller's message arrived, as Unix time in milliseconds. Every answer says it, in the standard place (_meta).
+        const startedAt = Date.now();
+        const meta = { 'lattakker/trace': { startedAt } };
+        const reply = (result: object) => ({ jsonrpc: '2.0', id, result: { ...result, _meta: { ...((result as { _meta?: object })._meta ?? {}), ...meta } } });
+        const failure = (code: number, message: string) => ({ jsonrpc: '2.0', id, error: { code, message, data: { _meta: meta } } });
         switch (msg.method) {
           case 'initialize': {
             const info = record(msg.params?.clientInfo);
@@ -190,8 +196,10 @@ export function mcpBridge(): Plugin {
               const a = record(args);
               remember(who, { client: text(a.client, 40), version: text(a.version, 30), model: text(a.model, 40), note: text(a.note, 120) });
             }
-            const result = (await callPage(name, args, callerOf(msg, who))) as { ok?: boolean };
-            return reply({ content: [{ type: 'text', text: JSON.stringify(result, null, 2) }], isError: result?.ok !== true });
+            const result = (await callPage(name, args, callerOf(msg, who, startedAt))) as { ok?: boolean };
+            // Inside the text too: an agent that only reads the text still sees the moment of the initiative.
+            const body = JSON.stringify(result && typeof result === 'object' ? { ...result, _meta: meta } : result, null, 2);
+            return reply({ content: [{ type: 'text', text: body }], isError: result?.ok !== true });
           }
           default:
             return isRequest ? failure(-32601, `Method not found: ${msg.method}`) : null;

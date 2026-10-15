@@ -27,8 +27,11 @@ async function tool(name, args = {}) {
   return JSON.parse(body.result.content[0].text);
 }
 
+const initSent = Date.now();
 const init = await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'smoke', version: '0.1', model: 'smoke-model' } });
 check('initialize answers with serverInfo', init.body.result?.serverInfo?.name === 'lattakker-sheet');
+const initTrace = init.body.result?._meta?.['lattakker/trace'];
+check('initialize answer carries the moment of the initiative (Unix ms, inside the call)', typeof initTrace?.startedAt === 'number' && initTrace.startedAt >= initSent && initTrace.startedAt <= Date.now(), JSON.stringify(initTrace));
 check('initialize hands out a session id', typeof session === 'string' && session.length > 8, session ?? '');
 const note = await fetch(`${base}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) });
 check('notification gets 202', note.status === 202);
@@ -127,6 +130,42 @@ const hdr = await fetch(`${base}/mcp`, {
 });
 const hdrBody = JSON.parse((await hdr.json()).result?.content?.[0]?.text ?? '{}');
 check('headers X-MCP-Client and X-MCP-Model are taken over', hdrBody.origin === 'outside-ai:header-client@header-model', hdrBody.origin);
+
+// The moment of the initiative is in every message: in the answer's _meta, inside the text of a tool answer, and the same for a whole chain.
+const askedAt = Date.now();
+const viaWeather = await tool('mcp_request', { server: 'weather', method: 'tools/list', params: {} });
+const stamp = viaWeather.result?._meta?.['lattakker/trace'];
+check('a router answer carries _meta.lattakker/trace.startedAt in Unix ms', typeof stamp?.startedAt === 'number' && stamp.startedAt >= askedAt - 50 && stamp.startedAt <= Date.now() + 50, JSON.stringify(stamp));
+check('the tool answer carries it inside its text too', typeof viaWeather._meta?.['lattakker/trace']?.startedAt === 'number');
+const log = (await tool('mcp_request', { server: 'router', method: 'tools/call', params: { name: 'recent', arguments: { n: 60 } } })).result;
+const mine = JSON.parse(log.content[0].text).messages.filter((m) => m.method === 'tools/list' && m.to === 'weather' || m.method === 'tools/list' && m.from === 'weather');
+check('a request and its answer share the one moment of the initiative', mine.length >= 2 && new Set(mine.slice(-2).map((m) => m.startedAt)).size === 1 && mine.slice(-1)[0].startedAt === stamp.startedAt, mine.slice(-2).map((m) => m.startedAt).join(' '));
+
+// The code server: all the code as text that fits a small memory.
+const codeTool = async (name, args) => (await tool('mcp_request', { server: 'code', method: 'tools/call', params: { name, arguments: args } })).result;
+const overview = await codeTool('overview', {});
+check('code.overview says how big the code is and what to do', /cells hold TypeScript/.test(overview.content[0].text) && /WHAT TO DO/.test(overview.content[0].text));
+let cursor;
+let parts = 0;
+let biggest = 0;
+let dumped = '';
+do {
+  const part = await codeTool('dump', { tab: 'monitor', budget_chars: 3000, ...(cursor ? { cursor } : {}) });
+  parts++;
+  dumped += part.content[0].text;
+  biggest = Math.max(biggest, part.content[0].text.length);
+  cursor = part.structuredContent.next;
+} while (cursor && parts < 200);
+check('code.dump comes in parts that fit the budget and ends with END', parts > 1 && biggest <= 3100 && /END of PART \d+ of \d+/.test(dumped), `${parts} parts, biggest ${biggest}`);
+const codeList = (await codeTool('list', { tab: 'monitor' })).content[0].text;
+const listedPaths = [...codeList.matchAll(/(\/monitor\/[A-Z]+\d+)/g)].map((m) => m[1]);
+check('every cell of the tab is in the dump', listedPaths.length > 0 && listedPaths.every((p) => dumped.includes(`### ${p} `)), `${listedPaths.length} cells`);
+const found = await codeTool('search', { query: 'switchboard', include: '/monitor/*', context: 0 });
+check('code.search finds text with a path and a line number', /\/monitor\/A1 · \d+ match/.test(found.content[0].text) && /\s\d+: /.test(found.content[0].text), found.content[0].text.split('\n')[0]);
+check('code.search refuses a regular expression that can hang', (await codeTool('search', { query: '(a+)+$', regex: true })).isError === true);
+const codeRead = await codeTool('read', { path: '/monitor/A1', from_line: 1, lines: 3 });
+check('code.read gives numbered lines and where to go on', /^\s+1  /m.test(codeRead.content[0].text) && codeRead.structuredContent.next === 4);
+check('code.dump refuses a stale cursor', (await codeTool('dump', { cursor: 'deadbeef:2:3000' })).isError === true);
 
 // Bad input stays polite.
 check('bad address gives ok:false, not a crash', (await tool('get_cell', { address: 'not-a-cell' })).ok === false);

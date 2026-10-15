@@ -19,6 +19,32 @@
       calls unless the player starts a Share session or sets up the optional built-in AI helper (the 🤖 AI button). Cells are named by paths: J24 (this tab), /lab/J24 (absolute), @c-1a2b3c4d (identity); mms.tabs() lists the tabs.
       The user may be a child learning TypeScript: explain things simply. See also llms.txt next to this page.
     </aside>
+    <script>
+      // If the page cannot start (a file of it failed to load, usually because the dev server was busy), start again by itself: when the
+      // page has not set window.sheet after 25 seconds, wait until the server answers, then reload. At most 5 times in ten minutes.
+      // (src/stallWatch.ts does the same for the engine that hangs after a start; a module cannot help when no module could load.)
+      (function () {
+        var KEY = 'lattakker:stall-reloads';
+        setTimeout(function () {
+          if (window.sheet) return;
+          var recent = [];
+          try { recent = JSON.parse(sessionStorage.getItem(KEY) || '[]').filter(function (t) { return Date.now() - t < 600000; }); } catch (e) {}
+          var note = document.createElement('div');
+          note.style.cssText = 'position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:99999;padding:8px 14px;border-radius:8px;background:#7a2e2a;color:#fff;font:14px system-ui,sans-serif';
+          document.body.appendChild(note);
+          if (recent.length >= 5) { note.textContent = 'The page did not start and has already reloaded itself several times. Press F5 when the dev server is calm. Your cells stay saved.'; return; }
+          note.textContent = 'The page did not start (the dev server was probably busy). Starting again in a moment…';
+          var tries = 0;
+          (function wait() {
+            fetch(location.pathname, { method: 'HEAD', cache: 'no-store' }).then(function (r) {
+              if (!r.ok) throw new Error('not yet');
+              try { sessionStorage.setItem(KEY, JSON.stringify(recent.concat([Date.now()]))); } catch (e) {}
+              location.reload();
+            }).catch(function () { if (++tries < 20) setTimeout(wait, 3000); });
+          })();
+        }, 25000);
+      })();
+    </script>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

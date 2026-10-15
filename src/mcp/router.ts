@@ -40,7 +40,11 @@ export class McpError extends Error {
  *
  * A party that handles a message and sends another because of it passes the trace it got as the last argument
  * (`router.request(from, to, method, params, trace)`). An outside party (another page, a client over /mcp) can say
- * the same in the standard place: `params._meta['lattakker/trace'] = { origin, lineage, id }`.
+ * the same in the standard place: `params._meta['lattakker/trace'] = { origin, lineage, id, startedAt }`.
+ *
+ * Every message that crosses the router (the request and the notification in `params._meta`, the answer in `result._meta`) carries
+ * `_meta['lattakker/trace'] = { id, origin, lineage, startedAt, cause }`, so the single moment the initiative was taken, as Unix time in
+ * milliseconds, is in the message itself, wherever it ends up (a log, a file, an outside AI).
  */
 export interface Trace {
   /** Unique across pages: the page's session code, a dash and a counter ('k3f9-152'). */
@@ -51,6 +55,12 @@ export interface Trace {
   lineage: string[];
   /** The message that made this one happen, or null at the start of a chain. */
   cause: string | null;
+  /**
+   * The moment of the initiative: the Unix time in milliseconds (Date.now(), since 1970-01-01 UTC; divide by 1000 for Unix seconds) at which
+   * the chain this message belongs to was started. There is one initiative per chain, so every message of the chain carries the same number,
+   * the answers too. It rides in every message as `_meta['lattakker/trace'].startedAt`.
+   */
+  startedAt: number;
 }
 
 export interface McpServer {
@@ -74,6 +84,8 @@ export interface Change {
   subject: string;
   /** What was done: the tool, like 'set_code'. */
   action: string;
+  /** The moment of the initiative that led to this change: Unix time in milliseconds. */
+  startedAt: number;
   /** Who started it, the parties it passed through, and the message that carried it. */
   by: string;
   lineage: string[];
@@ -98,6 +110,8 @@ export interface Traffic {
   hops: string[];
   /** Milliseconds since the page started. */
   time: number;
+  /** The moment of the initiative of the chain this message belongs to: Unix time in milliseconds (see Trace). */
+  startedAt: number;
   from: string;
   to: string;
   kind: 'request' | 'response' | 'error' | 'notification';
@@ -181,6 +195,22 @@ function fingerprint(text: string): string {
 
 const short = (v: unknown, max = 80): string => String(v ?? '').slice(0, max);
 
+/** A Unix time in milliseconds from outside is believed when it is a whole number between 2001 and 2100; otherwise the initiative is taken to be now. */
+const sane = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v > 1e12 && v < 4.2e12 ? Math.round(v) : Date.now());
+
+/** What every message carries about its chain, in the standard place for such things (`_meta`). */
+function traceMeta(trace: Trace): Record<string, unknown> {
+  return { id: trace.id, origin: trace.origin, lineage: trace.lineage, startedAt: trace.startedAt, ...(trace.cause ? { cause: trace.cause } : {}) };
+}
+
+/** Puts the trace into the `_meta` of a message body (an object); anything else (a list, a number) is left as it is. */
+function withMeta<T>(body: T, trace: Trace): T {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return body;
+  const own = body as Record<string, unknown>;
+  const meta = typeof own._meta === 'object' && own._meta !== null && !Array.isArray(own._meta) ? (own._meta as Record<string, unknown>) : {};
+  return { ...own, _meta: { ...meta, [META_KEY]: traceMeta(trace) } } as T;
+}
+
 const clone = <T>(value: T): T => (value === undefined ? value : (JSON.parse(JSON.stringify(value)) as T));
 
 function brief(value: unknown): string {
@@ -245,8 +275,8 @@ export class McpRouter {
    * The start of a chain for a party that is not an MCP server of this page: an outside AI that came in over
    * /mcp (`router.origin('outside-ai', ['mcp-bridge'])`), a person typing. Pass the result as the last argument of request().
    */
-  origin(origin: string, relays: string[] = []): Trace {
-    return { id: '', origin: short(origin), lineage: [short(origin), ...relays.map((r) => short(r))].slice(0, MAX_LINEAGE), cause: null };
+  origin(origin: string, relays: string[] = [], startedAt: number = Date.now()): Trace {
+    return { id: '', origin: short(origin), lineage: [short(origin), ...relays.map((r) => short(r))].slice(0, MAX_LINEAGE), cause: null, startedAt: sane(startedAt) };
   }
 
   /** A trace that came in as `params._meta['lattakker/trace']` (from another page or an outside client), made safe to use. */
@@ -257,7 +287,7 @@ export class McpRouter {
     const t = raw as Record<string, unknown>;
     if (typeof t.origin !== 'string' || !t.origin) return undefined;
     const lineage = Array.isArray(t.lineage) ? t.lineage.filter((x): x is string => typeof x === 'string').slice(0, MAX_LINEAGE).map((x) => short(x)) : [short(t.origin)];
-    return { id: typeof t.id === 'string' ? short(t.id, 40) : '', origin: short(t.origin), lineage: lineage.length ? lineage : [short(t.origin)], cause: null };
+    return { id: typeof t.id === 'string' ? short(t.id, 40) : '', origin: short(t.origin), lineage: lineage.length ? lineage : [short(t.origin)], cause: null, startedAt: sane(t.startedAt) };
   }
 
   /** The server gets the arguments without the trace that rode along in `_meta` (it has the trace as its own argument). */
@@ -272,9 +302,9 @@ export class McpRouter {
     const id = `${SESSION}-${this.counter + 1}`;
     // A trace that rides in the message itself (from another page or client) says more than the one the local code passes.
     const base = own ?? via;
-    if (!base) return { id, origin: from, lineage: [from], cause: null };
+    if (!base) return { id, origin: from, lineage: [from], cause: null, startedAt: Date.now() };
     const lineage = base.lineage[base.lineage.length - 1] === from ? base.lineage : [...base.lineage, from].slice(-MAX_LINEAGE);
-    return { id, origin: base.origin, lineage, cause: base.id || null };
+    return { id, origin: base.origin, lineage, cause: base.id || null, startedAt: sane(base.startedAt) };
   }
 
   /** The names of the servers that can be asked something. */
@@ -302,11 +332,12 @@ export class McpRouter {
     // An answer never comes back in the same breath, just like over a real connection.
     await Promise.resolve();
     try {
-      const result = clone(await server.handle(method, wire, from, trace));
+      const result = clone(await server.handle(method, withMeta(wire, trace), from, trace));
       const ms = round1(performance.now() - started);
       this.tally(from, to, method, ms, false);
-      this.record({ from: to, to: from, kind: 'response', method, detail: brief(result), ms }, { ...trace, id: `${SESSION}-${this.counter + 1}`, cause: trace.id, lineage: [...trace.lineage, to].slice(-MAX_LINEAGE) }, [to, 'router', ...trace.lineage.slice().reverse()]);
-      return result;
+      const answer = { ...trace, id: `${SESSION}-${this.counter + 1}`, cause: trace.id, lineage: [...trace.lineage, to].slice(-MAX_LINEAGE) };
+      this.record({ from: to, to: from, kind: 'response', method, detail: brief(result), ms }, answer, [to, 'router', ...trace.lineage.slice().reverse()]);
+      return withMeta(result, answer);
     } catch (err) {
       const error = err instanceof McpError ? err : new McpError(ERR.internal, err instanceof Error ? err.message : String(err));
       const ms = round1(performance.now() - started);
@@ -323,7 +354,7 @@ export class McpRouter {
     this.stripMeta(wire, own);
     const trace = this.stamp(from, via, own);
     this.record({ from, to, kind: 'notification', method, detail: brief(wire) }, trace, [...trace.lineage, 'router', to]);
-    this.deliver(this.listeners.get(to), from, method, wire, trace);
+    this.deliver(this.listeners.get(to), from, method, withMeta(wire, trace), trace);
     return trace;
   }
 
@@ -334,7 +365,8 @@ export class McpRouter {
     this.stripMeta(wire, own);
     const trace = this.stamp(from, via, own);
     this.record({ from, to: '*', kind: 'notification', method, detail: brief(wire) }, trace, [...trace.lineage, 'router', '*']);
-    for (const set of this.listeners.values()) this.deliver(set, from, method, wire, trace);
+    const stamped = withMeta(wire, trace);
+    for (const set of this.listeners.values()) this.deliver(set, from, method, stamped, trace);
     return trace;
   }
 
@@ -383,12 +415,12 @@ export class McpRouter {
     this.bucketSecond = second;
   }
 
-  private record(entry: Omit<Traffic, 'n' | 'time' | 'id' | 'origin' | 'cause' | 'hops'>, trace: Trace, hops: string[]): void {
+  private record(entry: Omit<Traffic, 'n' | 'time' | 'id' | 'origin' | 'cause' | 'hops' | 'startedAt'>, trace: Trace, hops: string[]): void {
     this.count.messages++;
     if (entry.kind === 'notification') this.count.notifications++;
     this.advance(Math.floor(performance.now() / 1000));
     this.buckets[HISTORY_SECONDS - 1]++;
-    const line: Traffic = { n: ++this.counter, id: trace.id, origin: trace.origin, cause: trace.cause, hops, time: Math.round(performance.now()), ...entry };
+    const line: Traffic = { n: ++this.counter, id: trace.id, origin: trace.origin, cause: trace.cause, hops, time: Math.round(performance.now()), startedAt: trace.startedAt, ...entry };
     this.log.push(line);
     if (this.log.length > MAX_LOG) this.log.splice(0, this.log.length - MAX_LOG);
     for (const tap of [...this.taps]) {
@@ -488,6 +520,7 @@ export class McpRouter {
       n: ++this.changeCounter,
       time: Math.round(performance.now()),
       at: new Date().toISOString(),
+      startedAt: trace?.startedAt ?? Date.now(),
       subject: change.subject,
       action: change.action,
       by: trace?.origin ?? '?',

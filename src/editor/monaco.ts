@@ -260,6 +260,32 @@ export interface TranspileResult {
   errors: string[];
 }
 
+/**
+ * The worker of the TypeScript engine can fail to load (the dev server was busy or restarting at that moment): its calls then never answer,
+ * and every cell would wait for ever. So each call has a time to answer; when it does not, the page is told ('lattakker:engine-stuck',
+ * see the watchdog in main.ts) and it recovers by itself.
+ */
+const ENGINE_WAIT_MS = 15000;
+
+function answered<T>(work: Promise<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      window.dispatchEvent(new Event('lattakker:engine-stuck'));
+      reject(new Error('The TypeScript engine did not answer in time'));
+    }, ENGINE_WAIT_MS);
+    work.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        window.clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 /** The TypeScript language service starts lazily; the first request can arrive before it has registered. */
 export async function typescriptWorker(): Promise<Awaited<ReturnType<typeof ts.getTypeScriptWorker>>> {
   for (let attempt = 0; ; attempt++) {
@@ -287,16 +313,16 @@ export async function transpile(address: string, source: string, scope = ''): Pr
 
 async function transpileUncached(address: string, source: string, scope: string): Promise<TranspileResult> {
   const model = modelFor(address, source, scope);
-  const getWorker = await typescriptWorker();
-  const client = await getWorker(model.uri);
+  const getWorker = await answered(typescriptWorker());
+  const client = await answered(getWorker(model.uri));
   const uri = model.uri.toString();
-  const diagnostics = await client.getSyntacticDiagnostics(uri);
+  const diagnostics = await answered(client.getSyntacticDiagnostics(uri));
   const errors = diagnostics.map((d) => {
     const pos = d.start != null ? model.getPositionAt(d.start) : null;
     const text = typeof d.messageText === 'string' ? d.messageText : d.messageText.messageText;
     return pos ? `line ${pos.lineNumber}: ${text}` : text;
   });
-  const out = await client.getEmitOutput(uri);
+  const out = await answered(client.getEmitOutput(uri));
   const file = out.outputFiles.find((f) => f.name.endsWith('.js')) ?? out.outputFiles[0];
   let js = file?.text ?? '';
   js = js.replace(/^\s*export\s*\{\s*\};?\s*$/gm, '');

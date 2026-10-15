@@ -235,9 +235,13 @@ where you stopped. Nothing is sent anywhere. To start completely fresh, run
 `localStorage.removeItem('lattakker:v1')` in the browser console and reload.
 
 If the cells are loaded but nothing runs (the tabs show empty grey cells), the code engine did not start, for
-example because the page was opened while the dev server was busy. After about 12 seconds the page notices that
-no cell has finished a run, reloads itself once, and if it is still stuck says so in the speech bubble. The
-orange ⟳ Reload button does the same by hand; your saved cells stay.
+example because the page was opened while the dev server was busy or restarting. The page heals itself in three
+ways, each ending in a reload (your saved cells stay): the engine's worker has 15 seconds to answer a call, and when
+it does not the page reloads; when no cell has finished a run after about 12 seconds it reloads; and when the page
+did not even start (a file of it failed to load) a small script in `index.html` notices after 25 seconds and starts
+again. It waits until the dev server answers before it reloads, and does so at most five times in ten minutes, so a
+server that stays down does not make a loop; then it says so, in the speech bubble or a red note. The orange ⟳
+Reload button does the same by hand.
 
 ## 6 The sheet
 
@@ -970,6 +974,7 @@ one, and they all sit on the same router:
 | --- | --- | --- |
 | `board`, `lab`, `examples` | the cells of a tab | `list_cells`, `get_cell`, `run_cell`, `set_code`, `click`, `flash`, `signal` |
 | `router` | the router itself | `stats`, `catalog`, `servers`, `recent`, `packets`, `analyze`, `ask`, `callers`, `reset_stats`, `trace`, `history`, `change`, `endpoints`, `self_check` |
+| `code` | all the TypeScript of the page as text for a small AI ([8.11.3](#8113-the-code-of-the-page-for-a-small-ai)) | `overview`, `dump`, `search`, `read`, `list` |
 | `weather` | the weather ([8.12](#812-the-weather)) | `now`, `forecast`, `find` |
 | `ollama` | the model on this computer ([8.13](#813-the-model-on-this-computer-ollama)) | `status`, `ping`, `warm`, `models`, `ask` |
 | `memory` | the helper's notes and little database | `remember`, `recall`, `db_put` ... |
@@ -1022,6 +1027,13 @@ e-mail or `git log` for traffic:
 
 - `id`: unique across pages (`k3f9-152`: the page's session code and a counter).
 - `origin`: who started the whole chain (a cell like `lab:A16`, `you`, `ai-chat`, `outside-ai:<client>@<model>`).
+- `startedAt`: **the moment of the initiative**, as Unix time in milliseconds (`Date.now()`: milliseconds since 1 January 1970 UTC;
+  divide by 1000 for classic Unix seconds). There is one initiative per chain, so every message of the chain says the same number, the
+  answers too. It is in the message itself, in the standard place for such things: `params._meta['lattakker/trace'].startedAt` of a
+  request or a notification, `result._meta['lattakker/trace'].startedAt` of an answer (with `id`, `origin`, `lineage` and `cause`), and for
+  an outside AI over `/mcp` in every JSON-RPC answer, both in its `_meta` and inside the text of a tool answer, so that even an agent
+  that only reads the text sees it. The initiative of an outside AI is the moment its request reached the dev server. The traffic log, the
+  record of changes and the packet list carry it too (`startedAt`; in a filter: `started>1792063000000`).
 - `cause`: the id of the message that made this one happen (an answer's cause is its request; a tool
   call of the built-in helper is caused by the model's reply, which is caused by the question).
 - `hops`: the way it went, for example `['outside-ai:claude-code@claude-opus-4', 'mcp-bridge', 'ai', 'router', 'lab']`.
@@ -1109,6 +1121,32 @@ parts that see and hold the cells, the weather, the model and the memory as the 
 stores, the helper as speech, and `outside_ai` as the hands of someone else. What the new record adds
 is what a brain has and a plain bus lacks: each message remembers where it came from and what made
 it happen, so the chain of commands can be followed back, and a change can be traced to who made it.
+
+#### 8.11.3 The code of the page, for a small AI
+
+The MCP server `code` gives an AI all the TypeScript that is in the cells, as plain text it can take in even with a small memory.
+It only reads. The idea: an AI has a limited memory (its *context*), and a dump that is too big makes it forget its own task. So every
+reply has a size you choose, says how big it is, and tells exactly what to do next.
+
+| Tool | What it does |
+| --- | --- |
+| `overview` | **start here**: how many cells have code, in which tabs, how many characters and tokens, which cells fail, and which tool to use for what |
+| `dump` | **all** the code as one self-explaining document, in **parts** that fit a budget; the end of every part says the `cursor` of the next, until it says `END` |
+| `search` | like the search of an editor: a text (or `regex: true`), `match_case`, `whole_word`, `include` (a glob over cell paths: `/lab/*`, `/board/A*`, `lab`), `context` lines, `max_results`, `where` (`code`, `output`, `error`, `all`); results grouped by cell with line numbers |
+| `read` | one cell by path (`/lab/J24`) or id (`c-1a2b3c4d`), with line numbers; long cells in pieces (`from_line`, `lines`) |
+| `list` | one line per cell (path, id, size, first line), in pages (`from`) |
+
+Say how much you can take: `budget_chars` (800 to 40000, default 6000), `budget_tokens`, or `context_tokens` (the size of your own memory: a reply
+then takes at most a third of it, so there is room left to think). A part never cuts a cell in two unless that cell alone is bigger than
+the budget (then it comes in numbered pieces). The cursor carries a **snapshot code** (a fingerprint of the code): if the code changes
+while you are reading, `dump` says so and asks you to start again instead of mixing two versions. A regular expression with a repeat inside a
+repeat, or a look-around, is refused: it could hang the browser. Examples:
+
+```ts
+print(await mcp.tool('code', 'overview'))
+const part = await mcp.tool('code', 'dump', { tab: 'lab', context_tokens: 4000 })   // then follow structuredContent.next
+print(await mcp.tool('code', 'search', { query: 'every(', include: '/lab/*', max_results: 5 }))
+```
 
 ### 8.12 The weather
 

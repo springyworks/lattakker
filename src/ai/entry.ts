@@ -20,6 +20,8 @@ export interface Caller {
   key?: string;
   /** A note the caller gave about itself (introduce). */
   note?: string;
+  /** The moment this call began, as the one who made it took the initiative: Unix time in milliseconds. */
+  startedAt?: number;
 }
 
 /** A caller as the page has seen it, counted. */
@@ -53,7 +55,7 @@ export function originOf(c: Caller): string {
 /** Runs `fn` (synchronously up to its first await) as a call that came in through `name`, from `caller`. */
 export function throughChannel<T>(name: string, caller: Caller | undefined, fn: () => T): T {
   const before = channel;
-  const c: Caller = { client: clean(caller?.client, 40), version: clean(caller?.version, 30), model: clean(caller?.model, 40), agent: clean(caller?.agent, 80), protocol: clean(caller?.protocol, 20), key: clean(caller?.key, 80), note: clean(caller?.note, 120) };
+  const c: Caller = { client: clean(caller?.client, 40), version: clean(caller?.version, 30), model: clean(caller?.model, 40), agent: clean(caller?.agent, 80), protocol: clean(caller?.protocol, 20), key: clean(caller?.key, 80), note: clean(caller?.note, 120), startedAt: typeof caller?.startedAt === 'number' && Number.isFinite(caller.startedAt) ? caller.startedAt : undefined };
   channel = { name, caller: c };
   const origin = originOf(c);
   const now = Math.round(performance.now());
@@ -83,7 +85,7 @@ export function currentCaller(): (Caller & { origin: string; via: string }) | nu
 /** The start of a chain for what an outside AI does right now: 'outside-ai:<client>@<model>' through the channel it used. */
 export function outsideTrace(): Trace {
   if (!channel) return router.origin('console-or-webmcp');
-  return router.origin(originOf(channel.caller), [channel.name]);
+  return router.origin(originOf(channel.caller), [channel.name], channel.caller.startedAt);
 }
 
 /** Who is calling, when it is an outside AI that came in through the bridge or WebMCP (null for the page's own console). */

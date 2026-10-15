@@ -34,6 +34,8 @@ export interface Packet {
   id: string;
   /** Milliseconds since the page started. */
   time: number;
+  /** The moment of the initiative: Unix time in milliseconds, the same for every message of a chain. */
+  startedAt: number;
   /** Who started the chain, and who sent this one. */
   origin: string;
   from: string;
@@ -84,6 +86,7 @@ export function toPackets(log: readonly Traffic[]): Packet[] {
       n: t.n,
       id: t.id,
       time: t.time,
+      startedAt: t.startedAt,
       origin: t.origin,
       from: who(t.from),
       to: who(t.to),
@@ -110,11 +113,11 @@ export class FilterError extends Error {
 }
 
 export const FILTER_HELP =
-  'Filter: fields (n, id, time, ms, from, to, asker, asked, origin, kind, type, method, tool, info, cause), operators == != ~ (contains) !~ > >= < <=, combine with && || ! and ( ). ' +
+  'Filter: fields (n, id, time, started, ms, from, to, asker, asked, origin, kind, type, method, tool, info, cause), operators == != ~ (contains) !~ > >= < <=, combine with && || ! and ( ). ' +
   'A lone word searches every text field. Examples: type==tool && ms>20   |   from~ai   |   kind==error   |   asked==weather and !heartbeat   |   origin~lab';
 
-const FIELDS = new Set(['n', 'id', 'time', 'ms', 'from', 'to', 'asker', 'asked', 'origin', 'kind', 'type', 'method', 'tool', 'info', 'cause']);
-const NUMERIC = new Set(['n', 'time', 'ms']);
+const FIELDS = new Set(['n', 'id', 'time', 'started', 'ms', 'from', 'to', 'asker', 'asked', 'origin', 'kind', 'type', 'method', 'tool', 'info', 'cause']);
+const NUMERIC = new Set(['n', 'time', 'started', 'ms']);
 const ALIAS: Record<string, string> = { src: 'from', dst: 'to', protocol: 'type', detail: 'info', slow: 'ms', server: 'asked', client: 'asker' };
 const TEXT_FIELDS = ['from', 'to', 'origin', 'kind', 'type', 'method', 'tool', 'info'] as const;
 
@@ -222,7 +225,7 @@ function compare(field: string, op: string, raw: string): Test {
   if (NUMERIC.has(field)) {
     const want = Number(raw);
     if (!Number.isFinite(want)) throw new FilterError(`The field "${field}" is a number, "${raw}" is not`);
-    const num = (p: Packet): number | undefined => p[field as 'n' | 'time' | 'ms'];
+    const num = (p: Packet): number | undefined => (field === 'started' ? p.startedAt : p[field as 'n' | 'time' | 'ms']);
     switch (op) {
       case '==': return (p) => num(p) === want;
       case '!=': return (p) => num(p) !== want;
