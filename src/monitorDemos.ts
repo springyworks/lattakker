@@ -12,7 +12,8 @@ export const MONITOR_DEMOS: ReadonlyArray<readonly [string, string]> = [
 // The person (the stickman) talks with the sidebar chat: the question goes in, the answer comes back, and each time the chat asks the
 // model (the helper) or uses a tool shows too.
 // Inside the router block is its switchboard: every message makes the gateway plug a straight wire from the jack of the one that
-// speaks to the jack of the one that listens. The wire shoots across, glows in the colour of the message and fades away.
+// speaks to the jack of the one that listens. The wire shoots across behind a small arrowhead, glows in the colour of the message and
+// fades away; below the router's text a dark pane logs every plug as it happens.
 span(12, 9)
 
 // svg.asset('router-architecture') is the drawing from resources/. Its boxes are called node-board,
@@ -96,6 +97,7 @@ function route(a: string, b: string): { hops: Array<[string, boolean]>; meet: st
 // THE SWITCHBOARD inside the router block. Every box of the drawing has a jack where its line meets the router; when a message goes
 // from one to another the gateway "plugs" a straight wire between the two jacks. It shoots across (a bright head runs ahead of it),
 // glows in the colour of the message, and fades. Wires of a burst pile up as a bundle of fading lights. (A heartbeat is only a thin one.)
+const nobody = { 'pointer-events': 'none' }
 const BAY = { left: 450, right: 750, top: 200, bottom: 650 }
 const JACK = 16
 const jacks: Record<string, { x: number; y: number }> = {}
@@ -119,10 +121,39 @@ for (const id of pic.ids.filter((i) => i.startsWith('link-'))) {
   const ty = near === edge.top ? jy + 19 : near === edge.bottom ? jy - 11 : jy + 3
   pic.write(tx, ty, name === 'sidebar_chat' ? 'chat' : name, { fill: '#64748b', 'font-size': 8, 'font-family': 'monospace', 'text-anchor': side })
 }
-// The gateway itself is a jack in the middle: what the router says by itself starts there.
-const core = { x: 600, y: 560 }
+// The gateway itself is a jack under the router's own text: what the router says by itself starts there.
+const core = { x: 560, y: 388 }
 pic.add('circle', { cx: core.x, cy: core.y, r: 6, fill: '#ffffff', stroke: '#94a3b8', 'stroke-width': 1.5 })
-pic.write(core.x, core.y + 19, 'gateway', { fill: '#64748b', 'font-size': 8, 'font-family': 'monospace', 'text-anchor': 'middle' })
+pic.write(core.x + 11, core.y + 3, 'gateway', { fill: '#64748b', 'font-size': 8, 'font-family': 'monospace' })
+
+// THE LOG PANE: a dark console in the lower middle of the block (about a quarter of it, between the jacks). Every plug writes a line
+// at the bottom; the older lines slide up and fade, and the oldest disappear under the top edge.
+const PANE = { x: 478, y: 432, w: 210, h: 174 }
+const LH = 10.5
+const clip = pic.add('clipPath', { id: 'switch-log-clip' })
+clip.add('rect', { x: PANE.x + 3, y: PANE.y + 16, width: PANE.w - 6, height: PANE.h - 20 })
+pic.add('rect', { x: PANE.x, y: PANE.y, width: PANE.w, height: PANE.h, rx: 6, fill: '#0f172a', stroke: '#334155', 'stroke-width': 1.2, opacity: 0.96 })
+pic.write(PANE.x + 8, PANE.y + 11, 'switchboard log', { fill: '#94a3b8', 'font-size': 8, 'font-family': 'monospace' })
+const plugged = pic.write(PANE.x + PANE.w - 8, PANE.y + 11, '0 plugs', { fill: '#64748b', 'font-size': 8, 'font-family': 'monospace', 'text-anchor': 'end' })
+pic.add('line', { x1: PANE.x + 6, y1: PANE.y + 15, x2: PANE.x + PANE.w - 6, y2: PANE.y + 15, stroke: '#1e293b', 'stroke-width': 1 })
+const paneRows = pic.add('g', { 'clip-path': 'url(#switch-log-clip)' })
+const logRows: Array<{ el: ReturnType<typeof pic.el>; age: number }> = []
+const maxChars = Math.floor((PANE.w - 16) / 4.8)
+// The colours of the kinds, lighter than in the drawing so they shine on the dark pane.
+const glow = { request: '#fb923c', response: '#4ade80', notification: '#a78bfa', error: '#f87171', heartbeat: '#7dd3fc' }
+let logged = 0
+function logLine(text: string, color: string): void {
+  logged++
+  plugged.text(logged + ' plugs')
+  const row = paneRows.add('text', { x: PANE.x + 8, y: PANE.y + PANE.h - 6 + LH, fill: color, 'font-size': 8, 'font-family': 'monospace', opacity: 0, ...nobody })
+  row.text(text.length > maxChars ? text.slice(0, maxChars - 1) + '…' : text)
+  logRows.push({ el: row, age: 0 })
+  for (const r of logRows) {
+    r.age++
+    r.el.animate({ y: -LH * r.age, opacity: Math.max(0.3, 1 - (r.age - 1) * 0.055) }, { time: 150, ease: 'out' })
+  }
+  while (logRows.length > 17) logRows.shift()?.el.remove()
+}
 
 // The jack of a box: the one where its way to the router meets the router (the outside AI comes in by the dev server, the person by the chat).
 function jackOf(box: string): { x: number; y: number } | undefined {
@@ -131,36 +162,43 @@ function jackOf(box: string): { x: number; y: number } | undefined {
 }
 
 let wires = 0
-const nobody = { 'pointer-events': 'none' }
-function plug(a: string, b: string, color: string, thin = false): void {
+function plug(a: string, b: string, color: string, thin: boolean, kind: keyof typeof glow, text: string): void {
+  logLine(text, glow[kind])
   const from = jackOf(a)
   const to = jackOf(b)
   if (!from || !to || from === to || wires >= 36) return
   wires++
   const w = thin ? 0.55 : 1
-  const glow = pic.add('line', { x1: from.x, y1: from.y, x2: from.x, y2: from.y, stroke: color, 'stroke-width': 11 * w, 'stroke-linecap': 'round', opacity: 0.3 * w, ...nobody })
+  const glowLine = pic.add('line', { x1: from.x, y1: from.y, x2: from.x, y2: from.y, stroke: color, 'stroke-width': 11 * w, 'stroke-linecap': 'round', opacity: 0.3 * w, ...nobody })
   const wire = pic.add('line', { x1: from.x, y1: from.y, x2: from.x, y2: from.y, stroke: color, 'stroke-width': 3 * w, 'stroke-linecap': 'round', opacity: 1, ...nobody })
   const plugA = pic.add('circle', { cx: from.x, cy: from.y, r: 5.5, fill: color, opacity: 1, ...nobody })
   const plugB = pic.add('circle', { cx: to.x, cy: to.y, r: 5.5, fill: color, opacity: 0, ...nobody })
-  const head = pic.add('circle', { cx: from.x, cy: from.y, r: 4 * w + 1, fill: '#ffffff', opacity: 1, ...nobody })
-  const parts = [glow, wire, plugA, plugB, head]
+  // A small arrowhead rides the wire to the listener and stays on it, just before the jack: the direction of the message.
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const len = Math.hypot(dx, dy) || 1
+  const ux = dx / len
+  const uy = dy / len
+  const at = (px: number, py: number): string => [[6, 0], [-4, -4.2], [-1.5, 0], [-4, 4.2]].map(([f, side]) => (px + ux * f - uy * side).toFixed(1) + ',' + (py + uy * f + ux * side).toFixed(1)).join(' ')
+  const arrow = pic.add('polygon', { points: at(from.x, from.y), fill: '#ffffff', stroke: color, 'stroke-width': 1.4, 'stroke-linejoin': 'round', opacity: thin ? 0.7 : 0.95, ...nobody })
+  const parts = [glowLine, wire, plugA, plugB, arrow]
+  const run = Math.max(len - 13, len * 0.5)
   const shoot = { time: 120, ease: 'out' as const }
-  const gone = Promise.all([glow.animate({ x2: to.x, y2: to.y }, shoot), wire.animate({ x2: to.x, y2: to.y }, shoot), head.animate({ cx: to.x, cy: to.y }, shoot)])
+  const gone = Promise.all([glowLine.animate({ x2: to.x, y2: to.y }, shoot), wire.animate({ x2: to.x, y2: to.y }, shoot), arrow.animate({ x: ux * run, y: uy * run }, shoot)])
     .then(() => {
       plugB.opacity(1)
-      head.remove()
       // The light stays a moment, then fades: the wire thins out while the plugs swell and vanish.
       const fade = { time: thin ? 450 : 800, ease: 'in' as const }
-      return Promise.all([glow.animate({ opacity: 0, 'stroke-width': 3 }, fade), wire.animate({ opacity: 0, 'stroke-width': 0.5 }, fade), plugA.animate({ opacity: 0, r: 11 }, fade), plugB.animate({ opacity: 0, r: 11 }, fade)])
+      return Promise.all([glowLine.animate({ opacity: 0, 'stroke-width': 3 }, fade), wire.animate({ opacity: 0, 'stroke-width': 0.5 }, fade), arrow.animate({ opacity: 0 }, fade), plugA.animate({ opacity: 0, r: 11 }, fade), plugB.animate({ opacity: 0, r: 11 }, fade)])
     })
   // When the cell runs again the drawing is gone: the late steps have nothing left to draw on.
   gone.then(() => { for (const part of parts) part.remove() }).catch(() => {}).then(() => { wires-- })
 }
 
 // The wire is plugged when the message reaches the router: after the lines from the sender to the router.
-const plugLater = (a: string, b: string, color: string, thin: boolean, wait: number): void => {
-  if (wait > 0) after(wait, () => plug(a, b, color, thin))
-  else plug(a, b, color, thin)
+const plugLater = (a: string, b: string, color: string, thin: boolean, wait: number, kind: keyof typeof glow, text: string): void => {
+  if (wait > 0) after(wait, () => plug(a, b, color, thin, kind, text))
+  else plug(a, b, color, thin, kind, text)
 }
 
 // A dot runs along a list of lines, one after the other: [line, backwards?]. The promise is done when it has arrived.
@@ -210,7 +248,7 @@ mcp.tap((m) => {
     // When the cell runs again the drawing is gone: the late steps of a trip have nothing left to draw on.
     question.then(() => {
       bump(from, 1.03)
-      plugLater(from, to, failed ? colors.error : colors.response, false, up(from).indexOf(meet) * 330)
+      plugLater(from, to, failed ? colors.error : colors.response, false, up(from).indexOf(meet) * 330, failed ? 'error' : 'response', (failed ? '✕ ' : '◂ ') + m.from + '→' + m.to + ' ' + method + (m.ms !== undefined ? ' ' + m.ms + 'ms' : ''))
       return travel(hops, failed ? colors.error : colors.response, true)
     }).then(() => bump(to, 1.03)).catch(() => {})
     return
@@ -219,7 +257,7 @@ mcp.tap((m) => {
   last.text('→ ' + m.from + ' -> ' + m.to + ' ' + method.slice(0, 30))
   bump(from, 1.03)
   if (meet === 'router') bump('router', 1.02)
-  plugLater(from, to, m.method === 'ping' ? colors.heartbeat : (colors[m.kind] ?? colors.request), m.method === 'ping', up(from).indexOf(meet) * 330)
+  plugLater(from, to, m.method === 'ping' ? colors.heartbeat : (colors[m.kind] ?? colors.request), m.method === 'ping', up(from).indexOf(meet) * 330, m.method === 'ping' ? 'heartbeat' : m.kind === 'notification' ? 'notification' : 'request', (m.method === 'ping' ? '♥ ' : m.kind === 'notification' ? '• ' : '▸ ') + m.from + '→' + m.to + ' ' + method)
   const trip = travel(hops, m.method === 'ping' ? colors.heartbeat : (colors[m.kind] ?? colors.request)).then(() => bump(to, 1.05)).catch(() => {})
   if (m.kind === 'request') (asked[key] ??= []).push(trip)
   if ((asked[key]?.length ?? 0) > 40) asked[key].shift()

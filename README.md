@@ -435,6 +435,10 @@ Inside the router block is its **switchboard**: every box has a jack where its l
 **straight wire** between the jack of the one that speaks and the jack of the one that listens: it shoots
 across in a tenth of a second behind a bright head, glows in the colour of the message and fades away
 (a heartbeat is only a thin one). A burst of messages shows as a bundle of fading lights.
+A small **arrowhead** rides each wire to the listener and stays on it until it fades: the direction of the
+message. Under the router's own text a dark **log pane** (about a quarter of the block) writes a line for every plug as
+it happens (`▸` request, `◂` answer with its time, `✕` error, `•` signal, `♥` heartbeat, who to whom and the method); the
+older lines slide up and fade, and the pane counts the plugs.
 
 The drawing has a legend with the same colours. A box grows a little when it is busy. **Solid boxes**
 are `<<mcp_server>>` blocks (the tabs and services that answer); **dashed boxes** are not servers but a
