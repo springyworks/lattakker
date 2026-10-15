@@ -132,6 +132,8 @@ const RUNAWAY_WINDOW_MS = 2000;
 export interface SheetListeners {
   onCellClick(address: string, evt: MouseEvent): void;
   onCellDoubleClick(address: string): void;
+  /** Ctrl + double-click: zoom in on this cell (null: on nothing in particular, so on what is selected). */
+  onZoomRequest?(address: string | null): void;
   onOtherClick(id: string, cell: Cell, evt: MouseEvent): void;
   tooltipFor?(id: string, cell: Cell): string | null;
 }
@@ -391,15 +393,26 @@ export class Sheet {
         const tile = this.tileAt(id.slice(6), me);
         this.lastTileClick = tile && { address: id.slice(6), ...tile, time: performance.now() };
         this.listeners.onCellClick(id.slice(6), me);
-        if (isDouble) this.listeners.onCellDoubleClick(id.slice(6));
+        if (isDouble) {
+          if (me.ctrlKey || me.metaKey) this.listeners.onZoomRequest?.(id.slice(6));
+          else this.listeners.onCellDoubleClick(id.slice(6));
+        }
       } else {
         this.listeners.onOtherClick(id, cell, me);
       }
     });
     graph.addListener(InternalEvent.DOUBLE_CLICK, (_sender: unknown, evt: EventObject) => {
       const cell = evt.getProperty('cell') as Cell | null | undefined;
-      if (!cell || !this.listeners) return;
-      const id = cell.getId() ?? '';
+      const me = evt.getProperty('event') as MouseEvent | undefined;
+      if (!this.listeners) return;
+      const zoom = !!me && (me.ctrlKey || me.metaKey);
+      const id = cell?.getId() ?? '';
+      if (zoom) {
+        this.listeners.onZoomRequest?.(id.startsWith('sheet:') ? id.slice(6) : null);
+        evt.consume();
+        return;
+      }
+      if (!cell) return;
       if (id.startsWith('sheet:')) this.listeners.onCellDoubleClick(id.slice(6));
       evt.consume();
     });
@@ -2317,16 +2330,16 @@ export class Sheet {
     this.updateStickyHeaders();
   }
 
-  /** Zooms in so the cell's block fills the window with some room around it. The view it came from is kept for zoomOut(). */
-  async zoomInOn(address: string): Promise<void> {
-    const owner = this.ownerOf(address);
-    const view = this.viewOfCell(owner);
+  /** Zooms in so the cell's block (or the blocks of several cells, together) fills the window with some room around it. The view it came from is kept for zoomOut(). */
+  async zoomInOn(address: string | string[]): Promise<void> {
+    const owners = [...new Set((Array.isArray(address) ? address : [address]).map((a) => this.ownerOf(a)))];
+    const view = this.viewOfCells(owners);
     if (!view) return;
     this.zoomReturn ??= this.viewState();
-    this.zoomedOn = owner;
+    this.zoomedOn = owners[0];
     this.zoomListeners.forEach((l) => l());
     await this.flyingTo(view);
-    this.flash(owner, undefined, 600);
+    for (const owner of owners) this.flash(owner, undefined, 600);
   }
 
   /** Back to the zoom and place from before zoomInOn(). */
@@ -2349,17 +2362,36 @@ export class Sheet {
 
   /** Where to look to see a cell's block large: zoomed so that the block fills most of the window, centred. */
   viewOfCell(address: string): SheetView | null {
-    const d = this.data.get(address);
-    if (!d) return null;
+    return this.viewOfCells([address]);
+  }
+
+  /** The same for several blocks at once: the smallest rectangle that holds them all fills most of the window. */
+  viewOfCells(addresses: string[]): SheetView | null {
+    const blocks = addresses.map((a) => this.data.get(a)).filter((d): d is NonNullable<typeof d> => !!d);
+    if (!blocks.length) return null;
     const c = this.container;
     const t = this.graph.getView().getTranslate();
-    const w = d.span.cols * CW;
-    const h = d.span.rows * CH;
-    const fit = Math.min((c.clientWidth * 0.85) / w, (c.clientHeight * 0.85) / h);
-    const scale = Math.min(2, Math.max(0.8, fit));
-    const cx = (ORIGIN_X + d.col * CW + w / 2 + t.x) * scale;
-    const cy = (ORIGIN_Y + d.row * CH + h / 2 + t.y) * scale;
+    const x0 = Math.min(...blocks.map((d) => ORIGIN_X + d.col * CW));
+    const y0 = Math.min(...blocks.map((d) => ORIGIN_Y + d.row * CH));
+    const x1 = Math.max(...blocks.map((d) => ORIGIN_X + (d.col + d.span.cols) * CW));
+    const y1 = Math.max(...blocks.map((d) => ORIGIN_Y + (d.row + d.span.rows) * CH));
+    const fit = Math.min((c.clientWidth * 0.85) / (x1 - x0), (c.clientHeight * 0.85) / (y1 - y0));
+    const scale = Math.min(2, Math.max(0.4, blocks.length > 1 ? fit : Math.max(0.8, fit)));
+    const cx = ((x0 + x1) / 2 + t.x) * scale;
+    const cy = ((y0 + y1) / 2 + t.y) * scale;
     return { scale, left: Math.max(0, cx - c.clientWidth / 2), top: Math.max(0, cy - c.clientHeight / 2) };
+  }
+
+  /** A step back from where the pointer is: the point under it stays where it is, everything around goes further away. (Ctrl + right-click.) */
+  async zoomAwayFrom(factor: number, clientX: number, clientY: number): Promise<void> {
+    const from = this.viewState();
+    const rect = this.container.getBoundingClientRect();
+    const px = clientX - rect.left;
+    const py = clientY - rect.top;
+    const scale = Math.max(0.4, from.scale / factor);
+    if (scale === from.scale) return;
+    const k = scale / from.scale;
+    await this.flyTo({ scale, left: Math.max(0, (from.left + px) * k - px), top: Math.max(0, (from.top + py) * k - py) });
   }
 
   /**

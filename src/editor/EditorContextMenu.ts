@@ -22,13 +22,17 @@ let noteTimer = 0;
 
 function action(editor: monaco.editor.ICodeEditor, id: string, label: string, hint?: string): MenuItem {
   const act = editor.getAction(id);
+  // Go to definition, Find all references and Quick fix are commands in this Monaco, not editor actions: getAction() does not know
+  // them (the shortcut still works). They are run through trigger(), and they are offered whenever the editor has code.
+  const command = !act && !!editor.getModel();
   return {
     label,
     hint,
-    disabled: !act || !act.isSupported(),
+    disabled: command ? false : !act || !act.isSupported(),
     onSelect: () => {
       editor.focus();
-      void act?.run();
+      if (command) editor.trigger('rccpopup', id, null);
+      else void act?.run();
     },
   };
 }

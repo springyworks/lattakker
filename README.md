@@ -275,6 +275,11 @@ A click of the mouse wheel is a fixed small step (12%), a pinch counts in propor
 and the picture glides to the new size in a fraction of a second without ever going past it: you cannot run ahead
 of what you see, and a quick flick of the wheel is held to a bounded change instead of throwing the view across the range.
 
+Two mouse gestures with **Ctrl** go further: **Ctrl + double-click** zooms in on the object: the cell you pointed
+at (its whole block), the whole selection when that cell is part of one, or the selection when you pointed at nothing.
+**Ctrl + right-click** zooms back out (to the place you came from if you zoomed in this way, otherwise a step away from the
+pointer) and does not open the cell menu; a plain right-click still does.
+
 ### 6.1 Code follows the cells it names
 
 [↑ Contents](#contents)

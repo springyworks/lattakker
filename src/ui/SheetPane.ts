@@ -311,6 +311,17 @@ export class SheetPane {
         if (hooks.mayEdit && !hooks.mayEdit(address)) return;
         this.editor.open(address);
       },
+      // Ctrl + double-click: zoom in on the object. The cell you pointed at; when you pointed at nothing, what is selected.
+      // When the cell is part of a selection of several, the whole selection is the object.
+      onZoomRequest: (address) => {
+        const picked = sheet.getPicked();
+        if (address === null) {
+          const target = picked.length ? picked : this.selectedCodeCell ? [this.selectedCodeCell] : [];
+          if (target.length) void sheet.zoomInOn(target);
+          return;
+        }
+        void sheet.zoomInOn(picked.length > 1 && sheet.isPicked(sheet.ownerOf(address)) ? picked : address);
+      },
       onOtherClick: (id, cell, evt) => {
         if (id.startsWith('ctx:')) {
           this.popups.handleClick(id);
@@ -393,7 +404,12 @@ export class SheetPane {
     InternalEvent.disableContextMenu(sheet.container);
     const popupMenu = sheet.graph.getPlugin<PopupMenuHandler>('PopupMenuHandler')!;
     popupMenu.selectOnPopup = false;
-    popupMenu.factoryMethod = (menu, cell) => {
+    popupMenu.factoryMethod = (menu, cell, evt) => {
+      // Ctrl + right-click does not open the menu: it zooms back out (to where you came from, else a step away from the pointer).
+      if (evt.ctrlKey || evt.metaKey) {
+        void (sheet.isZoomed() ? sheet.zoomOut() : sheet.zoomAwayFrom(1.6, evt.clientX, evt.clientY));
+        return;
+      }
       const id = cell?.getId() ?? '';
       if (id.startsWith('sheet:') && hooks.reserved?.(id.slice(6))) return;
       if (id.startsWith('hdr:r')) {
