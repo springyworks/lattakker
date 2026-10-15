@@ -1249,13 +1249,13 @@ are already running.
 
 **Keeping the model loaded (no reloading again and again).** Ollama reloads a model when
 a request asks for another context size (`num_ctx`) than the one loaded, or when a second model
-needs the memory. The chat asks for the size in its settings (⚙, default 16384), while a
+needs the memory. The chat asks for the size in its settings (⚙, default 262144), while a
 plain `/v1` call (curl, an editor) gets the server's own default, so they push each other out.
 For one model that is always ready, give the server the same size for everybody and keep one
 model loaded: `sudo sh scripts/ollama-persistent.sh` (it writes a systemd drop-in with
-`OLLAMA_KEEP_ALIVE=-1`, `OLLAMA_CONTEXT_LENGTH=32768`, `OLLAMA_MAX_LOADED_MODELS=1`,
+`OLLAMA_KEEP_ALIVE=-1`, `OLLAMA_CONTEXT_LENGTH=262144`, `OLLAMA_MAX_LOADED_MODELS=1`,
 `OLLAMA_NUM_PARALLEL=1`, `OLLAMA_FLASH_ATTENTION=1`, and loads the model after every start;
-`MODEL=... CTX=... sudo -E sh scripts/ollama-persistent.sh` to change them), and set the same
+`sudo env MODEL=qwen3.6:latest CTX=65536 sh scripts/ollama-persistent.sh` for 64k), and set the same
 "memory of the chat" in ⚙. `ollama ps` shows what is loaded and at what context. A reasoning
 model such as `qwen3.6` answers over `/v1` with its thinking in a separate `reasoning` field, so
 give it a generous `max_tokens`. LM Studio and other servers with the OpenAI-style door work
@@ -1265,16 +1265,45 @@ person allowed outside questions). Try the Lab's **J41**.
 
 Several clients (this page, VS Code, scripts, other AIs) can use the same Ollama at once, and they
 share exactly two things: the one copy of the model in memory, and the context size the server was
-started with (`OLLAMA_CONTEXT_LENGTH`, 32768 in the persistent setup). They do **not** share chats:
+started with (`OLLAMA_CONTEXT_LENGTH`, 262144 in the persistent setup). They do **not** share chats:
 every request carries its whole conversation, and with `OLLAMA_NUM_PARALLEL=1` requests wait in line
 (one answer at a time, in order). A request that asks for another `num_ctx` than the loaded one makes
-Ollama reload the model, so clients should send none (this page follows the loaded size). A prompt
+Ollama reload the model, so clients should omit it or send the same size. This page explicitly uses
+the size selected in settings, even when a smaller context is already loaded, and reports the change. A prompt
 that starts with the same tokens as an earlier one is read about three times faster (the server keeps
 that cache for several prompts, even when another client's request comes in between). So agents that
 should be aware of each other share a *room*: a transcript that comes first in every prompt, with the
 agent's own instruction last. `node scripts/ollama-room.mjs --agents 4 --rounds 3` shows it with real
 requests: it pings first, refuses to run when the model is not loaded (it never waits for a cold load),
 lets the agents ask at the same moment and reports who waited how long and that nothing was reloaded.
+
+**Large context on this computer.** The installed `qwen3.6:latest` reports a native
+262,144-token limit. Settings offer 4k, 8k, 16k, 32k, 64k, 128k and 256k; new settings
+default to 256k for this setup. Existing saved choices are preserved: select **256k**
+in **AI settings > Memory of the chat** to upgrade an existing browser. The main
+helper, local librarian, cell `ollama.ask`/`chat`, MCP requests and cold-model warm-up
+all use that setting. Changing it applies on the next question and can reload the model.
+
+Tokens are not bytes: 256k here means **262,144 tokens**, not 256 kB. RAM holds the
+weights **and** the KV cache, runtime buffers and the OS; a 24–32 GB model on a
+48 GB machine is not guaranteed to fit 256k. Check `ollama ps` (CONTEXT column)
+and available RAM/swap while loading and with real long prompts. If memory is tight,
+choose 64k (65,536) or 128k (131,072), matching the persistent script's `CTX`.
+Startup loading failures from the script are reported by systemd, not hidden;
+inspect `journalctl -u ollama` if startup fails. Running it restarts Ollama and
+interrupts current requests. It requires administrator authentication.
+
+No custom model is required because the app sends `options.num_ctx`. For the equivalent
+of a Modelfile-based setup, an optional [Modelfile](scripts/Modelfile.qwen-256k) is included:
+
+```sh
+ollama create qwen-256k -f scripts/Modelfile.qwen-256k
+ollama run qwen-256k
+ollama ps
+```
+
+Select `qwen-256k` in the app if you use that alias, and pass `MODEL=qwen-256k`
+to the persistent setup as well. Keep other clients on the same model and context.
 
 ### 8.14 Input from the person: the input global
 
@@ -2157,7 +2186,7 @@ context window). Ollama's own default is 4096, which is less than the helper's
 instructions plus its tool descriptions plus one `read_guide` answer; the server then
 silently drops the oldest part, which is the instructions, and the answers turn
 strange. So: for Ollama the page uses its native `/api/chat` and asks for `num_ctx`
-itself (**⚙ › Memory of the chat**, 16k by default); the header shows a measured
+itself (**⚙ › Memory of the chat**, 256k by default for this setup); the header shows a measured
 **🔋 4.9k of 16k tokens in use** (the server's own count); before every question
 old, long tool answers are shortened to fit, and a model with a tiny memory gets the
 shortest tool list, each with a note in the chat. Other servers (LM Studio ...) keep
@@ -2205,7 +2234,7 @@ before it does anything (the text is the "First contact" part of `ai-docs/rules.
   same note until it has called `read_docs` with `doc: "readme"` (which now reads the GitHub copy first).
 - **Models on this computer** (Ollama, LM Studio): they cannot open links, so they get the README in their
   instructions. `src/ai/bible.ts` fetches the README from GitHub and puts the rules first, then as many
-  chapters as fit in a share of the model's memory (its context window, set in ⚙: 4k to 32k tokens; the whole
+  chapters as fit in a share of the model's memory (its context window, set in ⚙: 4k to 256k tokens; the whole
   README is about 30k tokens): what Lattakker is, how it is played (4), the first program (7), the cell API
   (8.x) and so on, most useful first. The chapters that did not fit are named, so the model knows what
   exists (the helper can ask for them with `read_docs`). This goes to the second brain (`local-ai`:

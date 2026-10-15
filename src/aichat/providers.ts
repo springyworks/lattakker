@@ -1,4 +1,4 @@
-import { getKey, getSettings, type AiSettings } from './config';
+import { DEFAULT_OLLAMA_CONTEXT, getKey, getSettings, type AiSettings } from './config';
 import { ammo } from './ammo';
 import { jobs, type JobHandle } from './jobs';
 
@@ -150,7 +150,7 @@ export class OpenAiCompatProvider implements ModelProvider {
     private readonly model: string,
     private readonly apiKey: string,
     /** The memory (num_ctx) to ask Ollama for; only used when the server turns out to be Ollama. */
-    private readonly context = 16384,
+    private readonly context = DEFAULT_OLLAMA_CONTEXT,
   ) {
     this.label = model || 'the local model';
   }
@@ -229,12 +229,14 @@ export class OpenAiCompatProvider implements ModelProvider {
 
   private async send(job: JobHandle, system: string, messages: ChatMsg[], tools: ToolDecl[], signal: AbortSignal): Promise<ModelReply> {
     const native = await this.isOllama();
-    // A different num_ctx than the one the model was loaded with makes Ollama throw the model out and load it again (minutes).
-    // So when it is in memory, ask for the size it has; our own setting only counts for a model that is not loaded yet.
-    let context = this.context;
+    const context = this.context;
     if (native) {
       const inMemory = await this.ps();
-      if (inMemory.loaded && inMemory.window) context = inMemory.window;
+      if (inMemory.loaded && inMemory.window && inMemory.window !== context) {
+        const note = `Changing Ollama context from ${inMemory.window} to ${context} tokens; the model may reload. Match other clients and the server to this size to avoid repeated reloads.`;
+        job.say(note, false);
+        this.onNote?.(note);
+      }
     }
     const wire: Array<Record<string, unknown>> = [{ role: 'system', content: system }];
     for (const m of messages) {

@@ -176,7 +176,7 @@ export async function ollamaWarm(model?: string): Promise<{ model: string; loade
   if (status.loaded.includes(name)) return { model: name, loaded: true, started: false, message: `${name} is in memory.` };
   if (!warming.has(name)) {
     warming.add(name);
-    fetch(`${nativeBase()}/api/generate`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: name, prompt: '', keep_alive: -1 }) })
+    fetch(`${nativeBase()}/api/generate`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: name, prompt: '', keep_alive: -1, options: { num_ctx: getSettings().local.context } }) })
       .catch(() => undefined)
       .finally(() => warming.delete(name));
   }
@@ -207,7 +207,7 @@ export async function ollamaChat(messages: OllamaMessage[], options: OllamaOptio
     if (!model) throw new Error(status.message || 'No model chosen.');
     if (status.models.length && !status.models.some((m) => m === model || m.split(':')[0] === model.split(':')[0])) throw new Error(`The model “${model}” is not installed. Installed: ${status.models.join(', ')}.`);
 
-    const provider = new OpenAiCompatProvider(getSettings().local.baseUrl, model, getKey('local'));
+    const provider = new OpenAiCompatProvider(getSettings().local.baseUrl, model, getKey('local'), getSettings().local.context);
     const stop = signal ?? new AbortController().signal;
     try {
       const reply = await provider.complete(String(options.system ?? DEFAULT_SYSTEM).slice(0, 2000), wire, [], stop);

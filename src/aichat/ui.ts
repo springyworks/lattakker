@@ -5,7 +5,7 @@ import { router } from '../mcp/router';
 import { jobs, onJobsChange, type JobNode } from './jobs';
 import { installPopupMenu } from '../editor/EditorContextMenu';
 import type { Conversation, Entry } from './agent';
-import { destination, forgetAll, getKey, getSettings, isConfigured, setKey, updateSettings } from './config';
+import { destination, forgetAll, getKey, getSettings, isConfigured, OLLAMA_CONTEXT_OPTIONS, setKey, updateSettings } from './config';
 import { localAssistantReady, localState, localWarning, onLocalChange } from './localAi';
 import { renderMarkdown, linkify } from './markdown';
 import { allNotes, exportJson, forget, importJson, isKeptSafe, keepSafe, memoryInfo, onMemoryChange, wipe } from './memory';
@@ -762,7 +762,7 @@ export class AiChatUi {
     const key = el('input', { type: 'password', value: getKey('local'), className: 'ai-wide', placeholder: 'usually empty', autocomplete: 'off' });
     key.onchange = () => setKey('local', key.value);
     const memory = el('select', { className: 'ai-wide' });
-    for (const n of [4096, 8192, 16384, 32768]) memory.append(el('option', { value: String(n), textContent: `${n / 1024}k tokens${n === 16384 ? ' (recommended)' : n === 4096 ? ' (too small for the helper)' : ''}`, selected: s.local.context === n }));
+    for (const n of OLLAMA_CONTEXT_OPTIONS) memory.append(el('option', { value: String(n), textContent: `${n / 1024}k tokens${n >= 131072 ? ' (high RAM use)' : n === 4096 ? ' (too small for the helper)' : ''}`, selected: s.local.context === n }));
     memory.onchange = () => updateSettings((x) => (x.local.context = Number(memory.value)));
     return el(
       'div',
@@ -774,7 +774,7 @@ export class AiChatUi {
         s.local.model,
         (m) => updateSettings((x) => (x.local.model = m)),
       ),
-      el('div', { className: 'ai-field' }, el('label', { textContent: 'Memory of the chat (Ollama only)' }), memory, el('div', { className: 'ai-note', textContent: 'How much the model can keep in mind at once. Ollama’s own default is 4k, which is too small for the helper’s instructions and tools: they would silently fall out. More memory uses more RAM; a model that will not load may need a smaller number. The 🔋 line under the title shows what is really used.' })),
+      el('div', { className: 'ai-field' }, el('label', { textContent: 'Memory of the chat (Ollama only)' }), memory, el('div', { className: 'ai-note', textContent: 'Context is measured in tokens, not kilobytes. This setup defaults to 256k (262,144 tokens); your model must support it. Weights plus the context cache and runtime all need memory: even 48 GB RAM does not guarantee 256k will fit. Try 64k if loading fails or the computer swaps. Changes apply to the next question and may reload the model. Match the Ollama server and other clients to avoid repeated reloads. The 🔋 line shows token use, not RAM use; check ollama ps and your system monitor too.' })),
       el('div', { className: 'ai-field' }, el('label', { textContent: 'Key (only if your server wants one)' }), key),
       el(
         'details',

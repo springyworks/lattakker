@@ -7,6 +7,9 @@
 
 export type ProviderId = 'local' | 'gemini';
 
+export const OLLAMA_CONTEXT_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072, 262144];
+export const DEFAULT_OLLAMA_CONTEXT = 262144;
+
 export interface AiSettings {
   provider: ProviderId;
   /** An OpenAI-compatible server, for example Ollama (http://localhost:11434/v1) or LM Studio (http://localhost:1234/v1). */
@@ -27,7 +30,7 @@ export interface AiSettings {
 
 export const DEFAULT_SETTINGS: AiSettings = {
   provider: 'local',
-  local: { baseUrl: 'http://localhost:11434/v1', model: '', context: 16384 },
+  local: { baseUrl: 'http://localhost:11434/v1', model: '', context: DEFAULT_OLLAMA_CONTEXT },
   gemini: { model: 'gemini-flash-latest', adultAck: false },
   remember: false,
   autoPopup: true,
@@ -51,7 +54,7 @@ function merge(base: AiSettings, saved: Partial<AiSettings> | null): AiSettings 
   const seconds = (saved as { v?: number }).v === 2 || Number(saved.autoSeconds) !== 22 ? Number(saved.autoSeconds) : base.autoSeconds;
   return {
     provider: saved.provider === 'gemini' ? 'gemini' : 'local',
-    local: { baseUrl: String(saved.local?.baseUrl || base.local.baseUrl), model: String(saved.local?.model ?? ''), context: [4096, 8192, 16384, 32768].includes(Number(saved.local?.context)) ? Number(saved.local?.context) : base.local.context },
+    local: { baseUrl: String(saved.local?.baseUrl || base.local.baseUrl), model: String(saved.local?.model ?? ''), context: OLLAMA_CONTEXT_OPTIONS.includes(Number(saved.local?.context)) ? Number(saved.local?.context) : base.local.context },
     gemini: { model: String(saved.gemini?.model || base.gemini.model), adultAck: saved.gemini?.adultAck === true },
     remember: saved.remember === true,
     autoPopup: saved.autoPopup !== false,
