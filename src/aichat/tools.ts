@@ -506,7 +506,7 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
       }
       case 'mcp_call': {
         const server = String(args.server ?? '');
-        const method = String(args.method ?? '');
+        let method = String(args.method ?? '');
         if (!router.names().includes(server)) return asText({ error: `There is no MCP server "${server}". Servers: ${router.names().join(', ')}.` });
         if (!['resources/list', 'resources/read', 'tools/list', 'tools/call', 'ping'].includes(method)) return asText({ error: `Method "${method}" is not available to you. Use resources/list, resources/read, tools/list or tools/call.` });
         let params: Record<string, unknown> = {};
@@ -519,6 +519,11 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
           } catch {
             return asText({ error: 'params_json must be JSON text for an object, e.g. {"uri":"lattakker:///board/A12"}' });
           }
+        }
+        // A small model often puts the method where the tool name goes (method tools/call, name "tools/list"): do what it meant.
+        if (method === 'tools/call' && ['tools/list', 'resources/list', 'ping'].includes(String(params.name ?? ''))) {
+          method = String(params.name);
+          params = {};
         }
         if (server === 'tabs' && method === 'tools/call' && String(params.name ?? '') !== 'list' && String(params.name ?? '') !== 'select' && !getSettings().allowWrite) {
           return asText({ error: 'Making, renaming and closing tabs is switched off for you (a grown-up can allow it in the helper settings, "Let the helper write code"). You can list tabs and select one; ask the person to use the ＋ in the tab strip.' });
