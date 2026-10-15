@@ -3,6 +3,17 @@ import type { Sheet } from '../sheet/Sheet';
 import { workspace } from '../workspace';
 
 const STEP = 1.15;
+/** One notch of a mouse wheel: a fixed, small step (a notch reports about 100 pixels, which must not mean "zoom 2.7 times"). */
+const NOTCH = 1.12;
+/** A trackpad pinch reports many small deltas: each one counts a little, but never more than this. */
+const PINCH_PER_PIXEL = 0.008;
+const PINCH_MAX = 0.06;
+/** However fast the wheel is turned, the aim is never further than this away from what is on screen: no running ahead of the picture. */
+const MAX_LEAD = 1.5;
+/** The glide: the picture covers 63% of the way to the aim every this many milliseconds, and never goes past it. */
+const GLIDE_MS = 70;
+const MIN_SCALE = 0.4;
+const MAX_SCALE = 2.5;
 
 /**
  * Zooms the sheet (the game board and every cell with it) on its own, without zooming the whole browser page:
@@ -12,6 +23,11 @@ const STEP = 1.15;
 export class ZoomControls {
   private readonly box = document.createElement('div');
   private readonly label = document.createElement('button');
+  private aim = 1;
+  private anchor: [number, number] = [0, 0];
+  private frame = 0;
+  private applied = 0;
+  private lastTime = 0;
 
   constructor(private readonly sheet: Sheet) {
     this.box.className = 'zoom-controls';
@@ -29,7 +45,7 @@ export class ZoomControls {
       (e) => {
         if (!e.ctrlKey) return;
         e.preventDefault();
-        sheet.zoomAround(Math.exp(-e.deltaY * 0.01), e.clientX, e.clientY);
+        this.wheel(e);
       },
       { passive: false },
     );
@@ -69,12 +85,63 @@ export class ZoomControls {
     return [rect.left + rect.width / 2, rect.top + rect.height / 2];
   }
 
+  /** A wheel turn becomes a small change of the aim; the glide does the rest. */
+  private wheel(e: WheelEvent): void {
+    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
+    const pixels = e.deltaY * unit;
+    if (!pixels) return;
+    // A click of a mouse wheel is big and whole (100 pixels, or lines); a pinch is a stream of small fractions.
+    const notch = e.deltaMode !== 0 || Math.abs(pixels) >= 40;
+    const change = notch ? -Math.sign(pixels) * Math.log(NOTCH) : Math.max(-PINCH_MAX, Math.min(PINCH_MAX, -pixels * PINCH_PER_PIXEL));
+    this.aimAt(change, [e.clientX, e.clientY], true);
+  }
+
+  /** Moves the aim by `change` (a logarithm: 0.1 is about 10%) around a point of the screen, and starts the glide. */
+  private aimAt(change: number, around: [number, number], capped = false): void {
+    const now = this.sheet.graph.getView().getScale();
+    // While a glide is on, the next turn adds to its aim; otherwise it starts from what is on screen.
+    const from = this.frame ? this.aim : now;
+    const lead = Math.log(MAX_LEAD);
+    const toward = Math.log(Math.min(MAX_SCALE, Math.max(MIN_SCALE, from * Math.exp(change))) / now);
+    // Only the wheel is held back; a button, Ctrl + 0 and the like say exactly where to go.
+    this.aim = now * Math.exp(capped ? Math.max(-lead, Math.min(lead, toward)) : toward);
+    this.anchor = around;
+    if (!this.frame) {
+      this.applied = now;
+      this.lastTime = performance.now();
+      this.frame = requestAnimationFrame((t) => this.glide(t));
+    }
+  }
+
+  private glide(time: number): void {
+    const view = this.sheet.graph.getView();
+    const now = view.getScale();
+    // Something else zoomed meanwhile (a flight to a cell, a touch pinch): do not fight it.
+    if (Math.abs(now - this.applied) > this.applied * 1e-6) return this.stop();
+    // Real time, so a slow redraw does not make the glide slower: a frame that took long just covers more of the way.
+    const dt = Math.min(400, Math.max(1, time - this.lastTime));
+    this.lastTime = time;
+    const left = Math.log(this.aim / now);
+    // Always a part of the way, never past the aim: no swing.
+    const next = Math.abs(left) < 0.002 ? this.aim : now * Math.exp(left * (1 - Math.exp(-dt / GLIDE_MS)));
+    this.sheet.zoomAround(next / now, ...this.anchor);
+    this.applied = view.getScale();
+    if (next === this.aim || this.applied === now) return this.stop();
+    this.frame = requestAnimationFrame((t) => this.glide(t));
+  }
+
+  private stop(): void {
+    cancelAnimationFrame(this.frame);
+    this.frame = 0;
+  }
+
   private step(factor: number): void {
-    this.sheet.zoomAround(factor, ...this.centre());
+    this.aimAt(Math.log(factor), this.centre());
   }
 
   private reset(): void {
-    this.step(1 / this.sheet.graph.getView().getScale());
+    this.stop();
+    this.aimAt(-Math.log(this.sheet.graph.getView().getScale()), this.centre());
   }
 
   private place(): void {

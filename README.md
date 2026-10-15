@@ -271,6 +271,9 @@ wheel (a trackpad pinch does the same), press **Ctrl +** and **Ctrl −**, and *
 goes back to 100%. A small **− 100% +** control sits at the bottom right of every sheet
 (click the percentage to go back to 100%). The sheet zooms between 40% and 250%, around the
 point under the pointer (or the middle of the window for the keys). On a touch screen, pinch.
+A click of the mouse wheel is a fixed small step (12%), a pinch counts in proportion to how far the fingers move,
+and the picture glides to the new size in a fraction of a second without ever going past it: you cannot run ahead
+of what you see, and a quick flick of the wheel is held to a bounded change instead of throwing the view across the range.
 
 ### 6.1 Code follows the cells it names
 

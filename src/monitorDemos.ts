@@ -13,7 +13,7 @@ export const MONITOR_DEMOS: ReadonlyArray<readonly [string, string]> = [
 // model (the helper) or uses a tool shows too.
 // Inside the router block is its switchboard: every message makes the gateway plug a straight wire from the jack of the one that
 // speaks to the jack of the one that listens. The wire shoots across behind a small arrowhead, glows in the colour of the message and
-// fades away; below the router's text a dark pane logs every plug as it happens.
+// fades away; below the router's text a grey pane logs every plug as it happens.
 span(12, 9)
 
 // svg.asset('router-architecture') is the drawing from resources/. Its boxes are called node-board,
@@ -126,21 +126,21 @@ const core = { x: 560, y: 388 }
 pic.add('circle', { cx: core.x, cy: core.y, r: 6, fill: '#ffffff', stroke: '#94a3b8', 'stroke-width': 1.5 })
 pic.write(core.x + 11, core.y + 3, 'gateway', { fill: '#64748b', 'font-size': 8, 'font-family': 'monospace' })
 
-// THE LOG PANE: a dark console in the lower middle of the block (about a quarter of it, between the jacks). Every plug writes a line
+// THE LOG PANE: a light grey console (a little greyer than the block, to be elegant) in the lower middle of the block (about a quarter of it, between the jacks). Every plug writes a line
 // at the bottom; the older lines slide up and fade, and the oldest disappear under the top edge.
 const PANE = { x: 478, y: 432, w: 210, h: 174 }
 const LH = 10.5
 const clip = pic.add('clipPath', { id: 'switch-log-clip' })
 clip.add('rect', { x: PANE.x + 3, y: PANE.y + 16, width: PANE.w - 6, height: PANE.h - 20 })
-pic.add('rect', { x: PANE.x, y: PANE.y, width: PANE.w, height: PANE.h, rx: 6, fill: '#0f172a', stroke: '#334155', 'stroke-width': 1.2, opacity: 0.96 })
-pic.write(PANE.x + 8, PANE.y + 11, 'switchboard log', { fill: '#94a3b8', 'font-size': 8, 'font-family': 'monospace' })
-const plugged = pic.write(PANE.x + PANE.w - 8, PANE.y + 11, '0 plugs', { fill: '#64748b', 'font-size': 8, 'font-family': 'monospace', 'text-anchor': 'end' })
-pic.add('line', { x1: PANE.x + 6, y1: PANE.y + 15, x2: PANE.x + PANE.w - 6, y2: PANE.y + 15, stroke: '#1e293b', 'stroke-width': 1 })
+pic.add('rect', { x: PANE.x, y: PANE.y, width: PANE.w, height: PANE.h, rx: 6, fill: '#eceff3', stroke: '#cbd5e1', 'stroke-width': 1.2 })
+pic.write(PANE.x + 8, PANE.y + 11, 'switchboard log', { fill: '#64748b', 'font-size': 8, 'font-family': 'monospace' })
+const plugged = pic.write(PANE.x + PANE.w - 8, PANE.y + 11, '0 plugs', { fill: '#94a3b8', 'font-size': 8, 'font-family': 'monospace', 'text-anchor': 'end' })
+pic.add('line', { x1: PANE.x + 6, y1: PANE.y + 15, x2: PANE.x + PANE.w - 6, y2: PANE.y + 15, stroke: '#cbd5e1', 'stroke-width': 1 })
 const paneRows = pic.add('g', { 'clip-path': 'url(#switch-log-clip)' })
 const logRows: Array<{ el: ReturnType<typeof pic.el>; age: number }> = []
 const maxChars = Math.floor((PANE.w - 16) / 4.8)
-// The colours of the kinds, lighter than in the drawing so they shine on the dark pane.
-const glow = { request: '#fb923c', response: '#4ade80', notification: '#a78bfa', error: '#f87171', heartbeat: '#7dd3fc' }
+// The colours of the kinds for the log lines: deeper than the wires, so they read on the light grey pane.
+const glow = { request: '#c2410c', response: '#15803d', notification: '#6d28d9', error: '#dc2626', heartbeat: '#0369a1' }
 let logged = 0
 function logLine(text: string, color: string): void {
   logged++
