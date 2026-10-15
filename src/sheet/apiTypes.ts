@@ -177,6 +177,54 @@ interface McpMessage {
   hops: string[];
 }
 
+/** A message as the traffic analyser sees it: a McpMessage with a type (the kind of traffic), who asked whom, and the tool. */
+interface McpPacket {
+  n: number;
+  id: string;
+  time: number;
+  origin: string;
+  from: string;
+  to: string;
+  /** Who asked: for an answer that is the receiver. */
+  asker: string;
+  asked: string;
+  kind: 'request' | 'response' | 'error' | 'notification';
+  method: string;
+  type: 'heartbeat' | 'discovery' | 'read' | 'subscribe' | 'news' | 'signal' | 'tool' | 'change' | 'other';
+  /** The tool of a tools/call (also on its answer), or ''. */
+  tool: string;
+  info: string;
+  ms?: number;
+  cause: string | null;
+}
+
+/** What mcp.analyze() found. */
+interface McpAnalysis {
+  filter: string;
+  scanned: number;
+  matched: number;
+  seconds: number;
+  byType: Array<{ type: string; count: number; share: number; meaning: string }>;
+  byKind: Record<string, number>;
+  conversations: Array<{ asker: string; asked: string; messages: number; errors: number; avgMs: number; types: string[] }>;
+  talkers: Array<{ party: string; asked: number; answered: number }>;
+  slowest: Array<{ id: string; asker: string; asked: string; method: string; tool: string; ms: number }>;
+  errors: Array<{ id: string; asker: string; asked: string; method: string; info: string }>;
+  /** The result in plain sentences. */
+  story: string[];
+}
+
+/** What mcp.ask() answers. */
+interface McpAnswer {
+  question: string;
+  answer: string;
+  /** The filter behind the answer: give it to mcp.packets() to see the messages. */
+  filter: string;
+  packets: McpPacket[];
+  /** false when the question was not one it knows (the answer then lists what it can do). */
+  understood: boolean;
+}
+
 /** One recorded change made over MCP: who, through which message, and the code before and after. */
 interface McpChange {
   n: number;
@@ -255,6 +303,18 @@ interface Mcp {
   stats(): RouterStats;
   /** Start the router's counters again from zero. */
   resetStats(): void;
+  /**
+   * The traffic as a packet list, a little like Wireshark: each message with its type (what kind of traffic it is), who asked whom, the tool.
+   * A display filter picks messages: type==tool && ms>20   from~ai   kind==error   asked==weather and !heartbeat   origin~lab
+   * Fields: n id time ms from to asker asked origin kind type method tool info cause. Operators: == != ~ (contains) !~ > >= < <=; && || ! ( ).
+   * A lone word searches every text field. A filter that cannot be read throws an error that says why.
+   * for (const p of mcp.packets('type==tool', 10)) print(p.asker, '→', p.asked, p.tool, p.ms)
+   */
+  packets(filter?: string, n?: number): McpPacket[];
+  /** Counts what a filter picks (default: everything in the log): kinds of traffic, who talks to whom, slowest, errors, and a short story in words. The same as the MCP tool mcp.tool('router', 'analyze'). */
+  analyze(filter?: string): McpAnalysis;
+  /** Ask the router about its own traffic in plain words: 'what is going on?', 'any errors?', 'who is busiest?', 'what does ai-chat do?'. Keyword matching over the real log, not a model; the answer says which filter it used. */
+  ask(question: string): McpAnswer;
   /** Everything this app can do over MCP: every server, what it is for, its tools. Start here when you do not know what exists. */
   catalog(): Promise<McpCatalogEntry[]>;
   /** The tools of one server: await mcp.tools('weather'). */

@@ -13,6 +13,7 @@ import { SvgScene, type SceneHost } from './svgScene';
 import { svgAsset, svgAssetNames } from './svgAssets';
 import { animAssetNames, loadClip, pickClip, type ClipHost } from './anim';
 import { buildCatalog } from '../mcp/routerServer';
+import { analyze as analyzeTraffic, ask as askTraffic, packets as trafficPackets } from '../mcp/analyze';
 import { findPlaces, forecast as weatherForecast, summary as weatherSummary, weatherNow, type PlaceInput } from '../services/weather';
 import { tabManager, type CreateTabOptions } from '../tabManager';
 import { readSystem, summarize as systemSummary, systemSeries, type SeriesName } from '../services/system';
@@ -880,6 +881,12 @@ export function buildApi(
     history: (subject?: string) => router.history(subject === undefined ? undefined : String(subject)),
     /** What the router has counted: messages, errors, rate, per second (last 60 s), and per server, client and method. */
     stats: () => router.stats(),
+    /** The traffic as a packet list with a display filter (see mcp/analyze.ts): mcp.packets('type==tool && ms>20', 10). */
+    packets: (filter = '', n = 30) => trafficPackets(router.recent(400), String(filter), n),
+    /** Counts what a filter picks: kinds of traffic, who talks to whom, slowest, errors, and a story in words. */
+    analyze: (filter = '') => analyzeTraffic(router.recent(400), String(filter)),
+    /** Ask the router about its traffic in plain words: mcp.ask('any errors?'). */
+    ask: (question: string) => askTraffic(router.recent(400), String(question)),
     /** Start the router's counters again from zero. */
     resetStats: (): void => {
       ctx.guard();

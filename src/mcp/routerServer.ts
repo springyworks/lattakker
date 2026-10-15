@@ -1,3 +1,4 @@
+import { analyze, ask as askTraffic, FILTER_HELP, FilterError, packets as pickPackets } from './analyze';
 import { ERR, McpError, TRACE_META, type Json, type McpRouter, type McpServer, type Trace } from './router';
 
 /**
@@ -11,6 +12,11 @@ import { ERR, McpError, TRACE_META, type Json, type McpRouter, type McpServer, t
  *   tools/call servers                           just the names
  *   tools/call recent {n?, server?, method?}     the last messages, optionally only one server or method
  *   tools/call reset_stats                       start counting from zero
+ *
+ * Looking at the traffic, a little like Wireshark (see analyze.ts):
+ *   tools/call packets {filter?, n?}             the messages as a packet list: type (kind of traffic), who asked whom, what
+ *   tools/call analyze {filter?}                 count what a filter picks: kinds of traffic, who talks to whom, slowest, errors, in words
+ *   tools/call ask {question}                    "what is going on?", "any errors?", "who is busiest?", "what does ai-chat do?"
  *
  * Who did what (provenance): every message has an id, a start of its chain (origin), the parties it passed through
  * (hops) and the message that caused it (cause). Changes to cells that were made over MCP are written down too.
@@ -37,6 +43,21 @@ const TOOLS = [
     name: 'recent',
     description: 'The last messages that crossed the router (who asked whom, what, how long it took).',
     inputSchema: { type: 'object', properties: { n: { type: 'integer', description: 'How many (1 to 100, default 20).' }, server: { type: 'string', description: 'Only messages to or from this server.' }, method: { type: 'string', description: 'Only this method, e.g. tools/call.' }, origin: { type: 'string', description: 'Only messages of chains that were started by this party (a cell like lab:A16, you, ai-chat, outside-ai).' } } },
+  },
+  {
+    name: 'packets',
+    description: `The traffic as a packet list, like Wireshark: each message with its TYPE (heartbeat, discovery, read, subscribe, news, signal, tool, change), who asked whom, the method, the tool, how long it took. A filter picks messages. ${FILTER_HELP}`,
+    inputSchema: { type: 'object', properties: { filter: { type: 'string', description: 'Display filter, e.g. type==tool && ms>20 or from~ai. Empty: everything.' }, n: { type: 'integer', description: 'How many (1 to 400, default 30).' } } },
+  },
+  {
+    name: 'analyze',
+    description: `Counts the messages a filter picks (default: all in the log) and says what is going on: the kinds of traffic and their share, who talks to whom, the busiest parties, the slowest answers, the errors, and a short story in plain words. ${FILTER_HELP}`,
+    inputSchema: { type: 'object', properties: { filter: { type: 'string', description: 'Display filter. Empty: everything in the log (the last 400 messages).' } } },
+  },
+  {
+    name: 'ask',
+    description: 'Ask the router about its own traffic in plain words: "what is going on?", "any errors?", "who is busiest?", "what is slow?", "what does ai-chat do?", "how many messages?", "what was the last thing?". It is a keyword matcher over the real log, not a model: an answer says which filter it used, so you can run it again. A question it does not know gets the list of what it knows.',
+    inputSchema: { type: 'object', properties: { question: { type: 'string' } }, required: ['question'] },
   },
   {
     name: 'trace',
@@ -157,6 +178,15 @@ export class RouterServer implements McpServer {
         const messages = this.router.recent(400).filter((m) => (!server || m.from === server || m.to === server) && (!method || m.method === method) && (!origin || m.origin === origin));
         return reply({ messages: messages.slice(-n) });
       }
+      case 'packets': {
+        const filter = typeof args.filter === 'string' ? args.filter : '';
+        const n = typeof args.n === 'number' && Number.isFinite(args.n) ? args.n : 30;
+        return reply({ filter, packets: this.filtered(() => pickPackets(this.router.recent(400), filter, n)) });
+      }
+      case 'analyze':
+        return reply({ ...this.filtered(() => analyze(this.router.recent(400), typeof args.filter === 'string' ? args.filter : '')) });
+      case 'ask':
+        return reply({ ...askTraffic(this.router.recent(400), String(args.question ?? '')) });
       case 'trace': {
         const id = String(args.id ?? '');
         const message = this.router.message(id);
@@ -194,6 +224,16 @@ export class RouterServer implements McpServer {
         return reply({ ok: true });
       default:
         throw new McpError(ERR.methodNotFound, `router has no tool "${name}". Tools: ${TOOLS.map((t) => t.name).join(', ')}`);
+    }
+  }
+
+  /** A filter that cannot be read is the asker's mistake: say so as invalid params, with the syntax. */
+  private filtered<T>(run: () => T): T {
+    try {
+      return run();
+    } catch (err) {
+      if (err instanceof FilterError) throw new McpError(ERR.invalidParams, err.message);
+      throw err;
     }
   }
 
@@ -255,6 +295,12 @@ export class RouterServer implements McpServer {
       // 8. The question that started this check is itself in the record.
       const me = asked ? r.message(asked.id) : undefined;
       add('this very check (the request that asked for it) is in the log with its own trace', !asked || (me && me.origin === asked.origin), asked ? `${asked.id}, origin ${asked.origin}, via ${asked.lineage.join(' > ')}` : 'asked without a trace');
+
+      // 9. The traffic analyser reads the messages sent above: it knows their type, and a filter picks them.
+      const picked = await ask('packets', { filter: 'origin==router-selfcheck && type==heartbeat', n: 5 });
+      add('tool packets: a filter picks the self-check pings and calls them heartbeat', (picked.packets ?? []).length > 0 && (picked.packets ?? []).every((q: { type: string }) => q.type === 'heartbeat'), `${(picked.packets ?? []).length} packets`);
+      const said = await ask('ask', { question: 'how many messages?' });
+      add('tool ask: answers a question in words from the log', said.understood === true && /messages in the log/.test(String(said.answer)), String(said.answer).slice(0, 80));
     } catch (err) {
       add('no check raised an error', false, err instanceof Error ? err.message : String(err));
     }

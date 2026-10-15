@@ -951,7 +951,7 @@ one, and they all sit on the same router:
 | Server | What it is for | Tools |
 | --- | --- | --- |
 | `board`, `lab`, `examples` | the cells of a tab | `list_cells`, `get_cell`, `run_cell`, `set_code`, `click`, `flash`, `signal` |
-| `router` | the router itself | `stats`, `catalog`, `servers`, `recent`, `reset_stats`, `trace`, `history`, `change`, `endpoints`, `self_check` |
+| `router` | the router itself | `stats`, `catalog`, `servers`, `recent`, `packets`, `analyze`, `ask`, `reset_stats`, `trace`, `history`, `change`, `endpoints`, `self_check` |
 | `weather` | the weather ([8.12](#812-the-weather)) | `now`, `forecast`, `find` |
 | `ollama` | the model on this computer ([8.13](#813-the-model-on-this-computer-ollama)) | `status`, `models`, `ask` |
 | `memory` | the helper's notes and little database | `remember`, `recall`, `db_put` ... |
@@ -977,6 +977,25 @@ request, answer, error and notification that crossed the router since the page
 started (nothing is estimated). Reading it is not a dependency: use
 `every('1s', ...)` to follow it. The Lab's **A35** is a live dashboard and **J35**
 lists the servers.
+
+Looking at the traffic a little like Wireshark (`src/mcp/analyze.ts`): every message
+gets a **type** (`heartbeat`, `discovery`, `read`, `subscribe`, `news`, `signal`,
+`tool`, `change`), a **display filter** picks messages, and the router counts what
+the filter picked and tells it in words. Nothing is guessed: it only counts the last
+400 messages in the log, and the filter is parsed by hand (no `eval`).
+
+```ts
+for (const p of mcp.packets('type==tool && ms>20', 10)) print(p.asker, '→', p.asked, p.tool, p.ms)
+print(mcp.analyze('from~ai').story)              // kinds of traffic, who talks to whom, slowest, errors, in sentences
+print(mcp.ask('any errors?').answer)             // also: 'what is going on?', 'who is busiest?', 'what does ai-chat do?'
+```
+
+Filter fields: `n id time ms from to asker asked origin kind type method tool info cause`.
+Operators: `==  !=  ~` (contains) `!~  >  >=  <  <=`, combined with `&&  ||  !  ( )`; a
+lone word searches every text field. A filter that cannot be read is an error that
+says why. `mcp.ask()` is a keyword matcher, not a model: its answer names the filter
+it used, so you can run it again with `mcp.packets()`. The same three exist as router
+tools (`packets`, `analyze`, `ask`) for an outside AI.
 
 #### 8.11.1 Who sent it: message ids, origin, hops and the record of changes
 
