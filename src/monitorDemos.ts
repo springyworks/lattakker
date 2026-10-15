@@ -11,6 +11,8 @@ export const MONITOR_DEMOS: ReadonlyArray<readonly [string, string]> = [
 // An AI chat outside the page (the box at the bottom, over the dev server's /mcp) shows its calls and answers here.
 // The person (the stickman) talks with the sidebar chat: the question goes in, the answer comes back, and each time the chat asks the
 // model (the helper) or uses a tool shows too.
+// Inside the router block is its switchboard: every message makes the gateway plug a straight wire from the jack of the one that
+// speaks to the jack of the one that listens. The wire shoots across, glows in the colour of the message and fades away.
 span(12, 9)
 
 // svg.asset('router-architecture') is the drawing from resources/. Its boxes are called node-board,
@@ -91,6 +93,76 @@ function route(a: string, b: string): { hops: Array<[string, boolean]>; meet: st
   return { hops, meet }
 }
 
+// THE SWITCHBOARD inside the router block. Every box of the drawing has a jack where its line meets the router; when a message goes
+// from one to another the gateway "plugs" a straight wire between the two jacks. It shoots across (a bright head runs ahead of it),
+// glows in the colour of the message, and fades. Wires of a burst pile up as a bundle of fading lights. (A heartbeat is only a thin one.)
+const BAY = { left: 450, right: 750, top: 200, bottom: 650 }
+const JACK = 16
+const jacks: Record<string, { x: number; y: number }> = {}
+for (const id of pic.ids.filter((i) => i.startsWith('link-'))) {
+  // Every line is drawn from the router outwards: the first point of its path is where it meets the router.
+  const start = /^M\s+(-?[\d.]+)[\s,]+(-?[\d.]+)/.exec(String(pic.el(id).attr('d') ?? ''))
+  if (!start) continue
+  const x = Number(start[1])
+  const y = Number(start[2])
+  const edge = { left: Math.abs(x - BAY.left), right: Math.abs(x - BAY.right), top: Math.abs(y - BAY.top), bottom: Math.abs(y - BAY.bottom) }
+  const near = Math.min(edge.left, edge.right, edge.top, edge.bottom)
+  if (near > 10 || x < BAY.left - 10 || x > BAY.right + 10 || y < BAY.top - 10 || y > BAY.bottom + 10) continue
+  const jx = near === edge.left ? BAY.left + JACK : near === edge.right ? BAY.right - JACK : x
+  const jy = near === edge.top ? BAY.top + JACK : near === edge.bottom ? BAY.bottom - JACK : y
+  const name = id.slice(5)
+  jacks[name] = { x: jx, y: jy }
+  // The socket, with the name of who is plugged in (short names so they fit inside the block).
+  pic.add('circle', { cx: jx, cy: jy, r: 5, fill: '#ffffff', stroke: '#94a3b8', 'stroke-width': 1.5 })
+  const side = near === edge.left ? 'start' : near === edge.right ? 'end' : 'middle'
+  const tx = near === edge.left ? jx + 9 : near === edge.right ? jx - 9 : jx
+  const ty = near === edge.top ? jy + 19 : near === edge.bottom ? jy - 11 : jy + 3
+  pic.write(tx, ty, name === 'sidebar_chat' ? 'chat' : name, { fill: '#64748b', 'font-size': 8, 'font-family': 'monospace', 'text-anchor': side })
+}
+// The gateway itself is a jack in the middle: what the router says by itself starts there.
+const core = { x: 600, y: 560 }
+pic.add('circle', { cx: core.x, cy: core.y, r: 6, fill: '#ffffff', stroke: '#94a3b8', 'stroke-width': 1.5 })
+pic.write(core.x, core.y + 19, 'gateway', { fill: '#64748b', 'font-size': 8, 'font-family': 'monospace', 'text-anchor': 'middle' })
+
+// The jack of a box: the one where its way to the router meets the router (the outside AI comes in by the dev server, the person by the chat).
+function jackOf(box: string): { x: number; y: number } | undefined {
+  const chain = up(box)
+  return chain.length > 1 ? jacks[chain[chain.length - 2]] : core
+}
+
+let wires = 0
+const nobody = { 'pointer-events': 'none' }
+function plug(a: string, b: string, color: string, thin = false): void {
+  const from = jackOf(a)
+  const to = jackOf(b)
+  if (!from || !to || from === to || wires >= 36) return
+  wires++
+  const w = thin ? 0.55 : 1
+  const glow = pic.add('line', { x1: from.x, y1: from.y, x2: from.x, y2: from.y, stroke: color, 'stroke-width': 11 * w, 'stroke-linecap': 'round', opacity: 0.3 * w, ...nobody })
+  const wire = pic.add('line', { x1: from.x, y1: from.y, x2: from.x, y2: from.y, stroke: color, 'stroke-width': 3 * w, 'stroke-linecap': 'round', opacity: 1, ...nobody })
+  const plugA = pic.add('circle', { cx: from.x, cy: from.y, r: 5.5, fill: color, opacity: 1, ...nobody })
+  const plugB = pic.add('circle', { cx: to.x, cy: to.y, r: 5.5, fill: color, opacity: 0, ...nobody })
+  const head = pic.add('circle', { cx: from.x, cy: from.y, r: 4 * w + 1, fill: '#ffffff', opacity: 1, ...nobody })
+  const parts = [glow, wire, plugA, plugB, head]
+  const shoot = { time: 120, ease: 'out' as const }
+  const gone = Promise.all([glow.animate({ x2: to.x, y2: to.y }, shoot), wire.animate({ x2: to.x, y2: to.y }, shoot), head.animate({ cx: to.x, cy: to.y }, shoot)])
+    .then(() => {
+      plugB.opacity(1)
+      head.remove()
+      // The light stays a moment, then fades: the wire thins out while the plugs swell and vanish.
+      const fade = { time: thin ? 450 : 800, ease: 'in' as const }
+      return Promise.all([glow.animate({ opacity: 0, 'stroke-width': 3 }, fade), wire.animate({ opacity: 0, 'stroke-width': 0.5 }, fade), plugA.animate({ opacity: 0, r: 11 }, fade), plugB.animate({ opacity: 0, r: 11 }, fade)])
+    })
+  // When the cell runs again the drawing is gone: the late steps have nothing left to draw on.
+  gone.then(() => { for (const part of parts) part.remove() }).catch(() => {}).then(() => { wires-- })
+}
+
+// The wire is plugged when the message reaches the router: after the lines from the sender to the router.
+const plugLater = (a: string, b: string, color: string, thin: boolean, wait: number): void => {
+  if (wait > 0) after(wait, () => plug(a, b, color, thin))
+  else plug(a, b, color, thin)
+}
+
 // A dot runs along a list of lines, one after the other: [line, backwards?]. The promise is done when it has arrived.
 // A question is a filled dot, its answer a ring (see the legend in the drawing).
 function travel(hops: Array<[string, boolean]>, color: string, ring = false): Promise<void> {
@@ -138,6 +210,7 @@ mcp.tap((m) => {
     // When the cell runs again the drawing is gone: the late steps of a trip have nothing left to draw on.
     question.then(() => {
       bump(from, 1.03)
+      plugLater(from, to, failed ? colors.error : colors.response, false, up(from).indexOf(meet) * 330)
       return travel(hops, failed ? colors.error : colors.response, true)
     }).then(() => bump(to, 1.03)).catch(() => {})
     return
@@ -146,6 +219,7 @@ mcp.tap((m) => {
   last.text('→ ' + m.from + ' -> ' + m.to + ' ' + method.slice(0, 30))
   bump(from, 1.03)
   if (meet === 'router') bump('router', 1.02)
+  plugLater(from, to, m.method === 'ping' ? colors.heartbeat : (colors[m.kind] ?? colors.request), m.method === 'ping', up(from).indexOf(meet) * 330)
   const trip = travel(hops, m.method === 'ping' ? colors.heartbeat : (colors[m.kind] ?? colors.request)).then(() => bump(to, 1.05)).catch(() => {})
   if (m.kind === 'request') (asked[key] ??= []).push(trip)
   if ((asked[key]?.length ?? 0) > 40) asked[key].shift()

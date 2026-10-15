@@ -430,6 +430,12 @@ diagram), alive. MCP is ask-and-answer, and the drawing shows both halves as a
 - a **notification** (a signal nobody answers, such as "this cell changed") is a **purple dot** that runs one way;
 - the heartbeat (a `ping` to `status` every 3 seconds, so something always happens) is a **light blue dot**.
 
+Inside the router block is its **switchboard**: every box has a jack where its line meets the router
+(and the gateway itself has one in the middle). When a message reaches the router, the gateway plugs a
+**straight wire** between the jack of the one that speaks and the jack of the one that listens: it shoots
+across in a tenth of a second behind a bright head, glows in the colour of the message and fades away
+(a heartbeat is only a thin one). A burst of messages shows as a bundle of fading lights.
+
 The drawing has a legend with the same colours. A box grows a little when it is busy. **Solid boxes**
 are `<<mcp_server>>` blocks (the tabs and services that answer); **dashed boxes** are not servers but a
 client, a channel or an endpoint: the cell scripts (`mcp.*` in cells), the WebRTC channel, the dev server's `/mcp`
