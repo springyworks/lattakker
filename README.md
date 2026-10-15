@@ -1148,6 +1148,50 @@ const part = await mcp.tool('code', 'dump', { tab: 'lab', context_tokens: 4000 }
 print(await mcp.tool('code', 'search', { query: 'every(', include: '/lab/*', max_results: 5 }))
 ```
 
+#### 8.11.4 Time, acknowledgements and deadlocks (a study, and what was built)
+
+The question: if every message says *when the initiative was taken*, can that prevent deadlocks, and can the acknowledgement of a slow
+request be informative ("wait about 5 more seconds, probably, 80%") instead of silence? This is the same problem as getting a message through
+to a far, unreliable place: you cannot know whether it arrived, whether it is being worked on, or whether the answer was lost.
+
+What was looked at, and what each is worth here:
+
+| Idea | Verdict |
+| --- | --- |
+| **Time stamps in every message.** One Unix time in ms for the initiative (`startedAt`), plus the moment each message is sent (`sentAt`) | **Built.** Cheap, and it makes every message self-describing in a log or a file. It also shows the difference between two clocks when a message comes from another page. It is *not* ordering: two machines' clocks disagree, so the order of messages still comes from `cause` (the chain), never from comparing clocks. |
+| **TCP-style acknowledgement of every message** | Not built. Every message would cost a second message, and inside one page nothing is lost in transit: the only thing that can go wrong is that the *work* takes long or never ends. |
+| **MCP's own `notifications/progress`** (a token, a rising progress value, a message) and **timeouts** ("implementations SHOULD set timeouts on every request, with a maximum") | **Built, on top of the standard**, not a rival format. |
+| **Absolute deadlines handed on** (as gRPC does) | **Built, and this is what prevents deadlocks.** `deadline` is a Unix time in ms, not "so long from now". A request made *because of* another never waits beyond the deadline of the one that caused it. Every wait is therefore bounded by the first initiative, so a ring of servers waiting for each other cannot last: it ends in an error (`-32001`) at the deadline. |
+| **Refusing a request when the way back is already waiting** (finding cycles in who waits for whom) | Not built. It looks safe but would break honest uses, for example the router asking itself in its self-check. With deadlines a cycle is harmless, and the error says who did not answer what. |
+| **Lamport or vector clocks** for ordering | Not built: one page has one clock, and across pages `cause` already gives the order. |
+| **An estimate with a probability** | **Built, carefully** (below). |
+
+**Deadlines.** A request waits at most: 60 s by default; 2 minutes for the tabs and the memory; 10 minutes for the model and the helper (they may think for
+minutes); never longer than the deadline of the message that caused it; never longer than ten minutes for any chain. The asker may choose its own
+with `params._meta['lattakker/deadlineMs']` (1 s to 10 min). A late answer becomes the error `-32001` ("`weather` did not answer `tools/call` within 2.0 s:
+the deadline passed"), and what the server brings later is thrown away. The deadline rides in every message as `_meta['lattakker/trace'].deadline`, next
+to `startedAt` and `sentAt`, so the one who receives a message can see how long it is still worth working on it.
+
+**The informative acknowledgement.** A request that has waited one second is acknowledged with an MCP `notifications/progress` sent to the asker (and
+again after 3, 7 and 15 s, then every 15 s). Its `message` is in words, and `_meta['lattakker/eta']` has the numbers:
+
+```
+weather is working on tools/call forecast: 1.0 s so far, the deadline is in 59 s. Wait about 1.6 s more: 75% of 4 similar answers
+that took this long were in by then (typical: 1.5 s). That is history, not a promise.
+```
+
+The pair `(waitMs, p)` is **not guessed**. The router keeps the times of the last 60 answers of each kind of request. Given that this one has already waited *w*, only
+the earlier answers that took longer than *w* can be compared with it; among those, `waitMs` is the smallest extra wait after which at least 80% of them had
+arrived, and `p` is the share that really had. With fewer than 5 answers in the history, or fewer than 3 comparable ones, or a request already slower than
+nearly everything seen, the estimate is `null`: it says so instead of making a number up. A client that cannot receive notifications (an outside AI over HTTP) asks
+`mcp.tool('router', 'pending')` (or `mcp.pending()` in a cell): every request that is on its way, since when (Unix ms), until when, and the estimate.
+
+**The smoke test in the router.** The router tool `exercise {seconds?, per_second?, servers?, wait?}` sends harmless, read-only requests to every server for a few
+seconds (ping, lists, counters, a tiny search), so the switchboard of the Monitor lights up, and then reports: how many were answered, how fast per server, and
+five checks of its own (nothing lost, every answer carried the moment of the initiative, all the same moment, nothing left waiting, no deadline hit). It only sends what is on
+a fixed list of read-only requests; it does not change a cell, its code or its place, does not ask the model and does not use the network. Anyone (a person in a cell with
+`await mcp.tool('router', 'exercise')`, an AI over `/mcp`) can start it; the traffic is attributed to whoever asked. `node scripts/mcp-smoke.mjs` runs it too.
+
 ### 8.12 The weather
 
 [↑ Contents](#contents)

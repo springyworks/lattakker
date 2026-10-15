@@ -15,12 +15,16 @@
  * request, a trigger or an event.
  */
 
+import { estimate, sentence, type Eta } from './eta';
+
 export type Json = unknown;
 
 export const ERR = {
   invalidParams: -32602,
   methodNotFound: -32601,
   internal: -32603,
+  /** The deadline of a request passed before the answer came (MCP: requests SHOULD have timeouts, with a maximum). */
+  timeout: -32001,
 } as const;
 
 export class McpError extends Error {
@@ -61,6 +65,12 @@ export interface Trace {
    * the answers too. It rides in every message as `_meta['lattakker/trace'].startedAt`.
    */
   startedAt: number;
+  /**
+   * The moment (Unix ms) by which the one who asks stops waiting for the answer to this message. It is absolute, not "so long from now", so it
+   * can be handed on: a request made because of another one never waits longer than the one that caused it (no wait can outlive the first
+   * initiative, so a chain of waits can never be a deadlock that lasts). The router enforces it: an answer that is late becomes an error (-32001).
+   */
+  deadline: number;
 }
 
 export interface McpServer {
@@ -112,6 +122,10 @@ export interface Traffic {
   time: number;
   /** The moment of the initiative of the chain this message belongs to: Unix time in milliseconds (see Trace). */
   startedAt: number;
+  /** The moment this message itself was sent: Unix time in milliseconds. */
+  sentAt: number;
+  /** The moment by which the asker stops waiting (see Trace). */
+  deadline: number;
   from: string;
   to: string;
   kind: 'request' | 'response' | 'error' | 'notification';
@@ -120,6 +134,59 @@ export interface Traffic {
   detail: string;
   /** How long an answer took. */
   ms?: number;
+}
+
+/** How long a request may wait for its answer, by the server asked (the model and the helper may think for minutes), and the longest any chain may live. */
+const DEFAULT_WAIT_MS = 60_000;
+const WAIT_MS: Record<string, number> = { ollama: 600_000, helper: 600_000, 'local-ai': 600_000, memory: 120_000, board: 120_000, lab: 120_000, examples: 120_000, monitor: 120_000 };
+const CHAIN_MAX_MS = 600_000;
+/** A request that has waited this long (then twice as long, and so on up to 15 s) is acknowledged with a progress notification. */
+const PROGRESS_FIRST_MS = 1000;
+const PROGRESS_MAX_GAP_MS = 15_000;
+/** The times of the latest answers per kind of request, for the estimate of how long to wait. */
+const LATENCY_KEPT = 60;
+const LATENCY_KEYS = 300;
+const DEADLINE_META = 'lattakker/deadlineMs';
+
+/** One request on its way: sent, not answered. */
+interface Flight {
+  trace: Trace;
+  from: string;
+  to: string;
+  method: string;
+  /** 'tools/call forecast': what is asked, for words. */
+  label: string;
+  /** What the latency history is kept under: the server and what is asked. */
+  key: string;
+  sentAt: number;
+  startedPerf: number;
+  acks: number;
+  timers: Array<ReturnType<typeof setTimeout>>;
+}
+
+export interface PendingRequest {
+  id: string;
+  from: string;
+  to: string;
+  what: string;
+  origin: string;
+  startedAt: number;
+  sentAt: number;
+  deadline: number;
+  elapsedMs: number;
+  remainingMs: number;
+  /** How many progress acknowledgements have been sent for it. */
+  acknowledged: number;
+  /** The estimate, when there is history (null fields: no honest guess). */
+  waitMs: number | null;
+  p: number | null;
+  basis: number;
+  typicalMs: number | null;
+}
+
+/** The estimate as it rides in a message and in the list of pending requests. */
+function etaMeta(elapsedMs: number, deadline: number, eta: Eta | null): { elapsedMs: number; deadline: number; waitMs: number | null; p: number | null; basis: number; typicalMs: number | null } {
+  return { elapsedMs, deadline, waitMs: eta?.waitMs ?? null, p: eta?.p ?? null, basis: eta?.basis ?? 0, typicalMs: eta?.typicalMs ?? null };
 }
 
 const MAX_LOG = 400;
@@ -200,7 +267,7 @@ const sane = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v
 
 /** What every message carries about its chain, in the standard place for such things (`_meta`). */
 function traceMeta(trace: Trace): Record<string, unknown> {
-  return { id: trace.id, origin: trace.origin, lineage: trace.lineage, startedAt: trace.startedAt, ...(trace.cause ? { cause: trace.cause } : {}) };
+  return { id: trace.id, origin: trace.origin, lineage: trace.lineage, startedAt: trace.startedAt, sentAt: Date.now(), deadline: trace.deadline, ...(trace.cause ? { cause: trace.cause } : {}) };
 }
 
 /** Puts the trace into the `_meta` of a message body (an object); anything else (a list, a number) is left as it is. */
@@ -241,6 +308,9 @@ export class McpRouter {
   private readonly byClient = new Map<string, Tally>();
   private readonly byMethod = new Map<string, Tally>();
   private slowest: RouterStats['slowest'] = null;
+  /** Requests that have been sent and not answered yet, and how long the latest answers of each kind took. */
+  private readonly flights = new Map<string, Flight>();
+  private readonly latency = new Map<string, number[]>();
   /** Messages per second: a ring of HISTORY_SECONDS counters, and the second the newest one belongs to. */
   private readonly buckets: number[] = new Array<number>(HISTORY_SECONDS).fill(0);
   private bucketSecond = Math.floor(performance.now() / 1000);
@@ -276,7 +346,7 @@ export class McpRouter {
    * /mcp (`router.origin('outside-ai', ['mcp-bridge'])`), a person typing. Pass the result as the last argument of request().
    */
   origin(origin: string, relays: string[] = [], startedAt: number = Date.now()): Trace {
-    return { id: '', origin: short(origin), lineage: [short(origin), ...relays.map((r) => short(r))].slice(0, MAX_LINEAGE), cause: null, startedAt: sane(startedAt) };
+    return { id: '', origin: short(origin), lineage: [short(origin), ...relays.map((r) => short(r))].slice(0, MAX_LINEAGE), cause: null, startedAt: sane(startedAt), deadline: sane(startedAt) + CHAIN_MAX_MS };
   }
 
   /** A trace that came in as `params._meta['lattakker/trace']` (from another page or an outside client), made safe to use. */
@@ -287,7 +357,7 @@ export class McpRouter {
     const t = raw as Record<string, unknown>;
     if (typeof t.origin !== 'string' || !t.origin) return undefined;
     const lineage = Array.isArray(t.lineage) ? t.lineage.filter((x): x is string => typeof x === 'string').slice(0, MAX_LINEAGE).map((x) => short(x)) : [short(t.origin)];
-    return { id: typeof t.id === 'string' ? short(t.id, 40) : '', origin: short(t.origin), lineage: lineage.length ? lineage : [short(t.origin)], cause: null, startedAt: sane(t.startedAt) };
+    return { id: typeof t.id === 'string' ? short(t.id, 40) : '', origin: short(t.origin), lineage: lineage.length ? lineage : [short(t.origin)], cause: null, startedAt: sane(t.startedAt), deadline: sane(t.deadline ?? Date.now() + CHAIN_MAX_MS) };
   }
 
   /** The server gets the arguments without the trace that rode along in `_meta` (it has the trace as its own argument). */
@@ -302,9 +372,9 @@ export class McpRouter {
     const id = `${SESSION}-${this.counter + 1}`;
     // A trace that rides in the message itself (from another page or client) says more than the one the local code passes.
     const base = own ?? via;
-    if (!base) return { id, origin: from, lineage: [from], cause: null, startedAt: Date.now() };
+    if (!base) return { id, origin: from, lineage: [from], cause: null, startedAt: Date.now(), deadline: Date.now() + CHAIN_MAX_MS };
     const lineage = base.lineage[base.lineage.length - 1] === from ? base.lineage : [...base.lineage, from].slice(-MAX_LINEAGE);
-    return { id, origin: base.origin, lineage, cause: base.id || null, startedAt: sane(base.startedAt) };
+    return { id, origin: base.origin, lineage, cause: base.id || null, startedAt: sane(base.startedAt), deadline: base.deadline };
   }
 
   /** The names of the servers that can be asked something. */
@@ -317,24 +387,38 @@ export class McpRouter {
     return this.servers.get(name)?.description ?? '';
   }
 
-  /** Asks a server something and waits for the answer. `from` says who is asking (it shows in the log and tells the server whom to notify). */
+  /**
+   * Asks a server something and waits for the answer. `from` says who is asking (it shows in the log and tells the server whom to notify).
+   * The wait has a deadline: by default the one of the server asked (60 s, or longer for the model and the helper), never later than the deadline of
+   * the message that caused this one, and the asker can set its own with params._meta['lattakker/deadlineMs']. A request that is still
+   * waiting after a second is acknowledged now and then with a `notifications/progress` that says how long it has waited, when the deadline is, and
+   * (from the times of similar answers) how much longer it is worth waiting.
+   */
   async request(from: string, to: string, method: string, params: Record<string, unknown> = {}, via?: Trace): Promise<Json> {
     const server = this.servers.get(to);
     if (!server) throw new McpError(ERR.invalidParams, `There is no MCP server "${to}". Servers: ${this.names().join(', ')}.`);
     const wire = clone(params);
     const own = this.metaTrace(wire);
+    const asked = this.askedWait(wire);
     this.stripMeta(wire, own);
     const started = performance.now();
-    const trace = this.stamp(from, via, own);
+    const base = this.stamp(from, via, own);
+    const now = Date.now();
+    // A trace that is older than its own deadline (a notification answered much later) does not shorten anything.
+    const inherited = base.deadline > now ? base.deadline : Number.POSITIVE_INFINITY;
+    const deadline = Math.min(inherited, now + (asked ?? WAIT_MS[to] ?? DEFAULT_WAIT_MS));
+    const trace: Trace = { ...base, deadline };
     const joined = this.joined.get(to);
     if (joined) joined.seen = Math.round(started);
     this.record({ from, to, kind: 'request', method, detail: brief(wire) }, trace, [...trace.lineage, 'router', to]);
+    const flight = this.openFlight(trace, from, to, method, wire, started);
     // An answer never comes back in the same breath, just like over a real connection.
     await Promise.resolve();
     try {
-      const result = clone(await server.handle(method, withMeta(wire, trace), from, trace));
+      const result = clone(await this.within(flight, () => server.handle(method, withMeta(wire, trace), from, trace)));
       const ms = round1(performance.now() - started);
       this.tally(from, to, method, ms, false);
+      this.remember(flight.key, ms);
       const answer = { ...trace, id: `${SESSION}-${this.counter + 1}`, cause: trace.id, lineage: [...trace.lineage, to].slice(-MAX_LINEAGE) };
       this.record({ from: to, to: from, kind: 'response', method, detail: brief(result), ms }, answer, [to, 'router', ...trace.lineage.slice().reverse()]);
       return withMeta(result, answer);
@@ -344,7 +428,114 @@ export class McpRouter {
       this.tally(from, to, method, ms, true);
       this.record({ from: to, to: from, kind: 'error', method, detail: `${error.code} ${error.message}`, ms }, { ...trace, id: `${SESSION}-${this.counter + 1}`, cause: trace.id, lineage: [...trace.lineage, to].slice(-MAX_LINEAGE) }, [to, 'router', ...trace.lineage.slice().reverse()]);
       throw error;
+    } finally {
+      this.closeFlight(flight);
     }
+  }
+
+  /** The wait the asker asked for, in ms (params._meta['lattakker/deadlineMs']), kept between 1 s and the longest chain. */
+  private askedWait(wire: Record<string, unknown>): number | undefined {
+    const meta = wire._meta;
+    const v = typeof meta === 'object' && meta !== null ? (meta as Record<string, unknown>)[DEADLINE_META] : undefined;
+    return typeof v === 'number' && Number.isFinite(v) ? Math.min(CHAIN_MAX_MS, Math.max(1000, Math.round(v))) : undefined;
+  }
+
+  /** Runs `work`, but stops waiting at the deadline of the flight: a late answer is an error, and what it brings is thrown away. */
+  private within<T>(flight: Flight, work: () => Promise<T> | T): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const waited = Math.round(performance.now() - flight.startedPerf);
+        reject(
+          new McpError(
+            ERR.timeout,
+            `${flight.to} did not answer ${flight.label} within ${(waited / 1000).toFixed(1)} s: the deadline passed (Unix ms ${flight.trace.deadline}). Ask for more time with params._meta["${DEADLINE_META}"] (milliseconds, at most ${CHAIN_MAX_MS}).`,
+          ),
+        );
+      }, Math.max(0, flight.trace.deadline - Date.now()));
+      flight.timers.push(timer);
+      try {
+        Promise.resolve(work()).then(
+          (value) => {
+            clearTimeout(timer);
+            resolve(value);
+          },
+          (err) => {
+            clearTimeout(timer);
+            reject(err);
+          },
+        );
+      } catch (err) {
+        clearTimeout(timer);
+        reject(err);
+      }
+    });
+  }
+
+  private openFlight(trace: Trace, from: string, to: string, method: string, wire: Record<string, unknown>, startedPerf: number): Flight {
+    const tool = method === 'tools/call' && typeof wire.name === 'string' ? wire.name : '';
+    const label = tool ? `${method} ${tool}` : method;
+    const flight: Flight = { trace, from, to, method, label, key: `${to} ${label}`, sentAt: Date.now(), startedPerf, acks: 0, timers: [] };
+    this.flights.set(trace.id, flight);
+    let gap = PROGRESS_FIRST_MS;
+    const tick = (): void => {
+      if (!this.flights.has(trace.id)) return;
+      this.acknowledge(flight);
+      gap = Math.min(PROGRESS_MAX_GAP_MS, gap * 2);
+      flight.timers.push(setTimeout(tick, gap));
+    };
+    flight.timers.push(setTimeout(tick, gap));
+    return flight;
+  }
+
+  private closeFlight(flight: Flight): void {
+    for (const t of flight.timers) clearTimeout(t);
+    flight.timers.length = 0;
+    this.flights.delete(flight.trace.id);
+  }
+
+  /** MCP's own way to say "still working": a progress notification to the asker, with words and the estimate in _meta. */
+  private acknowledge(f: Flight): void {
+    const elapsedMs = Math.round(performance.now() - f.startedPerf);
+    const remainingMs = f.trace.deadline - Date.now();
+    const eta = estimate(this.latency.get(f.key) ?? [], elapsedMs);
+    f.acks++;
+    this.notify(
+      f.to,
+      f.from,
+      'notifications/progress',
+      { progressToken: f.trace.id, progress: elapsedMs, message: sentence(f.to, f.label, elapsedMs, remainingMs, eta), _meta: { 'lattakker/eta': etaMeta(elapsedMs, f.trace.deadline, eta) } },
+      f.trace,
+    );
+  }
+
+  private remember(key: string, ms: number): void {
+    let list = this.latency.get(key);
+    if (!list) {
+      if (this.latency.size >= LATENCY_KEYS) this.latency.delete(this.latency.keys().next().value as string);
+      this.latency.set(key, (list = []));
+    }
+    list.push(ms);
+    if (list.length > LATENCY_KEPT) list.shift();
+  }
+
+  /** The requests that have been sent and not answered yet: since when, until when, and (when there is history) how much longer it is worth waiting. */
+  pending(): PendingRequest[] {
+    const now = Date.now();
+    return [...this.flights.values()].map((f) => {
+      const elapsedMs = Math.round(performance.now() - f.startedPerf);
+      return {
+        id: f.trace.id,
+        from: f.from,
+        to: f.to,
+        what: f.label,
+        origin: f.trace.origin,
+        startedAt: f.trace.startedAt,
+        sentAt: f.sentAt,
+        remainingMs: Math.max(0, f.trace.deadline - now),
+        acknowledged: f.acks,
+        ...etaMeta(elapsedMs, f.trace.deadline, estimate(this.latency.get(f.key) ?? [], elapsedMs)),
+      };
+    });
   }
 
   /** A server tells one client something. A notification has no answer. Returns its trace, for a message that follows from it. */
@@ -415,12 +606,12 @@ export class McpRouter {
     this.bucketSecond = second;
   }
 
-  private record(entry: Omit<Traffic, 'n' | 'time' | 'id' | 'origin' | 'cause' | 'hops' | 'startedAt'>, trace: Trace, hops: string[]): void {
+  private record(entry: Omit<Traffic, 'n' | 'time' | 'id' | 'origin' | 'cause' | 'hops' | 'startedAt' | 'sentAt' | 'deadline'>, trace: Trace, hops: string[]): void {
     this.count.messages++;
     if (entry.kind === 'notification') this.count.notifications++;
     this.advance(Math.floor(performance.now() / 1000));
     this.buckets[HISTORY_SECONDS - 1]++;
-    const line: Traffic = { n: ++this.counter, id: trace.id, origin: trace.origin, cause: trace.cause, hops, time: Math.round(performance.now()), startedAt: trace.startedAt, ...entry };
+    const line: Traffic = { n: ++this.counter, id: trace.id, origin: trace.origin, cause: trace.cause, hops, time: Math.round(performance.now()), startedAt: trace.startedAt, sentAt: Date.now(), deadline: trace.deadline, ...entry };
     this.log.push(line);
     if (this.log.length > MAX_LOG) this.log.splice(0, this.log.length - MAX_LOG);
     for (const tap of [...this.taps]) {

@@ -20,6 +20,8 @@ import { ERR, McpError, TRACE_META, type Json, type McpRouter, type McpServer, t
  *   tools/call ask {question}                    "what is going on?", "any errors?", "who is busiest?", "what does ai-chat do?"
  *
  *   tools/call callers                           outside AIs that called in: client, version, model, user agent, how often
+ *   tools/call pending                           requests sent and not answered yet: since when, deadline, and how much longer it is worth waiting (time, probability)
+ *   tools/call exercise {seconds?, per_second?}  the smoke test inside the router: lively read-only traffic to every server, then a report (changes nothing)
  *
  * Who did what (provenance): every message has an id, a start of its chain (origin), the parties it passed through
  * (hops) and the message that caused it (cause). Changes to cells that were made over MCP are written down too.
@@ -66,6 +68,28 @@ const TOOLS = [
     name: 'callers',
     description: 'Who has called in from outside (an AI chat over /mcp or WebMCP): the client program, its version, the model behind it, the user agent, how it came in, how many calls, when. They show in the traffic as origin outside-ai:<client>@<model>.',
     inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'pending',
+    description:
+      'The requests that were sent and are not answered yet. For each: who asked whom for what, since when (Unix ms), the deadline (Unix ms), how long it has waited, and an estimate of how much longer it is worth waiting as a pair: waitMs and p ("wait waitMs more and p of the similar answers in the history were in by then"). ' +
+      'The estimate comes from the times of earlier answers of the same kind, it is history and not a promise, and it is null when there is too little history. Slow requests also send a notifications/progress to the asker by themselves.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'exercise',
+    description:
+      'The smoke test of the router, made of traffic: for a few seconds it sends harmless READ-ONLY requests to every server (ping, lists, counters, a tiny search), as fast as you say, so the switchboard of the Monitor lights up, and then reports what it saw: answers, errors, speed per server, and checks that every answer carried the moment of the initiative. ' +
+      'It never changes a cell, its code or its place, and never calls the network or the model. Safe to call whenever you want to see the page alive.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        seconds: { type: 'number', description: 'How long (1 to 60, default 8).' },
+        per_second: { type: 'number', description: 'Requests per second (1 to 20, default 4; at most 600 in all).' },
+        servers: { type: 'string', description: "Only these servers, separated by commas (default: all), e.g. 'router,code,lab'." },
+        wait: { type: 'boolean', description: 'Wait for the report (default true). With false it starts and answers at once.' },
+      },
+    },
   },
   {
     name: 'trace',
@@ -132,6 +156,37 @@ export async function buildCatalog(router: McpRouter, as = 'router'): Promise<Ca
   return entries;
 }
 
+/** What the exercise may send: read-only requests, nothing that changes a cell, calls the network or asks the model. A server that is not listed (a tab) gets ping and the lists. */
+const SAFE: Record<string, Array<{ method: string; params?: Record<string, unknown> }>> = {
+  router: [{ method: 'ping' }, { method: 'tools/list' }, { method: 'resources/list' }, { method: 'tools/call', params: { name: 'stats', arguments: {} } }, { method: 'tools/call', params: { name: 'servers', arguments: {} } }, { method: 'tools/call', params: { name: 'recent', arguments: { n: 5 } } }, { method: 'tools/call', params: { name: 'pending', arguments: {} } }],
+  code: [{ method: 'ping' }, { method: 'tools/list' }, { method: 'tools/call', params: { name: 'overview', arguments: {} } }, { method: 'tools/call', params: { name: 'list', arguments: { budget_chars: 900 } } }, { method: 'tools/call', params: { name: 'search', arguments: { query: 'every(', include: '/lab/*', context: 0, max_results: 1, budget_chars: 900 } } }],
+  ollama: [{ method: 'ping' }, { method: 'tools/list' }],
+  weather: [{ method: 'ping' }, { method: 'tools/list' }],
+  system: [{ method: 'ping' }, { method: 'tools/list' }],
+  tabs: [{ method: 'ping' }, { method: 'tools/list' }, { method: 'tools/call', params: { name: 'list', arguments: {} } }],
+  status: [{ method: 'ping' }, { method: 'tools/list' }],
+  memory: [{ method: 'ping' }, { method: 'tools/list' }],
+  helper: [{ method: 'ping' }, { method: 'tools/list' }],
+  'local-ai': [{ method: 'ping' }, { method: 'tools/list' }],
+};
+const SAFE_FOR_A_TAB: Array<{ method: string; params?: Record<string, unknown> }> = [{ method: 'ping' }, { method: 'tools/list' }, { method: 'resources/list' }];
+
+export interface ExerciseReport {
+  ok: boolean;
+  /** When the exercise began and ended, and the moment of the initiative it ran under (Unix ms). */
+  startedAt: number;
+  endedAt: number;
+  initiative: number;
+  sent: number;
+  answered: number;
+  errors: number;
+  avgMs: number;
+  maxMs: number;
+  perServer: Record<string, { ok: number; errors: number; avgMs: number; maxMs: number }>;
+  firstErrors: string[];
+  checks: Array<{ name: string; ok: boolean; detail: string }>;
+}
+
 export class RouterServer implements McpServer {
   readonly name = 'router';
   readonly description = 'The message carrier of this page: statistics, the catalog of every server and tool, the recent traffic.';
@@ -168,6 +223,119 @@ export class RouterServer implements McpServer {
     }
   }
 
+  private running: { endsAt: number } | null = null;
+  private lastExercise: ExerciseReport | null = null;
+
+  /**
+   * The smoke test, as traffic. Read-only by construction: it only sends what SAFE lists (or, for a server it does not know, ping and the lists),
+   * from the party "exercise", inside the chain of whoever asked (so the traffic is attributed to them and carries their moment of initiative).
+   */
+  private async exercise(args: Record<string, unknown>, asked?: Trace): Promise<ExerciseReport | { started: true; endsAt: number }> {
+    if (this.running) throw new McpError(ERR.invalidParams, `An exercise is already running, until Unix ms ${this.running.endsAt}. Wait for it, or look at "pending".`);
+    const num = (v: unknown, fallback: number): number => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
+    const seconds = Math.min(60, Math.max(1, num(args.seconds, 8)));
+    const perSecond = Math.min(20, Math.max(1, Math.min(num(args.per_second, 4), Math.floor(600 / seconds))));
+    const only = typeof args.servers === 'string' && args.servers.trim() ? new Set(args.servers.split(',').map((x) => x.trim())) : null;
+    const trace = asked ?? this.router.origin('exercise');
+    const plan: Array<{ server: string; method: string; params: Record<string, unknown> }> = [];
+    for (const server of this.router.names()) {
+      if (only && !only.has(server)) continue;
+      for (const item of SAFE[server] ?? SAFE_FOR_A_TAB) plan.push({ server, method: item.method, params: item.params ?? {} });
+    }
+    if (!plan.length) throw new McpError(ERR.invalidParams, `No server to exercise. Servers: ${this.router.names().join(', ')}.`);
+    // Lively, not in file order: a shuffled round, again and again.
+    const order = (): typeof plan => plan.map((p) => ({ p, k: Math.random() })).sort((a, b) => a.k - b.k).map((x) => x.p);
+    const startedAt = Date.now();
+    const endsAt = startedAt + seconds * 1000;
+    this.running = { endsAt };
+    const run = this.runExercise(plan, order, perSecond, startedAt, endsAt, trace);
+    if (args.wait === false) {
+      void run;
+      return { started: true, endsAt };
+    }
+    return run;
+  }
+
+  private async runExercise(plan: Array<{ server: string; method: string; params: Record<string, unknown> }>, order: () => typeof plan, perSecond: number, startedAt: number, endsAt: number, trace: Trace): Promise<ExerciseReport> {
+    const per = new Map<string, { ok: number; errors: number; totalMs: number; maxMs: number }>();
+    const flights: Array<Promise<void>> = [];
+    let sent = 0;
+    let answered = 0;
+    let errors = 0;
+    let stamped = 0;
+    let sameInitiative = 0;
+    let totalMs = 0;
+    let maxMs = 0;
+    const firstErrors: string[] = [];
+    let queue = order();
+    const gap = 1000 / perSecond;
+    try {
+      while (Date.now() < endsAt) {
+        if (!queue.length) queue = order();
+        const item = queue.pop()!;
+        sent++;
+        const t0 = performance.now();
+        flights.push(
+          this.router.request('exercise', item.server, item.method, item.params, trace).then(
+            (result) => {
+              const ms = performance.now() - t0;
+              answered++;
+              totalMs += ms;
+              maxMs = Math.max(maxMs, ms);
+              const stat = per.get(item.server) ?? { ok: 0, errors: 0, totalMs: 0, maxMs: 0 };
+              stat.ok++;
+              stat.totalMs += ms;
+              stat.maxMs = Math.max(stat.maxMs, ms);
+              per.set(item.server, stat);
+              const meta = (result as { _meta?: Record<string, { startedAt?: number }> } | null)?._meta?.[TRACE_META];
+              if (typeof meta?.startedAt === 'number') {
+                stamped++;
+                if (meta.startedAt === trace.startedAt) sameInitiative++;
+              }
+            },
+            (err: unknown) => {
+              errors++;
+              const stat = per.get(item.server) ?? { ok: 0, errors: 0, totalMs: 0, maxMs: 0 };
+              stat.errors++;
+              per.set(item.server, stat);
+              if (firstErrors.length < 3) firstErrors.push(`${item.server} ${item.method}: ${err instanceof Error ? err.message : String(err)}`.slice(0, 160));
+            },
+          ),
+        );
+        // At most a few at a time: a slow server must not pile up requests.
+        if (flights.length >= 8) await Promise.race(flights.slice(-8));
+        await new Promise((r) => setTimeout(r, gap));
+      }
+      await Promise.all(flights);
+    } finally {
+      this.running = null;
+    }
+    const stillPending = this.router.pending().filter((p) => p.from === 'exercise').length;
+    const checks = [
+      { name: 'every request was answered or failed (none was lost)', ok: sent === answered + errors, detail: `${sent} sent, ${answered} answered, ${errors} failed` },
+      { name: 'every answer carried the moment of the initiative (Unix ms) in _meta', ok: answered > 0 && stamped === answered, detail: `${stamped} of ${answered}` },
+      { name: 'and it was the same moment for the whole exercise', ok: sameInitiative === stamped && stamped > 0, detail: `${sameInitiative} of ${stamped} equal ${trace.startedAt}` },
+      { name: 'nothing is left waiting', ok: stillPending === 0, detail: `${stillPending} pending` },
+      { name: 'no request ran into its deadline', ok: !firstErrors.some((e) => /deadline passed/.test(e)), detail: firstErrors.find((e) => /deadline passed/.test(e)) ?? 'none' },
+    ];
+    const report: ExerciseReport = {
+      ok: checks.every((c) => c.ok),
+      startedAt,
+      endedAt: Date.now(),
+      initiative: trace.startedAt,
+      sent,
+      answered,
+      errors,
+      avgMs: answered ? Math.round((totalMs / answered) * 10) / 10 : 0,
+      maxMs: Math.round(maxMs * 10) / 10,
+      perServer: Object.fromEntries([...per].map(([k, v]) => [k, { ok: v.ok, errors: v.errors, avgMs: v.ok ? Math.round((v.totalMs / v.ok) * 10) / 10 : 0, maxMs: Math.round(v.maxMs * 10) / 10 }])),
+      firstErrors,
+      checks,
+    };
+    this.lastExercise = report;
+    return report;
+  }
+
   private async call(name: string, args: Record<string, unknown>, from: string, trace?: Trace): Promise<Json> {
     const reply = (value: Record<string, unknown>) => ({ content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: value });
     switch (name) {
@@ -197,6 +365,10 @@ export class RouterServer implements McpServer {
         return reply({ ...askTraffic(this.router.recent(400), String(args.question ?? '')) });
       case 'callers':
         return reply({ callers: callers() });
+      case 'pending':
+        return reply({ now: Date.now(), pending: this.router.pending(), lastExercise: this.lastExercise });
+      case 'exercise':
+        return reply({ ...(await this.exercise(args, trace)) });
       case 'trace': {
         const id = String(args.id ?? '');
         const message = this.router.message(id);

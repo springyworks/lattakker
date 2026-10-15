@@ -167,6 +167,16 @@ const codeRead = await codeTool('read', { path: '/monitor/A1', from_line: 1, lin
 check('code.read gives numbered lines and where to go on', /^\s+1  /m.test(codeRead.content[0].text) && codeRead.structuredContent.next === 4);
 check('code.dump refuses a stale cursor', (await codeTool('dump', { cursor: 'deadbeef:2:3000' })).isError === true);
 
+// The smoke test inside the router: harmless read-only traffic to every server, then a report with its own checks.
+const routerCall = async (name, args) => JSON.parse((await tool('mcp_request', { server: 'router', method: 'tools/call', params: { name, arguments: args } })).result.content[0].text);
+const snapshotBefore = (await codeTool('overview', {})).structuredContent.snapshot;
+const exerciseReport = await routerCall('exercise', { seconds: 2, per_second: 6 });
+check('router.exercise sends read-only traffic and all its own checks pass', exerciseReport.ok === true && exerciseReport.sent >= 6 && exerciseReport.errors === 0, `${exerciseReport.sent} sent, ${exerciseReport.answered} answered, ${exerciseReport.errors} failed`);
+check('the exercise ran under one moment of initiative', exerciseReport.checks.some((c) => /same moment/.test(c.name) && c.ok));
+const pendingList = await routerCall('pending', {});
+check('router.pending lists what is waiting, with Unix ms times', typeof pendingList.now === 'number' && Array.isArray(pendingList.pending) && pendingList.pending.every((p) => p.deadline > p.sentAt && p.sentAt >= p.startedAt));
+check('the exercise changed no code (the fingerprint of all cells is the same before and after)', (await codeTool('overview', {})).structuredContent.snapshot === snapshotBefore, snapshotBefore);
+
 // Bad input stays polite.
 check('bad address gives ok:false, not a crash', (await tool('get_cell', { address: 'not-a-cell' })).ok === false);
 const unknown = await rpc('tools/call', { name: 'no_such_tool', arguments: {} });

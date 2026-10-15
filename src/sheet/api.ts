@@ -890,6 +890,8 @@ export function buildApi(
     ask: (question: string) => askTraffic(router.recent(400), String(question)),
     /** Outside AIs that called in: client, version, model, user agent, how they came in, how many calls. */
     callers: () => outsideCallers(),
+    /** The requests that were sent and are not answered yet: since when, the deadline (Unix ms) and how much longer it is worth waiting ({ waitMs, p } from the history of similar answers). */
+    pending: () => router.pending(),
     /** Start the router's counters again from zero. */
     resetStats: (): void => {
       ctx.guard();

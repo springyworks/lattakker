@@ -164,6 +164,9 @@ interface McpMessage {
   time: number;
   /** The moment of the initiative that started the chain this message belongs to: Unix time in milliseconds (Date.now()); the same for every message of a chain, answers included. */
   startedAt: number;
+  /** The moment this message was sent (Unix ms), and the moment by which the asker stops waiting for the answer (Unix ms). */
+  sentAt: number;
+  deadline: number;
   /** Who sent it: a cell like 'board:A15', a tab like 'lab', or 'ai'. */
   from: string;
   to: string;
@@ -218,6 +221,29 @@ interface McpCaller {
   calls: number;
   first: number;
   last: number;
+}
+
+/** A request that was sent and has no answer yet (mcp.pending()). */
+interface McpPending {
+  id: string;
+  from: string;
+  to: string;
+  /** What is asked: 'tools/call forecast'. */
+  what: string;
+  origin: string;
+  /** Unix ms: the initiative, this request's sending, and the deadline after which it is an error (-32001). */
+  startedAt: number;
+  sentAt: number;
+  deadline: number;
+  elapsedMs: number;
+  remainingMs: number;
+  /** How many "still working" progress notifications it has had. */
+  acknowledged: number;
+  /** How much longer it is worth waiting: wait waitMs and p (0 to 1) of the similar earlier answers were in by then. History, not a promise; null when there is too little of it. */
+  waitMs: number | null;
+  p: number | null;
+  basis: number;
+  typicalMs: number | null;
 }
 
 /** What mcp.analyze() found. */
@@ -327,6 +353,8 @@ interface Mcp {
   stats(): RouterStats;
   /** Start the router's counters again from zero. */
   resetStats(): void;
+  /** The requests sent and not answered yet, with their deadline and an estimate of how much longer to wait (see McpPending). */
+  pending(): McpPending[];
   /** Outside AIs that called in (client, version, model, user agent, how they came in, how many calls), newest first. The same as the MCP tool mcp.tool('router', 'callers'). */
   callers(): McpCaller[];
   /**
