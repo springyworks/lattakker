@@ -953,7 +953,7 @@ one, and they all sit on the same router:
 | `board`, `lab`, `examples` | the cells of a tab | `list_cells`, `get_cell`, `run_cell`, `set_code`, `click`, `flash`, `signal` |
 | `router` | the router itself | `stats`, `catalog`, `servers`, `recent`, `packets`, `analyze`, `ask`, `callers`, `reset_stats`, `trace`, `history`, `change`, `endpoints`, `self_check` |
 | `weather` | the weather ([8.12](#812-the-weather)) | `now`, `forecast`, `find` |
-| `ollama` | the model on this computer ([8.13](#813-the-model-on-this-computer-ollama)) | `status`, `models`, `ask` |
+| `ollama` | the model on this computer ([8.13](#813-the-model-on-this-computer-ollama)) | `status`, `ping`, `warm`, `models`, `ask` |
 | `memory` | the helper's notes and little database | `remember`, `recall`, `db_put` ... |
 | `status` | what is going on right now | `jobs` |
 | `helper`, `local-ai` | the built-in AI helper and its second brain | `ask`, `consult` ... |
@@ -1149,7 +1149,7 @@ model loaded: `sudo sh scripts/ollama-persistent.sh` (it writes a systemd drop-i
 model such as `qwen3.6` answers over `/v1` with its thinking in a separate `reasoning` field, so
 give it a generous `max_tokens`. LM Studio and other servers with the OpenAI-style door work
 for `ask` and `chat`; `status` then says it is not Ollama itself. Over MCP: the
-server `ollama` (`status`, `models`, `ask`; outside AIs may only `ask` when the
+server `ollama` (`status`, `ping`, `warm`, `models`, `ask`; outside AIs may only `ask` when the
 person allowed outside questions). Try the Lab's **J41**.
 
 ### 8.14 Input from the person: the input global

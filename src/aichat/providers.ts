@@ -229,6 +229,13 @@ export class OpenAiCompatProvider implements ModelProvider {
 
   private async send(job: JobHandle, system: string, messages: ChatMsg[], tools: ToolDecl[], signal: AbortSignal): Promise<ModelReply> {
     const native = await this.isOllama();
+    // A different num_ctx than the one the model was loaded with makes Ollama throw the model out and load it again (minutes).
+    // So when it is in memory, ask for the size it has; our own setting only counts for a model that is not loaded yet.
+    let context = this.context;
+    if (native) {
+      const inMemory = await this.ps();
+      if (inMemory.loaded && inMemory.window) context = inMemory.window;
+    }
     const wire: Array<Record<string, unknown>> = [{ role: 'system', content: system }];
     for (const m of messages) {
       if (m.role === 'user') wire.push({ role: 'user', content: m.text ?? '' });
@@ -250,11 +257,11 @@ export class OpenAiCompatProvider implements ModelProvider {
     let body: Record<string, unknown>;
     if (native) {
       // Ollama's own door: the memory (num_ctx) is ours to choose here, the OpenAI-style door always uses the server's default.
-      body = { model: this.model, messages: wire, stream: true, options: { num_ctx: this.context, temperature: 0.4, num_predict: MAX_OUTPUT_TOKENS } };
+      body = { model: this.model, messages: wire, stream: true, options: { num_ctx: context, temperature: 0.4, num_predict: MAX_OUTPUT_TOKENS } };
       // A child should not wait while a model thinks out loud.
       if (this.thinkingOff) body.think = false;
       if (withTools) body.tools = declared;
-      ammo.setWindow(this.context);
+      ammo.setWindow(context);
     } else {
       body = { model: this.model, messages: wire, temperature: 0.4, stream: true, max_tokens: MAX_OUTPUT_TOKENS };
       // A child should not wait while a model thinks out loud; servers that do not know the setting ignore it.

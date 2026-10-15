@@ -9,7 +9,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 const PROTOCOL_VERSION = '2025-06-18';
 const PAGE_TTL_MS = 6000;
-const CALL_TIMEOUT_MS = 30000;
+const CALL_TIMEOUT_MS = 125000; // a question to the local model may take two minutes (it has its own limit)
 const MAX_BODY = 1_000_000;
 const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
 const NO_PAGE =
