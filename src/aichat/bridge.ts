@@ -22,6 +22,10 @@ export interface AiChatApi {
   openSettings(): void;
   /** True while the side chat or the little pop-up is open or a question is being answered. */
   isBusy(): boolean;
+  /** Is the side chat open? */
+  isSideOpen(): boolean;
+  /** Open the side chat (without putting the cursor in it). */
+  openSide(): void;
 }
 
 let api: AiChatApi | null = null;
@@ -50,5 +54,11 @@ export const aiBridge = {
   },
   isBusy(): boolean {
     return api?.isBusy() ?? false;
+  },
+  get sideOpen(): boolean {
+    return api?.isSideOpen() ?? false;
+  },
+  openSide(): void {
+    api?.openSide();
   },
 };

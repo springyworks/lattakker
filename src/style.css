@@ -907,6 +907,23 @@ body:not(.tab-board) #dock {
   opacity: 0.55;
   cursor: progress;
 }
+/* The link to what I see: the choices side by side, the buttons in a row, a line apart from the rest of the window. */
+.share-viewlink {
+  padding-bottom: 10px;
+  border-bottom: 1px solid #d3d8de;
+}
+.share-choices-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  margin-bottom: 6px;
+}
+.share-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
 .share-toasts {
   position: fixed;
   left: 50%;

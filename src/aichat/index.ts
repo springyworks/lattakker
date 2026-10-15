@@ -140,6 +140,8 @@ export function installAiChat(deps: { surface: Surface; strip: TabStrip; say: (t
     toggleSide: () => ui.toggleSide(),
     openSettings: () => ui.showSettings(true),
     isBusy: () => convo.busy,
+    isSideOpen: () => ui.sideOpen,
+    openSide: () => ui.openSide(false),
   });
 
   // Alt+I from anywhere (also inside an editor), or Ctrl+I outside an editor, opens the side chat; Alt+Shift+I opens the little one at the cell.

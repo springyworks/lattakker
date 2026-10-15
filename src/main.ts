@@ -1,4 +1,6 @@
 import { watchCells } from './stallWatch';
+import { parseLink } from './deeplink';
+import { applyViewLink, wantsTheView } from './viewLink';
 import '@maxgraph/core/css/common.css';
 import './style.css';
 import { Sheet } from './sheet/Sheet';
@@ -273,8 +275,25 @@ tabs.select(startTab);
 showHere();
 
 // The first thing on the game board: zoomed in on the flag, waiting. A click glides out to the view where the game is played.
-const splash = startTab === 'board' ? new Splash(sheet, { col: 7, row: 9 }, () => gameViewFor(sheet, smallScreen), () => hud.say('Your move, General! Pick a red piece, then a green dot.', 'info')) : null;
+// A link to a view (see deeplink.ts) says where to look: then the splash that zooms in on the flag stays away.
+const viewLink = parseLink(location.search, location.hash);
+const splash = startTab === 'board' && !wantsTheView(viewLink) ? new Splash(sheet, { col: 7, row: 9 }, () => gameViewFor(sheet, smallScreen), () => hud.say('Your move, General! Pick a red piece, then a green dot.', 'info')) : null;
 tabs.onChange(() => void splash?.dismiss(false));
+// Once the page has settled, put the link's view on the screen: the AI chat, code or output, the place, the pointed-at cell.
+if (wantsTheView(viewLink)) {
+  window.setTimeout(() => {
+    const missed = applyViewLink(viewLink, {
+      showMode: () => {
+        if (startTab === 'board') {
+          if (sheet.mode === 'run') toggleMode();
+        } else {
+          [...document.querySelectorAll('button')].find((x) => x.textContent === 'Show code' && x.offsetParent !== null)?.click();
+        }
+      },
+    });
+    if (missed.length) hud.say(`The link wanted ${missed.join(' and ')}.`, 'info');
+  }, 900);
+}
 
 // Cell links and the ◀ ▶ buttons: go to a cell (zooming in), and back and forward through the places visited.
 nav.setTeller((text) => hud.say(text, 'bad'));

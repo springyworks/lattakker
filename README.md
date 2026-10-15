@@ -376,7 +376,18 @@ only a thin adapter where a browser needs it (the editor, the text mirror).
 
 [↑ Contents](#contents)
 
-A learner and a tutor (or two friends) can work on the same cells from two
+**A link to what you see.** At the top of the Share window is **🔗 A link to what I see**: the address of the public page
+(`https://springyworks.github.io/lattakker/`) that opens exactly where you are: the same tab, the same zoom and place, the cell you point at,
+code or output, and the AI chat open at the side if it is open now. Tick or untick the three choices (zoom and place, the cell, the AI chat), then
+**📋 Copy the link**, or **📤 Share…** where the device has a share sheet. **↗ Try it here** opens the same view on this computer to see what your friend will see.
+The link looks like `https://springyworks.github.io/lattakker/?cell=/lab/A41&v=1.25,640,900&ai=1&mode=view#lab`:
+`#lab` is the tab (as always), `cell=` the cell, `v=` the zoom and then the top left corner of the window in the sheet's own units (so it means the
+same at any zoom), `ai=1` the chat, `mode=view` the code. **Only the place is in the link, nobody's cells**: those stay in the browser of whoever wrote them, so a
+friend sees the same place on their own page (the examples, the Lab and the Monitor are the same for everybody; a cell you wrote yourself is not). Everything a link says is
+checked before it is used (`src/deeplink.ts`): a bad value is left out and never breaks the page. A link with a place or a cell skips the splash that
+zooms in on the flag.
+
+**Two computers working on the same cells.** A learner and a tutor (or two friends) can work on the same cells from two
 computers. Click **🤝 Share** in the strip:
 
 1. The person who shares ("I want to share my sheets") types a name and clicks

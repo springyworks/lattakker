@@ -3,6 +3,8 @@ import { ShareSession, type SessionHooks } from '../share/session';
 import { workspace } from '../workspace';
 import type { TabStrip } from './TabStrip';
 import { pauseSaving } from '../storage';
+import { buildLink, type ViewLink } from '../deeplink';
+import { currentViewLink } from '../viewLink';
 
 /**
  * The 🤝 Share window: the one place where text has to be typed and pasted, so it is plain HTML. It walks a
@@ -30,6 +32,7 @@ export class ShareDialog {
   private name = 'Friend';
   private allowEdits = false;
   private useStun = false;
+  private viewOptions = { place: true, cell: true, ai: true };
 
   constructor(private readonly strip: TabStrip) {
     document.body.append(this.dialog, this.toasts);
@@ -146,12 +149,76 @@ export class ShareDialog {
     d.append(el('div', { className: 'share-head' }, el('h2', { textContent: '🤝 Work together' }), close));
     if (this.busy) d.append(el('p', { className: 'share-busy', textContent: this.busy }));
     if (this.error) d.append(el('p', { className: 'share-error', textContent: '⚠ ' + this.error }));
+    d.append(this.viewLinkBlock());
 
     const live = this.session && this.session.info.open && this.session.info.peerName;
     if (live) return this.renderConnected(this.session!);
     if (this.step === 'host') return this.renderHost();
     if (this.step === 'guest') return this.renderGuest();
     this.renderStart();
+  }
+
+  /**
+   * "A link to what I see": the public page, opened on the same tab, at the same place, with the same cell pointed at and the AI chat open if it is.
+   * Only the place travels. A friend sees their own cells (the examples, the Lab and the Monitor are the same for everybody).
+   */
+  private viewLinkBlock(): HTMLElement {
+    const now = currentViewLink();
+    const link = (base?: string): string => {
+      const l: ViewLink = { tab: now.tab };
+      if (this.viewOptions.place) {
+        l.view = now.view;
+        l.mode = now.mode;
+      }
+      if (this.viewOptions.cell) l.cell = now.cell;
+      if (this.viewOptions.ai) l.ai = now.ai;
+      return base ? buildLink(l, base) : buildLink(l);
+    };
+    const choice = (label: string, key: keyof typeof this.viewOptions, show: boolean): HTMLElement | null => {
+      if (!show) return null;
+      const box = el('input', { type: 'checkbox', checked: this.viewOptions[key] });
+      box.addEventListener('change', () => {
+        this.viewOptions[key] = box.checked;
+        refresh();
+      });
+      return el('label', { className: 'share-check' }, box, el('span', {}, ' ' + label));
+    };
+    const area = el('textarea', { readOnly: true, rows: 3, className: 'share-code' });
+    area.addEventListener('focus', () => area.select());
+    const says = el('p', { className: 'share-note' });
+    const copy = el('button', { type: 'button', className: 'share-btn', textContent: '📋 Copy the link' });
+    copy.addEventListener('click', () => {
+      void navigator.clipboard?.writeText(area.value).then(() => (copy.textContent = 'Copied ✓'));
+      area.select();
+    });
+    const tryIt = el('button', { type: 'button', className: 'share-btn', textContent: '↗ Try it here', title: 'Opens the same view on this computer, in a new tab, to see what your friend will see' });
+    tryIt.addEventListener('click', () => window.open(link(location.origin + location.pathname), '_blank', 'noopener'));
+    const buttons = el('div', { className: 'share-row' }, copy, tryIt);
+    if (typeof navigator.share === 'function') {
+      const native = el('button', { type: 'button', className: 'share-btn', textContent: '📤 Share…' });
+      native.addEventListener('click', () => void navigator.share({ title: 'Lattakker', url: area.value }).catch(() => {}));
+      buttons.append(native);
+    }
+    const refresh = (): void => {
+      area.value = link();
+      copy.textContent = '📋 Copy the link';
+      const parts = [`the ${now.tab === 'board' ? 'game board' : now.tab} tab`];
+      if (this.viewOptions.place && now.view) parts.push(`zoom ${Math.round(now.view.scale * 100)}% at this place${now.mode === 'view' ? ', showing the code' : ''}`);
+      if (this.viewOptions.cell && now.cell) parts.push(`the cell ${now.cell}`);
+      if (this.viewOptions.ai && now.ai) parts.push('the AI chat open');
+      says.textContent = `It opens ${parts.join(', ')}.`;
+    };
+    refresh();
+    return el(
+      'div',
+      { className: 'share-block share-viewlink' },
+      el('div', { className: 'share-label', textContent: '🔗 A link to what I see' }),
+      el('div', { className: 'share-choices-inline' }, ...[choice('this zoom and place', 'place', !!now.view), choice('the cell I point at', 'cell', !!now.cell), choice('the AI chat, as it is open now', 'ai', !!now.ai)].filter((x): x is HTMLElement => x !== null)),
+      area,
+      buttons,
+      says,
+      this.note('Only the place is in the link, nobody\'s cells: those stay in the browser of whoever wrote them. A friend sees the same tab, the same place, the same cell (the examples, the Lab and the Monitor are the same for everybody). Everything the link says is checked before it is used.'),
+    );
   }
 
   private note(...kids: Array<Node | string>): HTMLElement {
