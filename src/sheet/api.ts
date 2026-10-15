@@ -12,6 +12,7 @@ import { makePlot, type PlotOptions } from './plot';
 import { SvgScene, type SceneHost } from './svgScene';
 import { svgAsset, svgAssetNames } from './svgAssets';
 import { animAssetNames, loadClip, pickClip, type ClipHost } from './anim';
+import { callers as outsideCallers } from '../ai/entry';
 import { buildCatalog } from '../mcp/routerServer';
 import { analyze as analyzeTraffic, ask as askTraffic, packets as trafficPackets } from '../mcp/analyze';
 import { findPlaces, forecast as weatherForecast, summary as weatherSummary, weatherNow, type PlaceInput } from '../services/weather';
@@ -887,6 +888,8 @@ export function buildApi(
     analyze: (filter = '') => analyzeTraffic(router.recent(400), String(filter)),
     /** Ask the router about its traffic in plain words: mcp.ask('any errors?'). */
     ask: (question: string) => askTraffic(router.recent(400), String(question)),
+    /** Outside AIs that called in: client, version, model, user agent, how they came in, how many calls. */
+    callers: () => outsideCallers(),
     /** Start the router's counters again from zero. */
     resetStats: (): void => {
       ctx.guard();

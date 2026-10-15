@@ -198,6 +198,24 @@ interface McpPacket {
   cause: string | null;
 }
 
+/** An outside AI that called in, as far as the page knows. Its messages have the origin outside-ai:<client>@<model>. */
+interface McpCaller {
+  origin: string;
+  /** The program (clientInfo.name, X-MCP-Client, or the HTTP user agent). */
+  client?: string;
+  version?: string;
+  /** The AI model behind it, when it said (X-MCP-Model, _meta.model, clientInfo.model, or the introduce tool). */
+  model?: string;
+  agent?: string;
+  protocol?: string;
+  note?: string;
+  /** How it came in: 'mcp-bridge' (the dev server's /mcp) or 'webmcp'. */
+  via: string;
+  calls: number;
+  first: number;
+  last: number;
+}
+
 /** What mcp.analyze() found. */
 interface McpAnalysis {
   filter: string;
@@ -303,6 +321,8 @@ interface Mcp {
   stats(): RouterStats;
   /** Start the router's counters again from zero. */
   resetStats(): void;
+  /** Outside AIs that called in (client, version, model, user agent, how they came in, how many calls), newest first. The same as the MCP tool mcp.tool('router', 'callers'). */
+  callers(): McpCaller[];
   /**
    * The traffic as a packet list, a little like Wireshark: each message with its type (what kind of traffic it is), who asked whom, the tool.
    * A display filter picks messages: type==tool && ms>20   from~ai   kind==error   asked==weather and !heartbeat   origin~lab

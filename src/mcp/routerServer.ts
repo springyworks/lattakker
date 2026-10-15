@@ -1,3 +1,4 @@
+import { callers } from '../ai/entry';
 import { analyze, ask as askTraffic, FILTER_HELP, FilterError, packets as pickPackets } from './analyze';
 import { ERR, McpError, TRACE_META, type Json, type McpRouter, type McpServer, type Trace } from './router';
 
@@ -17,6 +18,8 @@ import { ERR, McpError, TRACE_META, type Json, type McpRouter, type McpServer, t
  *   tools/call packets {filter?, n?}             the messages as a packet list: type (kind of traffic), who asked whom, what
  *   tools/call analyze {filter?}                 count what a filter picks: kinds of traffic, who talks to whom, slowest, errors, in words
  *   tools/call ask {question}                    "what is going on?", "any errors?", "who is busiest?", "what does ai-chat do?"
+ *
+ *   tools/call callers                           outside AIs that called in: client, version, model, user agent, how often
  *
  * Who did what (provenance): every message has an id, a start of its chain (origin), the parties it passed through
  * (hops) and the message that caused it (cause). Changes to cells that were made over MCP are written down too.
@@ -58,6 +61,11 @@ const TOOLS = [
     name: 'ask',
     description: 'Ask the router about its own traffic in plain words: "what is going on?", "any errors?", "who is busiest?", "what is slow?", "what does ai-chat do?", "how many messages?", "what was the last thing?". It is a keyword matcher over the real log, not a model: an answer says which filter it used, so you can run it again. A question it does not know gets the list of what it knows.',
     inputSchema: { type: 'object', properties: { question: { type: 'string' } }, required: ['question'] },
+  },
+  {
+    name: 'callers',
+    description: 'Who has called in from outside (an AI chat over /mcp or WebMCP): the client program, its version, the model behind it, the user agent, how it came in, how many calls, when. They show in the traffic as origin outside-ai:<client>@<model>.',
+    inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'trace',
@@ -187,6 +195,8 @@ export class RouterServer implements McpServer {
         return reply({ ...this.filtered(() => analyze(this.router.recent(400), typeof args.filter === 'string' ? args.filter : '')) });
       case 'ask':
         return reply({ ...askTraffic(this.router.recent(400), String(args.question ?? '')) });
+      case 'callers':
+        return reply({ callers: callers() });
       case 'trace': {
         const id = String(args.id ?? '');
         const message = this.router.message(id);

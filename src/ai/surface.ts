@@ -9,7 +9,7 @@ import { BOARD_COLS, BOARD_ROWS, isLake, rankGlyph, type Piece } from '../game/m
 import { installMcpBridge } from './bridge';
 import { workspace, type WorkspaceTab } from '../workspace';
 import { McpError, router } from '../mcp/router';
-import { outsideTrace, participant, throughChannel } from './entry';
+import { callers, currentCaller, outsideTrace, participant, throughChannel } from './entry';
 import { README_URL, isOriented, markOriented, orientation, readReadme } from './orientation';
 import { docUrls } from '../aichat/docs';
 
@@ -112,7 +112,7 @@ CELL CODE (TypeScript, async allowed, re-runs when things it reads change)
   on('I18', 'size' | 'code' | 'click', fn)  on('sheet', 'rows' | 'mode', fn)   events; also cell.cols/rows, at(x).code, sheet.rows/mode are reactive when read at top level
   memory (notebook that survives re-runs)  run.reason ('edit'|'moved'|'update')  run.count
   mcp.catalog() / mcp.tools(server) / mcp.stats() / mcp.recent(n)   what the MCP ecosystem offers, and the router's counters (perSecond is ready for plot)
-  mcp.packets(filter, n) / mcp.analyze(filter) / mcp.ask('any errors?')   the traffic by type with a display filter, counted, and answered in words
+  mcp.packets(filter, n) / mcp.analyze(filter) / mcp.ask('any errors?') / mcp.callers()   the traffic by type with a display filter, counted, and answered in words
   await weather.now('Amsterdam') / weather.forecast(place, days) / weather.find(name)   weather from open-meteo.com (also the MCP server 'weather')
   await ollama.status() (never throws, says what is missing) / ollama.ask(prompt) / ollama.models()   the model on this computer (also the MCP server 'ollama')
   await input.ask(q) / input.confirm(q) / input.choose(q, options); input.slider(label,{min,max,value},fn) .number .text .checkbox .select .button; input.onKey((key) => ...)
@@ -864,8 +864,18 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
         if (summary.length < 20) return fail('Say in a sentence what you learned from the README (at least 20 characters). If you have not read it, call read_readme.');
         const who = participant();
         if (who) markOriented(who);
-        router.notify(who ?? 'ai', 'router', 'ai/readme-confirmed', { summary: summary.slice(0, 200) }, outsideTrace());
+        router.notify('ai', 'router', 'ai/readme-confirmed', { summary: summary.slice(0, 200) }, outsideTrace());
         return ok({ welcome: 'Thank you. Your calls go through now.', summary: summary.slice(0, 200) });
+      },
+    },
+    {
+      name: 'introduce',
+      description: 'Say who you are, so the page can show it in the router traffic and the history of changes: your client program, its version, the AI model behind you, and a note. Optional but welcome: the more the page knows, the better it can help you and the person watching. You can also say it when you connect: clientInfo.name/version (and clientInfo.model or _meta.model) in initialize, or the HTTP headers X-MCP-Client and X-MCP-Model. Your messages then show as origin outside-ai:<client>@<model>. Returns what the page knows about you.',
+      inputSchema: obj({ client: str('The program you run in, e.g. claude-code, copilot-chat, my-script'), model: str('The model behind you, e.g. claude-opus-4, gpt-5'), version: str('Version of the client'), note: str('One line about what you are here to do') }),
+      readOnly: true,
+      run: () => {
+        const me = currentCaller();
+        return ok({ you: me, origin: me?.origin ?? 'console-or-webmcp', everyoneSeen: callers().map((c) => ({ origin: c.origin, calls: c.calls })) });
       },
     },
     {
@@ -948,7 +958,7 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
     return 'board';
   };
   // First contact: an AI that came in from outside (the bridge, WebMCP) reads the README before its first call is carried out.
-  const OPEN = new Set(['read_readme', 'confirm_readme']);
+  const OPEN = new Set(['read_readme', 'confirm_readme', 'introduce']);
   for (const t of tools) {
     const run = t.run.bind(t);
     t.run = (args) => {

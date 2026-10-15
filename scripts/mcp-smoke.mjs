@@ -4,6 +4,7 @@ const base = process.argv[2] ?? 'http://localhost:5178';
 const SCRATCH = process.env.SCRATCH ?? 'Z43';
 let nextId = 1;
 let failures = 0;
+let session = null;
 
 const check = (label, ok, detail = '') => {
   if (!ok) failures++;
@@ -13,9 +14,10 @@ const check = (label, ok, detail = '') => {
 async function rpc(method, params, headers = {}) {
   const res = await fetch(`${base}/mcp`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...headers },
+    headers: { 'content-type': 'application/json', ...(session ? { 'mcp-session-id': session } : {}), ...headers },
     body: JSON.stringify({ jsonrpc: '2.0', id: nextId++, method, params }),
   });
+  if (method === 'initialize') session = res.headers.get('mcp-session-id');
   return { status: res.status, body: res.status === 202 ? null : await res.json() };
 }
 
@@ -25,8 +27,9 @@ async function tool(name, args = {}) {
   return JSON.parse(body.result.content[0].text);
 }
 
-const init = await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'smoke', version: '0' } });
+const init = await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'smoke', version: '0.1', model: 'smoke-model' } });
 check('initialize answers with serverInfo', init.body.result?.serverInfo?.name === 'lattakker-sheet');
+check('initialize hands out a session id', typeof session === 'string' && session.length > 8, session ?? '');
 const note = await fetch(`${base}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) });
 check('notification gets 202', note.status === 202);
 
@@ -39,9 +42,9 @@ if (names.length === 0) {
 }
 
 // First contact: a new participant is told to read the README before its first call is carried out (the page remembers who has).
-const first = await tool('get_state');
-if (first.orientation) {
-  check('a first call is answered with the README and the rules', typeof first.read_first === 'string' && first.read_first.includes('README.md') && !!first.rules, first.read_first);
+const firstCall = await tool('get_state');
+if (firstCall.orientation) {
+  check('a first call is answered with the README and the rules', typeof firstCall.read_first === 'string' && firstCall.read_first.includes('README.md') && !!firstCall.rules, firstCall.read_first);
   const readme = await tool('read_readme');
   check('read_readme fetches the README and lifts the gate', readme.ok === true && readme.parts >= 1 && readme.text.length > 1000, `${readme.source}, part ${readme.part} of ${readme.parts}`);
 } else {
@@ -109,6 +112,21 @@ if (first) {
 }
 check('new_game puts the board back', (await tool('new_game')).ok === true);
 check('say_to_player ok', (await tool('say_to_player', { text: 'Hi from the smoke test.' })).ok === true);
+
+// Who is calling: what the client said at initialize is what the page knows, and shows as the origin of the traffic.
+const me = await tool('introduce', { note: 'smoke test' });
+check('introduce tells the page who calls (client, version, model)', me.ok === true && me.you?.client === 'smoke' && me.you?.version === '0.1' && me.you?.model === 'smoke-model', JSON.stringify(me.you ?? me).slice(0, 120));
+check('the origin of its messages is outside-ai:<client>@<model>', me.origin === 'outside-ai:smoke@smoke-model', me.origin);
+const viaRouter = await tool('mcp_request', { server: 'router', method: 'tools/call', params: { name: 'callers', arguments: {} } });
+const seenCallers = JSON.parse(viaRouter.result?.content?.[0]?.text ?? '{}').callers ?? [];
+check('router tool callers lists it', seenCallers.some((c) => c.origin === 'outside-ai:smoke@smoke-model' && c.calls > 3), `${seenCallers.length} callers`);
+const hdr = await fetch(`${base}/mcp`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', 'x-mcp-client': 'header-client', 'x-mcp-model': 'header-model' },
+  body: JSON.stringify({ jsonrpc: '2.0', id: nextId++, method: 'tools/call', params: { name: 'introduce', arguments: {} } }),
+});
+const hdrBody = JSON.parse((await hdr.json()).result?.content?.[0]?.text ?? '{}');
+check('headers X-MCP-Client and X-MCP-Model are taken over', hdrBody.origin === 'outside-ai:header-client@header-model', hdrBody.origin);
 
 // Bad input stays polite.
 check('bad address gives ok:false, not a crash', (await tool('get_cell', { address: 'not-a-cell' })).ok === false);

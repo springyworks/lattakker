@@ -76,16 +76,19 @@ export function toPackets(log: readonly Traffic[]): Packet[] {
   };
   return log.map((t) => {
     const answer = t.kind === 'response' || t.kind === 'error';
+    // The page's "ai" is whichever outside AI started the chain: name it (outside-ai:<client>@<model>).
+    const outside = t.origin.startsWith('outside-ai') ? t.origin : '';
+    const who = (x: string): string => (outside && x === 'ai' ? outside : x);
     const tool = toolOf(t);
     return {
       n: t.n,
       id: t.id,
       time: t.time,
       origin: t.origin,
-      from: t.from,
-      to: t.to,
-      asker: answer ? t.to : t.from,
-      asked: answer ? t.from : t.to,
+      from: who(t.from),
+      to: who(t.to),
+      asker: who(answer ? t.to : t.from),
+      asked: who(answer ? t.from : t.to),
       kind: t.kind,
       method: t.method,
       type: typeOf(t.method, tool),
@@ -376,11 +379,15 @@ export function ask(log: readonly Traffic[], question: string): Answer {
 
   // A name from the log in the question: "what does lab:A16 do", "talk to weather".
   const names = new Set<string>();
+  const callerNames = new Set<string>();
   for (const p of all) {
     names.add(p.from);
     names.add(p.to);
+    // An outside AI: outside-ai:claude-code@gpt-5 can be asked about as "claude-code" or "gpt-5".
+    const m = /^outside-ai:([^@]+)(?:@(.+))?$/.exec(p.origin);
+    if (m) for (const part of [m[1], m[2]]) if (part) callerNames.add(part);
   }
-  const named = [...names].filter((n) => n.length > 1 && q.includes(n.toLowerCase())).sort((a, b) => b.length - a.length)[0];
+  const named = [...names, ...callerNames].filter((n) => n.length > 1 && q.includes(n.toLowerCase())).sort((a, b) => b.length - a.length)[0];
 
   if (has(/\b(error|errors|wrong|fail|failed|broke|broken|problem|problems|bad)\b/)) {
     const filter = named ? `kind==error && (asker~${quote(named)} || asked~${quote(named)})` : 'kind==error';
@@ -397,10 +404,10 @@ export function ask(log: readonly Traffic[], question: string): Answer {
     return reply('', a.talkers.length ? `Busiest parties: ${a.talkers.slice(0, 5).map((t) => `${t.party} (asked ${t.asked}, answered ${t.answered})`).join('; ')}. Most talk between: ${a.conversations[0]?.asker} → ${a.conversations[0]?.asked} (${a.conversations[0]?.messages} messages).` : 'Nobody has talked yet.', true, 0);
   }
   if (named) {
-    const filter = `from==${quote(named)} || to==${quote(named)}`;
+    const filter = callerNames.has(named) ? `origin~${quote(named)}` : `from==${quote(named)} || to==${quote(named)}`;
     const a = analyze(log, filter);
     const kinds = a.byType.slice(0, 3).map((t) => `${t.type} ${t.share}%`).join(', ');
-    return reply(filter, a.matched ? `${named} is in ${a.matched} messages. Mostly: ${kinds}. ${a.conversations[0] ? `Its main partner: ${a.conversations[0].asker === named ? a.conversations[0].asked : a.conversations[0].asker}.` : ''} ${a.errors.length ? `${a.errors.length} error(s).` : 'No errors.'}` : `${named} is not in the last ${all.length} messages.`);
+    return reply(filter, a.matched ? `${named} is in ${a.matched} messages. Mostly: ${kinds}. ${a.conversations[0] ? `Its main partner: ${a.conversations[0].asker === named || (callerNames.has(named) && a.conversations[0].asker.includes(named)) ? a.conversations[0].asked : a.conversations[0].asker}.` : ''} ${a.errors.length ? `${a.errors.length} error(s).` : 'No errors.'}` : `${named} is not in the last ${all.length} messages.`);
   }
   if (has(/\b(last|latest|recent|just now|newest)\b/)) {
     const a = packets(log, '', 1)[0];

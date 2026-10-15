@@ -1,4 +1,5 @@
 import type { Plugin, ViteDevServer } from 'vite';
+import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 /**
@@ -29,6 +30,34 @@ interface PageLink {
   send(event: string, payload?: unknown): void;
   seen: number;
 }
+
+/** What is known about whoever calls (see Caller in src/ai/entry.ts, which cleans it again on the page). */
+interface Caller {
+  client?: string;
+  version?: string;
+  model?: string;
+  agent?: string;
+  protocol?: string;
+  key?: string;
+  note?: string;
+}
+
+/** What one HTTP request says about its sender, before the JSON-RPC message is looked at. */
+interface Who {
+  sid?: string;
+  address: string;
+  agent?: string;
+  headerClient?: string;
+  headerModel?: string;
+}
+
+const MAX_SESSIONS = 100;
+const text = (v: unknown, max: number): string | undefined => (typeof v === 'string' ? v.replace(/[^\w ./:@()+-]/g, '').trim().slice(0, max) || undefined : undefined);
+const record = (v: unknown): Record<string, unknown> => (typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
+const oneHeader = (req: IncomingMessage, name: string, max: number): string | undefined => {
+  const v = req.headers[name];
+  return text(Array.isArray(v) ? v[0] : v, max);
+};
 
 interface JsonRpc {
   jsonrpc?: string;
@@ -79,9 +108,34 @@ export function mcpBridge(): Plugin {
         entry.resolve(data.result);
       });
 
+      // Who is who. A client that echoes Mcp-Session-Id is told apart by it; one that does not is told apart by address and user agent.
+      const sessions = new Map<string, Caller>();
+      const remember = (who: Who, patch: Caller): void => {
+        const clean = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)) as Caller;
+        for (const key of [who.sid, who.address]) {
+          if (!key) continue;
+          if (!sessions.has(key) && sessions.size >= MAX_SESSIONS) sessions.delete(sessions.keys().next().value as string);
+          sessions.set(key, { ...sessions.get(key), ...clean });
+        }
+      };
+      const callerOf = (msg: JsonRpc, who: Who): Caller => {
+        const meta = record(msg.params?._meta);
+        const stored = { ...sessions.get(who.address), ...(who.sid ? sessions.get(who.sid) : undefined) };
+        const product = /^([^\s/]+)(?:\/(\S+))?/.exec(who.agent ?? '');
+        return {
+          client: who.headerClient ?? text(meta.client, 40) ?? stored.client ?? text(product?.[1], 40),
+          version: stored.version ?? text(product?.[2], 30),
+          model: who.headerModel ?? text(meta.model, 40) ?? stored.model,
+          agent: who.agent,
+          protocol: stored.protocol,
+          key: who.sid ?? who.address,
+          note: stored.note,
+        };
+      };
+
       const livePage = (): PageLink | null => (page && Date.now() - page.seen < PAGE_TTL_MS ? page : null);
 
-      function callPage(name: string, args: unknown, client?: string): Promise<unknown> {
+      function callPage(name: string, args: unknown, caller?: Caller): Promise<unknown> {
         const target = livePage();
         if (!target) return Promise.resolve({ ok: false, error: NO_PAGE });
         const id = String(nextId++);
@@ -92,7 +146,7 @@ export function mcpBridge(): Plugin {
           }, CALL_TIMEOUT_MS);
           pending.set(id, { resolve, timer });
           try {
-            target.send('mms:call', { id, name, args, client });
+            target.send('mms:call', { id, name, args, caller });
           } catch (err) {
             pending.delete(id);
             clearTimeout(timer);
@@ -101,19 +155,27 @@ export function mcpBridge(): Plugin {
         });
       }
 
-      async function handleRpc(msg: JsonRpc, client?: string): Promise<object | null> {
+      async function handleRpc(msg: JsonRpc, who: Who): Promise<object | null> {
         const id = msg.id ?? null;
         const isRequest = msg.id !== undefined && msg.id !== null;
         const reply = (result: unknown) => ({ jsonrpc: '2.0', id, result });
         const failure = (code: number, message: string) => ({ jsonrpc: '2.0', id, error: { code, message } });
         switch (msg.method) {
-          case 'initialize':
+          case 'initialize': {
+            const info = record(msg.params?.clientInfo);
+            remember(who, {
+              client: text(info.name, 40),
+              version: text(info.version, 30),
+              model: text(info.model, 40) ?? text(record(msg.params?._meta).model, 40),
+              protocol: text(msg.params?.protocolVersion, 20),
+            });
             return reply({
               protocolVersion: PROTOCOL_VERSION,
               capabilities: { tools: { listChanged: false } },
               serverInfo: { name: 'lattakker-sheet', version: '1.0.0' },
               instructions: INSTRUCTIONS,
             });
+          }
           case 'ping':
             return reply({});
           case 'tools/list':
@@ -123,7 +185,12 @@ export function mcpBridge(): Plugin {
           case 'tools/call': {
             const name = String(msg.params?.name ?? '');
             if (!tools.some((t) => t.name === name)) return failure(-32602, `Unknown tool: ${name}`);
-            const result = (await callPage(name, msg.params?.arguments ?? {}, client)) as { ok?: boolean };
+            const args = msg.params?.arguments ?? {};
+            if (name === 'introduce') {
+              const a = record(args);
+              remember(who, { client: text(a.client, 40), version: text(a.version, 30), model: text(a.model, 40), note: text(a.note, 120) });
+            }
+            const result = (await callPage(name, args, callerOf(msg, who))) as { ok?: boolean };
             return reply({ content: [{ type: 'text', text: JSON.stringify(result, null, 2) }], isError: result?.ok !== true });
           }
           default:
@@ -148,10 +215,21 @@ export function mcpBridge(): Plugin {
           return sendJson(res, 400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error: body must be JSON-RPC' } });
         }
 
-        // Who is calling, as far as the HTTP request says: shown in the page's traffic as the origin of what this call causes.
-        const client = String(req.headers['user-agent'] ?? '').replace(/[^\w ./:()-]/g, '').slice(0, 60) || undefined;
+        // Who is calling: shown in the page's traffic as the origin of what this call causes (outside-ai:<client>@<model>).
+        const agent = oneHeader(req, 'user-agent', 80);
         const batch = Array.isArray(parsed) ? parsed : [parsed];
-        const replies = (await Promise.all(batch.map((m) => handleRpc(m, client)))).filter((r): r is object => r !== null);
+        const who: Who = {
+          sid: oneHeader(req, 'mcp-session-id', 64),
+          address: `${req.socket.remoteAddress ?? ''}|${agent ?? ''}`,
+          agent,
+          headerClient: oneHeader(req, 'x-mcp-client', 40),
+          headerModel: oneHeader(req, 'x-mcp-model', 40),
+        };
+        if (batch.some((m) => m.method === 'initialize')) {
+          who.sid = randomUUID();
+          res.setHeader('Mcp-Session-Id', who.sid);
+        }
+        const replies = (await Promise.all(batch.map((m) => handleRpc(m, who)))).filter((r): r is object => r !== null);
         if (replies.length === 0) return sendJson(res, 202, undefined);
         return sendJson(res, 200, Array.isArray(parsed) ? replies : replies[0]);
       });

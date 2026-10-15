@@ -951,7 +951,7 @@ one, and they all sit on the same router:
 | Server | What it is for | Tools |
 | --- | --- | --- |
 | `board`, `lab`, `examples` | the cells of a tab | `list_cells`, `get_cell`, `run_cell`, `set_code`, `click`, `flash`, `signal` |
-| `router` | the router itself | `stats`, `catalog`, `servers`, `recent`, `packets`, `analyze`, `ask`, `reset_stats`, `trace`, `history`, `change`, `endpoints`, `self_check` |
+| `router` | the router itself | `stats`, `catalog`, `servers`, `recent`, `packets`, `analyze`, `ask`, `callers`, `reset_stats`, `trace`, `history`, `change`, `endpoints`, `self_check` |
 | `weather` | the weather ([8.12](#812-the-weather)) | `now`, `forecast`, `find` |
 | `ollama` | the model on this computer ([8.13](#813-the-model-on-this-computer-ollama)) | `status`, `models`, `ask` |
 | `memory` | the helper's notes and little database | `remember`, `recall`, `db_put` ... |
@@ -1003,10 +1003,21 @@ Every message that crosses the router carries its provenance, like the headers o
 e-mail or `git log` for traffic:
 
 - `id`: unique across pages (`k3f9-152`: the page's session code and a counter).
-- `origin`: who started the whole chain (a cell like `lab:A16`, `you`, `ai-chat`, `outside-ai:<client>`).
+- `origin`: who started the whole chain (a cell like `lab:A16`, `you`, `ai-chat`, `outside-ai:<client>@<model>`).
 - `cause`: the id of the message that made this one happen (an answer's cause is its request; a tool
   call of the built-in helper is caused by the model's reply, which is caused by the question).
-- `hops`: the way it went, for example `['outside-ai:claude', 'mcp-bridge', 'ai', 'router', 'lab']`.
+- `hops`: the way it went, for example `['outside-ai:claude-code@claude-opus-4', 'mcp-bridge', 'ai', 'router', 'lab']`.
+
+**Who is the outside AI?** The more the page knows, the better. An AI that comes in over `/mcp` is
+recognised by, in this order: the headers `X-MCP-Client` and `X-MCP-Model`, `_meta.client` / `_meta.model`
+of a message, what it said in `initialize` (`clientInfo.name`, `clientInfo.version`, `clientInfo.model`), the tool
+`introduce {client, model, version, note}`, and last the HTTP user agent. `initialize` is answered with an
+`Mcp-Session-Id`; a client that sends it back is told apart from other clients of the same kind (one that does
+not is told apart by address and user agent). Its messages then have the origin
+`outside-ai:<client>@<model>` (`outside-ai:claude-code@claude-opus-4`), so `origin~claude`, `mcp.packets('origin~gpt')`
+and `mcp.ask('what does claude-code do?')` work, and the packet list shows that name instead of a bare `ai`.
+`mcp.callers()` (the router tool `callers`) lists everybody who has called in: client, version, model, user agent,
+how they came in (`mcp-bridge` or `webmcp`), how many calls and when.
 
 A party that handles a message and sends another because of it passes the trace it got
 (`router.request(from, to, method, params, trace)`). An outside party says the same inside the message,
@@ -1067,7 +1078,7 @@ endpoint, so an outside AI or the script can drive it (a page without it is neve
 is the tab to show; the tabs are `#board`, `#lab`, `#examples` and `#monitor`, and a link with `#lab` opens the
 Lab straight away. They can be combined in any order of use: `/?mcp#lab`.
 
-`--client` is the name that shows as the origin in the traffic (`outside-ai:brain-demo`).
+`--client` and `--model` are who shows as the origin in the traffic (`outside-ai:brain-demo@gpt-5`).
 `--check` runs the router's own `self_check` and then tests from outside: that its calls
 are recognised (origin, and hops through `mcp-bridge`), that a request relayed for somebody
 else keeps the whole way (`_meta`), that `trace` gives the way as text, that `history` and `change`

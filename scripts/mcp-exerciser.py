@@ -11,7 +11,7 @@ show: dots running to the boxes and back. It runs until you press Ctrl+C, then p
   3. python3 scripts/mcp-exerciser.py
 
   python3 scripts/mcp-exerciser.py --interval 0.4      busier (about 2 calls a second)
-  python3 scripts/mcp-exerciser.py --client brain-demo  the name that shows as origin in the traffic: outside-ai:brain-demo
+  python3 scripts/mcp-exerciser.py --client brain-demo --model gpt-5  who shows as origin in the traffic: outside-ai:brain-demo@gpt-5
   python3 scripts/mcp-exerciser.py --writes             also writes (and clears) one scratch cell, so the record of changes has entries
   python3 scripts/mcp-exerciser.py --check              do not loop: check that the enhanced MCP works (ids, origin, hops, causes,
                                                          _meta, the record of changes, the router checking itself) and exit 0/1
@@ -40,17 +40,26 @@ LOOKING = re.compile(r"^(list|get|read|stats|catalog|servers|recent|endpoints|hi
 class Page:
     """The page, reached through the dev server's /mcp endpoint."""
 
-    def __init__(self, url, client):
+    def __init__(self, url, client, model=None):
         self.url = url
         self.client = client
+        self.model = model
+        self.origin = f"outside-ai:{client}" + (f"@{model}" if model else "")
         self.next_id = 1
         self.sent = 0
+
+    def headers(self):
+        """Who is calling: the page shows it as the origin of the traffic (outside-ai:<client>@<model>)."""
+        head = {"content-type": "application/json", "user-agent": self.client, "x-mcp-client": self.client}
+        if self.model:
+            head["x-mcp-model"] = self.model
+        return head
 
     def rpc(self, method, params=None):
         body = json.dumps({"jsonrpc": "2.0", "id": self.next_id, "method": method, "params": params or {}}).encode()
         self.next_id += 1
         request = urllib.request.Request(
-            self.url, data=body, headers={"content-type": "application/json", "user-agent": self.client}
+            self.url, data=body, headers=self.headers()
         )
         with urllib.request.urlopen(request, timeout=40) as res:
             text = res.read().decode()
@@ -227,7 +236,7 @@ def check(page, writes):
     recent = page.router_tool("recent", n=40).get("messages", [])
     mine = [m for m in recent if m["kind"] == "request" and m["method"] == "resources/list" and m["to"] == "lab" and m["origin"].startswith("outside-ai:")]
     first = mine[-1] if mine else None
-    add("origin is outside-ai:<client name>", bool(first) and first["origin"] == f"outside-ai:{page.client}", first["origin"] if first else "not found")
+    add("origin is outside-ai:<client name>[@<model>]", bool(first) and first["origin"] == page.origin, first["origin"] if first else "not found")
     add("hops start with the caller and pass the bridge and the router", bool(first) and first["hops"][0] == first["origin"] and "mcp-bridge" in first["hops"] and first["hops"][-2:] == ["router", "lab"], " > ".join(first["hops"]) if first else "")
 
     print("3. a request relayed for somebody else keeps the whole way")
@@ -253,7 +262,7 @@ def check(page, writes):
             page.mcp(SCRATCH_TAB, "tools/call", {"name": "set_code", "arguments": {"address": SCRATCH_CELL, "code": "print('two')"}})
             history = page.router_tool("history", subject=f"{SCRATCH_TAB}/{SCRATCH_CELL}").get("changes", [])
             last = history[-1] if history else None
-            add("history lists the change with who made it", bool(last) and last["by"] == f"outside-ai:{page.client}", last["by"] if last else "empty")
+            add("history lists the change with who made it", bool(last) and last["by"] == page.origin, last["by"] if last else "empty")
             full = page.router_tool("change", n=last["n"]) if last else {}
             add("change keeps the code from before", full.get("before") == "print('one')" and full.get("after") == "print('two')", f"{full.get('beforeHash')} -> {full.get('afterHash')}")
             page.mcp(SCRATCH_TAB, "tools/call", {"name": "set_code", "arguments": {"address": SCRATCH_CELL, "code": ""}})
@@ -272,15 +281,16 @@ def main():
     parser = argparse.ArgumentParser(description="Exercises the Lattakker MCP router, or checks the enhanced MCP (--check).")
     parser.add_argument("--url", default="http://localhost:5178/mcp", help="the dev server's MCP endpoint")
     parser.add_argument("--client", default="lattakker-exerciser", help="the name that shows as origin: outside-ai:<name>")
+    parser.add_argument("--model", default=None, help="the model behind it, if any: the origin becomes outside-ai:<name>@<model>")
     parser.add_argument("--interval", type=float, default=1.0, help="average seconds between calls (default 1.0)")
     parser.add_argument("--writes", action="store_true", help=f"also write and clear the scratch cell {SCRATCH_TAB}/{SCRATCH_CELL}")
     parser.add_argument("--check", action="store_true", help="check the enhanced MCP once and exit with 0 (all good) or 1")
     args = parser.parse_args()
 
-    page = Page(args.url, args.client)
+    page = Page(args.url, args.client, args.model)
     try:
         tools = connect(page)
-        print(f"connected: {len(tools)} tools at {args.url}, as '{args.client}'")
+        print(f"connected: {len(tools)} tools at {args.url}, as '{page.origin}'")
         if args.check:
             sys.exit(0 if check(page, args.writes) else 1)
         ex = Exerciser(page, args.writes)
