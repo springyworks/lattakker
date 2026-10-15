@@ -1152,6 +1152,19 @@ for `ask` and `chat`; `status` then says it is not Ollama itself. Over MCP: the
 server `ollama` (`status`, `ping`, `warm`, `models`, `ask`; outside AIs may only `ask` when the
 person allowed outside questions). Try the Lab's **J41**.
 
+Several clients (this page, VS Code, scripts, other AIs) can use the same Ollama at once, and they
+share exactly two things: the one copy of the model in memory, and the context size the server was
+started with (`OLLAMA_CONTEXT_LENGTH`, 32768 in the persistent setup). They do **not** share chats:
+every request carries its whole conversation, and with `OLLAMA_NUM_PARALLEL=1` requests wait in line
+(one answer at a time, in order). A request that asks for another `num_ctx` than the loaded one makes
+Ollama reload the model, so clients should send none (this page follows the loaded size). A prompt
+that starts with the same tokens as an earlier one is read about three times faster (the server keeps
+that cache for several prompts, even when another client's request comes in between). So agents that
+should be aware of each other share a *room*: a transcript that comes first in every prompt, with the
+agent's own instruction last. `node scripts/ollama-room.mjs --agents 4 --rounds 3` shows it with real
+requests: it pings first, refuses to run when the model is not loaded (it never waits for a cold load),
+lets the agents ask at the same moment and reports who waited how long and that nothing was reloaded.
+
 ### 8.14 Input from the person: the input global
 
 [↑ Contents](#contents)
