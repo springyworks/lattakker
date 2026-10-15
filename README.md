@@ -1549,7 +1549,10 @@ choose them. Out of the box it needs no API key. The page is made easy
 to *read and drive* by an AI assistant that you run yourself, for example
 one that can use your browser or a coding assistant next to your editor:
 
-- `window.mms` is a small JSON API (`mms.help()` prints the guide). An
+- `window.mms` is a small JSON API (`mms.help()` prints the guide). The page, this
+  interface and the code in the cells are all TypeScript (its typings are published
+  as `ai/cell-api.d.ts`); a call typed into a browser console is plain JavaScript
+  syntax, which is just TypeScript without the types. An
   assistant can read the board (`mms.board()`), read every cell with its
   output and error (`mms.cells()`), and write code with
   `mms.setCode('A12', code, { run: true })`, which runs it and returns the
