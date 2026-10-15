@@ -1185,7 +1185,8 @@ span(5, 3)
 memory.heard = memory.heard ?? 0
 
 // draw fills this cell. 'last' is the number the latest wave carried.
-const draw = (last, from) => show(
+// (the ? after a name means: it may be left out, as in the first draw() call at the bottom)
+const draw = (last?, from?) => show(
   'I listen for waves from any tab\n' +
   'Waves heard: ' + memory.heard + '\n' +
   (from ? 'Latest: wave ' + last + ' from ' + from : 'Nothing yet. Click Q42 on the board.')

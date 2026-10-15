@@ -1552,10 +1552,19 @@ one that can use your browser or a coding assistant next to your editor:
 - `window.mms` is a small JSON API (`mms.help()` prints the guide), typed in
   TypeScript (the typings are published as `ai/cell-api.d.ts`). The app itself is
   strict TypeScript (`"strict": true`, no unused locals or parameters, checked by
-  `npm run typecheck` and every build); the code in the cells is TypeScript too,
-  type-checked in the editor with gentler settings for children (`strict` off, so
-  a missing type is not an error). The types are checked first and erased on the
-  way to the browser, as in every TypeScript program. An
+  `npm run typecheck` and every build). The code in the cells is TypeScript
+  checked just as strictly (`strict`: mistakes with `null` and `undefined`, with
+  `this`, with the shape of a function or an array are errors in the editor), with
+  one concession so that it stays easy to read: nobody is asked to write types. The
+  messages of the "implicitly has type any" family are not shown (a value with no type
+  is simply `any`), and `catch (e)` stays `any`. So `const rows = []`, `(n) => n * 2`
+  and `catch (e)` need nothing added, while `let s: string = 5` or `u.length` on a
+  possibly missing value are caught. (Strict *without* `noImplicitAny` would be a
+  trap: an empty `[]` becomes `never[]` and `rows.push(1)` an error; that is why the
+  check is on and only its messages are hidden.) The editor also knows the browser's
+  own globals (`console`, `document`, `setTimeout`, `fetch`, `performance`). The types
+  are checked first and erased on the way to the browser, as in every TypeScript
+  program. An
   assistant can read the board (`mms.board()`), read every cell with its
   output and error (`mms.cells()`), and write code with
   `mms.setCode('A12', code, { run: true })`, which runs it and returns the

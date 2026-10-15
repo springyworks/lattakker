@@ -12,7 +12,7 @@ import type { Sheet } from './sheet/Sheet';
  */
 
 const KEY = 'lattakker:examples-rev';
-export const EXAMPLES_REV = 7;
+export const EXAMPLES_REV = 8;
 
 /** What each revision added, per tab. */
 const ADDED: Record<number, { board: string[]; lab: string[] }> = {
@@ -22,10 +22,13 @@ const ADDED: Record<number, { board: string[]; lab: string[] }> = {
   5: { board: [], lab: ['A53', 'K53'] },
   6: { board: ['A45', 'K45'], lab: [] },
   7: { board: ['A51'], lab: [] },
+  8: { board: [], lab: [] },
 };
 
 /** The code (without its comments) that an example had before a revision replaced it. */
 const REPLACED: Record<number, { board: Record<string, string[]>; lab: Record<string, string[]> }> = {
+  // 8: Lab A31 calls draw() without the arguments it asks for; the cells are now checked as strictly as the app (draw(last?, from?)).
+  8: { board: {}, lab: { A31: ["span(5, 3)\nmemory.heard = memory.heard ?? 0\nconst draw = (last, from) => show(\n'I listen for waves from any tab\\n' +\n'Waves heard: ' + memory.heard + '\\n' +\n(from ? 'Latest: wave ' + last + ' from ' + from : 'Nothing yet. Click Q42 on the board.')\n)\nmcp.on('wave', (n, from) => {\nmemory.heard++\ncolor('hsl(' + ((n * 47) % 360) + ', 60%, 82%)')\ndraw(n, from)\nmcp.emit('echo', n)\n})\ndraw()"] } },
   2: {
     board: {
       A15: [

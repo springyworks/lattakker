@@ -11,7 +11,7 @@ interface PieceInfo {
 }
 
 /** What plot() can draw: numbers (plotted against 0, 1, 2, ...), [x, y] pairs, {x, y} points, or a function of x. */
-type PlotSeries = number[] | Array<[number, number]> | Array<{ x: number; y: number }> | ((x: number) => number);
+type PlotSeries = number[] | number[][] | Array<[number, number]> | Array<{ x: number; y: number }> | ((x: number) => number);
 type PlotData = PlotSeries | Record<string, PlotSeries>;
 interface PlotOptions {
   title?: string;
@@ -174,6 +174,8 @@ interface McpMessage {
   method: string;
   /** The parameters or the answer, shortened to one line. */
   detail: string;
+  /** How long an answer took, in milliseconds. */
+  ms?: number;
   /** The id of this message (unique across pages), who started the chain it belongs to, and the message that caused it (null at the start). */
   id: string;
   origin: string;
@@ -863,7 +865,7 @@ declare function stop(): void;
  * A tile inside a block's grid, by path: at('A16/3,4') is the tile in column 3, row 4 of the grid in A16;
  * at('/lab/A16/3,4') is the same kind of tile in another tab. Tiles of another tab can be read, not changed.
  */
-declare function at(path: \`\${string}/\${number},\${number}\`): Tile;
+declare function at(path: \`\${string},\${number}\`): Tile;
 /**
  * Another cell by address or by path. A plain address is a cell of this tab: at('A1').
  * A path starting with / names a tab first, so it works from anywhere: at('/lab/J24'), at('/board/A12').

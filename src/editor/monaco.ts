@@ -22,17 +22,27 @@ self.MonacoEnvironment = {
   },
 };
 
+/**
+ * The cells are checked as strictly as the app itself (`strict`: mistakes with null and undefined, with `this`, with the shape of functions and
+ * with arrays are caught), but a child is not asked to write types: the messages of the "implicitly has type any" family are not shown, and a
+ * value that has no type is simply `any`, as before. So `const rows = []`, `(n) => n * 2` and `catch (e)` need nothing added.
+ * (Strict WITHOUT noImplicitAny is a trap: an empty [] would be a never[] and `a.push(1)` an error. That is why the check is on and its messages are hidden.)
+ */
+const IMPLICIT_ANY_MESSAGES = [7005, 7006, 7008, 7010, 7011, 7015, 7017, 7018, 7019, 7020, 7022, 7023, 7031, 7034, 7044, 7051, 7053];
+
 ts.typescriptDefaults.setCompilerOptions({
   target: ts.ScriptTarget.ES2020,
   module: ts.ModuleKind.ESNext,
   // Every cell is its own little module so names never clash between cells and `await` works at top level.
   moduleDetection: 3,
   allowNonTsExtensions: true,
-  strict: false,
-  noImplicitAny: false,
-  lib: ['es2020', 'dom'],
+  strict: true,
+  // `catch (e)` stays `any`: no need to narrow an `unknown` before printing it.
+  useUnknownInCatchVariables: false,
+  // The library files by their full names: 'es2020' and 'dom' alone load nothing, and then console, document, setTimeout and fetch are "not found".
+  lib: ['lib.es2022.d.ts', 'lib.dom.d.ts', 'lib.dom.iterable.d.ts'],
 } as ts.CompilerOptions);
-ts.typescriptDefaults.setDiagnosticsOptions({ noSemanticValidation: false, noSyntaxValidation: false });
+ts.typescriptDefaults.setDiagnosticsOptions({ noSemanticValidation: false, noSyntaxValidation: false, diagnosticCodesToIgnore: IMPLICIT_ANY_MESSAGES });
 ts.typescriptDefaults.setEagerModelSync(true);
 ts.typescriptDefaults.addExtraLib(CELL_API_DTS, 'file:///cell-api.d.ts');
 
