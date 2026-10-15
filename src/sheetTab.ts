@@ -1,3 +1,4 @@
+import { recordSeeds, refreshSeeded } from './seedMigration';
 import { Sheet, MAX_COLS } from './sheet/Sheet';
 import type { GameView } from './game/GameView';
 import { SheetPane, type Tone } from './ui/SheetPane';
@@ -31,6 +32,8 @@ export interface SheetTabOptions {
   intro: string;
   /** Cells the tab starts with (address, code): put back by the restore button when there are some. */
   seed?: ReadonlyArray<readonly [string, string]>;
+  /** Fingerprints of earlier shipped versions of seeded cells (see seedMigration.ts): a saved copy that still is one of them gets the new version. */
+  olderVersions?: Readonly<Record<string, readonly string[]>>;
   restoreLabel?: string;
   restoreHint?: string;
   /** id of the element holding the sheet (the Lab keeps `lab`); default `<id>-sheet`. */
@@ -123,6 +126,7 @@ export function createSheetTab(view: GameView, smallScreen: boolean, opts: Sheet
     const lastRow = seed.reduce((m, [a]) => Math.max(m, Number(/\d+/.exec(a)?.[0] ?? 1)), 0);
     while (sheet.rowCount < lastRow + 8 && sheet.rowCount < 200) sheet.insertRow(sheet.rowCount - 1);
     for (const [address, code] of seed) sheet.setCode(address, code);
+    recordSeeds(id, seed);
     return seed.length;
   };
   restoreBtn.addEventListener('click', () => speak(`Restored ${restoreSeed()} cells ✓`, 'good'));
@@ -167,6 +171,7 @@ export function createSheetTab(view: GameView, smallScreen: boolean, opts: Sheet
     while (sheet.rowCount < saved.rows && sheet.rowCount < 500) sheet.insertRow(sheet.rowCount - 1);
     if (saved.cols && saved.cols > sheet.colCount) sheet.addColumns(Math.min(saved.cols, MAX_COLS) - sheet.colCount);
     restoreCells(sheet, saved.cells);
+    if (opts.seed?.length) refreshSeeded(sheet, id, opts.seed, opts.olderVersions);
     if (saved.mode === 'view') setMode('view');
   } else {
     if (opts.seed?.length) restoreSeed();

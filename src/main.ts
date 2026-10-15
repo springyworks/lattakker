@@ -21,7 +21,7 @@ import { GAME_NODE } from './sheet/reactivity';
 import { SheetPane } from './ui/SheetPane';
 import { createLab } from './lab';
 import { createSheetTab } from './sheetTab';
-import { MONITOR_DEMOS } from './monitorDemos';
+import { MONITOR_DEMOS, MONITOR_OLDER_VERSIONS } from './monitorDemos';
 import { TabManager, installTabManager } from './tabManager';
 import { loadTabSaved, startTabAutoSave } from './storage';
 import { installAiSurface } from './ai/surface';
@@ -232,6 +232,7 @@ tabManager.makeBuiltIn(
       icon: '📡',
       intro: 'The page and this computer, live: the router drawing, CPU, temperatures, messages per second. Change any cell.',
       seed: MONITOR_DEMOS,
+      olderVersions: MONITOR_OLDER_VERSIONS,
       restoreLabel: '↺ Restore monitor',
       load: () => loadTabSaved('monitor'),
       startSave: (sheet) => startTabAutoSave('monitor', sheet),
