@@ -566,6 +566,17 @@ it, and closing it with its x keeps it closed. `src/editor/monaco.ts` also resha
 sentence instead of Monaco's "Loading..." that would stay for ever. It uses only Monaco's public API on purpose:
 importing Monaco's internal modules (tried once, to open the panel) made the TypeScript engine stop answering in the
 dev server (most likely a second copy of Monaco), so every editor said "Loading...".
+
+**From the output back to the code.** Where does this text come from? Select some words in the output pane of a cell
+(the strip under the floating editor, or the output of a block in the Examples tab) and the editor of that cell lights
+up the code that wrote them: the editor scrolls there, the place flashes yellow, a note in the output pane says
+which line, and it is marked in the editor's scroll bar too. It looks in three steps. (1) The selected words as they are
+in the code: a text written between quotes, `print('Welcome to the Lab')`. (2) When the whole selection is not there, its
+pieces are: the output `Red has 40 pieces` comes from `'Red has ' + n + ' pieces'`, so `Red has` and `pieces` are
+marked (hits in comments count only when there is no hit in the code). (3) When nothing is there, the text is made from
+numbers and calculations, so the lines that write output (`print`, `show`, `view`, `log`) are marked: one of them
+produced it. The marks go away after twelve seconds, when you click the output, or when you edit the code. It is
+`src/editor/outputTrace.ts`; only selected text is traced (not pictures, plots or tiles).
 Everything you can use inside a cell is listed in [8 Programmer's manual: the cell API](#8-programmers-manual-the-cell-api).
 
 **Tabs.** Three tabs sit above the page:

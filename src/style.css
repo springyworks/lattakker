@@ -1033,6 +1033,45 @@ body:not(.tab-board) #dock {
   background: #f6f7f9;
   cursor: pointer;
 }
+/* The output of a cell can be selected, and what is selected is looked for in the code (outputTrace.ts) */
+.cell-editor-out-cell, .cell-editor-out-cell *, .nb-out-cell, .nb-out-cell * {
+  -webkit-user-select: text;
+  user-select: text;
+}
+.cell-editor-out-cell .cell-text, .nb-out-cell .cell-text {
+  cursor: text;
+}
+.trace-note {
+  position: absolute;
+  left: 6px;
+  top: 3px;
+  z-index: 3;
+  max-width: calc(100% - 90px);
+  padding: 2px 7px;
+  border: 1px solid #e0a800;
+  border-radius: 4px;
+  background: #fff3bf;
+  color: #3d2f00;
+  font: 12px/1.3 system-ui, sans-serif;
+  pointer-events: none;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+}
+.nb-out {
+  position: relative;
+}
+.monaco-editor .trace-hit {
+  background: #ffe58a;
+  outline: 2px solid #e0a800;
+  border-radius: 2px;
+  animation: trace-flash 1.1s ease-out 2;
+}
+.monaco-editor .trace-line {
+  background: #fff3bf;
+}
+@keyframes trace-flash {
+  0%, 100% { background: #ffe58a; }
+  50% { background: #ffb300; }
+}
 .nb-out-cell {
   margin: 5px;
   transform-origin: top left;

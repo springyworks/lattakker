@@ -5,6 +5,7 @@ import { THEME } from '../theme';
 import { isAnswered, requestAt } from '../ai/requests';
 import { createEditor, modelFor, monaco } from './monaco';
 import { installPopupMenu } from './EditorContextMenu';
+import { installOutputTrace } from './outputTrace';
 import { aiBridge } from '../aichat/bridge';
 import type { AiContext } from '../aichat/tools';
 import { getSettings, isConfigured } from '../aichat/config';
@@ -356,7 +357,7 @@ export class CellEditor {
     host.appendChild(split);
     const out = document.createElement('div');
     out.className = 'cell-editor-out';
-    out.title = 'The latest output of this cell. Clicking here clicks the cell, like on the sheet.';
+    out.title = 'The latest output of this cell. Clicking here clicks the cell, like on the sheet. Select some words here and the code that wrote them lights up.';
     const tag = document.createElement('button');
     tag.type = 'button';
     tag.className = 'cell-editor-out-tag';
@@ -385,6 +386,7 @@ export class CellEditor {
     this.installWindowMenus(titleBar, out, outCell, tag);
     this.outBox = out;
     this.outCell = outCell;
+    installOutputTrace(out, () => this.editor);
     this.outOpen = false;
     out.classList.toggle('open', this.outH !== null);
     this.outHtml = '';

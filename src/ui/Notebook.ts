@@ -5,6 +5,7 @@ import { CH, Sheet } from '../sheet/Sheet';
 import { formatAddress } from '../sheet/address';
 import { clickNode } from '../sheet/reactivity';
 import { createNotebookEditor, modelFor, monaco } from '../editor/monaco';
+import { installOutputTrace } from '../editor/outputTrace';
 import { exampleTemplate } from '../exampleTemplate';
 import { loadExamplesSaved, restoreCells, startExamplesAutoSave } from '../storage';
 import type { GameView } from '../game/GameView';
@@ -359,6 +360,8 @@ export function createNotebook(view: GameView, board: NotebookBoard, examples: R
     e.refs = { chip, primary, out, outCell };
     sheet.setNodeLabel(`sheet:${address}`, host);
     e.editor = createNotebookEditor(codeBox, previewModel(e));
+    // Select words in the output and the code that wrote them lights up in this block's editor.
+    installOutputTrace(out, () => e.editor);
     // The mouse wheel scrolls the page over a block's code, until you click into the code: then it scrolls the code.
     codeBox.addEventListener('wheel', (ev) => { if (!e.editor?.hasTextFocus() && !ev.ctrlKey) ev.stopPropagation(); }, { capture: true, passive: true });
     e.editor.layout();
