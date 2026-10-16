@@ -58,6 +58,13 @@ Live demo: https://springyworks.github.io/lattakker/
   - [8.17 Making tabs from code: the tabs global](#817-making-tabs-from-code-the-tabs-global)
   - [8.18 Animated pictures you control: the anim global](#818-animated-pictures-you-control-the-anim-global)
   - [8.19 Mail: letters between the person, AIs and cells](#819-mail-letters-between-the-person-ais-and-cells)
+  - [8.20 Tiles in a block: grids, text and the keyboard](#820-tiles-in-a-block-grids-text-and-the-keyboard)
+    - [8.20.1 The grid: grid(cols, rows?, options?)](#8201-the-grid-gridcols-rows-options)
+    - [8.20.2 One tile: g.at(x, y) and at('A16/3,4')](#8202-one-tile-gatx-y-and-ata1634)
+    - [8.20.3 Lines of text: g.text(x, y, text, options?)](#8203-lines-of-text-gtextx-y-text-options)
+    - [8.20.4 The keyboard: a grid that takes your typing](#8204-the-keyboard-a-grid-that-takes-your-typing)
+    - [8.20.5 The example: a terminal chat](#8205-the-example-a-terminal-chat)
+    - [8.20.6 Choosing between tiles, svg() and cells](#8206-choosing-between-tiles-svg-and-cells)
 - [9 How the cell code is run (internals)](#9-how-the-cell-code-is-run-internals)
   - [9.1 When does a cell run?](#91-when-does-a-cell-run)
   - [9.2 Is this reactive programming?](#92-is-this-reactive-programming)
@@ -344,7 +351,7 @@ means "inside":
 | Written | Means |
 |---|---|
 | `J24` | the cell J24 of the tab you are in (what code normally writes) |
-| `J24/3,4` | tile x=3, y=4 of the grid inside block J24 (see `grid()` in [8.1](#81-output-and-looks)) |
+| `J24/3,4` | tile x=3, y=4 of the grid inside block J24 (see [8.20](#820-tiles-in-a-block-grids-text-and-the-keyboard)) |
 | `/lab/J24` | absolute: tab first (`board`, `lab`, `examples`, `monitor`, or a tab of your own), so it works from every tab |
 | `/lab/J24/3,4` | the same tile, absolute |
 | `@c-1a2b3c4d` | a cell by its **identity** (its `uid`), which follows the code when the cell moves |
@@ -543,6 +550,22 @@ a `// Try: ...` line. The list also holds every example from the sheet, marked
 `example`, so a player can pull one into a new cell. Recipes and examples are
 kept in the code (`src/recipes.ts`, `src/examples.ts`), so they stay as
 written even when someone edits the example cells in the sheet.
+
+**Documentation beside the suggestion list.** Type a dot after a name (`input.`, `g.`, `at('A1').`) and the list of
+members opens with a second panel to its right that shows the TypeScript documentation of the member that is
+highlighted, shown the same way as the hover: its signature as highlighted TypeScript code (what it takes and what it
+gives back), then the documentation with its `@param` lines, and for the words a child meets first (`print`, `grid`,
+`every` ...) the same 💡 line as the hover. Move down the list with the arrow keys, or just point at an entry with the mouse, and the panel follows; nobody has to press Ctrl+Space
+or click the small arrow first. The text is the `/** ... */` comment above every member in
+`src/sheet/apiTypes.ts`, so **a new member of the API needs its doc comment there**; it then shows in the
+list, in the hover and in the signature help, and it is also what the AI helpers read in `cell-api.d.ts`
+(see [11.4.8](#1148-documents-for-ais-rules-api-examples-readme)). The panel is opened the first time a list
+appears, with Monaco's own public command `toggleSuggestionDetails` (the same as Ctrl+Space); after that Monaco remembers
+it, and closing it with its x keeps it closed. `src/editor/monaco.ts` also reshapes the engine's answer
+(`reshapeDetails`) and gives up on an answer that does not come (six seconds for one entry, fifteen for the list), with a plain
+sentence instead of Monaco's "Loading..." that would stay for ever. It uses only Monaco's public API on purpose:
+importing Monaco's internal modules (tried once, to open the panel) made the TypeScript engine stop answering in the
+dev server (most likely a second copy of Monaco), so every editor said "Loading...".
 Everything you can use inside a cell is listed in [8 Programmer's manual: the cell API](#8-programmers-manual-the-cell-api).
 
 **Tabs.** Three tabs sit above the page:
@@ -578,7 +601,7 @@ Everything you can use inside a cell is listed in [8 Programmer's manual: the ce
   it was written and **Copy** copies it. If you emptied that board cell, the block
   shows the original and **Put on the board** brings it back. The blocks have the
   same help as a cell: hover a word for its type and a plain-words explanation,
-  completions, and the coach's hints.
+  completions, with their documentation beside the list, and the coach's hints. A click on a block's output also reaches the cell: a block with a grid of tiles tells the cell which tile was hit, and a grid that took the keyboard (the terminal chat) can be typed into right there ([8.20](#820-tiles-in-a-block-grids-text-and-the-keyboard)).
 
   The empty cells of the notebook are free. **📝 New example** (above the sheet),
   or **⋮ → Create an example here…** on any empty cell (in any tab), makes a
@@ -633,7 +656,7 @@ Top-level `await` works. The editor shows these names with help text as you type
 | `show(...values)` | Replace the output with one line. Use this for displays that update in place. |
 | `clear()` | Empty the output and remove the plot. |
 | `plot(data, options?)` | Draw an XY plot as this cell's output. `data` is a list of numbers, a list of `[x, y]` pairs, a list of `{ x, y }` points, a function of x such as `Math.sin` or `(x) => x * x`, or an object of several of these (`{ sin: Math.sin, cos: Math.cos }`, drawn with a legend). Options: `title`, `xLabel`, `yLabel`, `from`/`to`/`steps` (for functions: default -10 to 10 in 200 steps), `dots`, `color`, and `xMin`/`xMax`/`yMin`/`yMax` to fix the edges (so an animation does not jump around) and `axes: false` for just the lines. A series name that starts with `_` stays out of the legend. Call it again to redraw (do this inside `every()` for a live plot). Whatever you `print` or `show` becomes a caption under the plot. Make the cell bigger with `span(4, 3)`; a small cell draws a bare line without axes. |
-| `grid(cols, rows?)` | Give this cell's block a grid of tiles that fills it: `span(10, 8)` then `const g = grid(10, 8)` is 80 tiles, however big the block is. Tiles have their own coordinates (`x` across, `y` down, from 0), not sheet addresses, so the code does not care where the block sits. `g.at(x, y)` is a tile with `.color(fill)` (`null` blanks it), `.show(text)`, `.clear()` and the readable `.fill` / `.text`. `g.paint((x, y) => colour)` paints every tile in one pass, and `g.fill(colour)`, `g.clear()`, `g.each(fn)`, `g.cols` and `g.rows` do what they say. `on(g, 'click', (tile) => ...)` runs when a tile is clicked. Other cells reach a tile by its path: `at('A16/3,4')` is the tile in column 3, row 4 of the grid in A16, and the path moves along with the block (move it or insert a row and the code is rewritten like any address). Text you `show()` in the block floats over the tiles. See the Game of Life in the Lab tab (A16). |
+| `grid(cols, rows?, { lines? })` | Give this cell's block a grid of tiles that fills it: `span(10, 8)` then `const g = grid(10, 8)` is 80 tiles, however big the block is. Tiles have their own coordinates (`x` across, `y` down, from 0), not sheet addresses, so the code does not care where the block sits. `g.at(x, y)` is a tile with `.color(fill)`, `.show(text)`, `.ink(colour)`, `.bold()` and `.clear()`; `g.paint((x, y) => colour)`, `g.fill(colour)`, `g.box(x, y, w, h, colour)`, `g.text(x, y, 'words', options)` (flowing text, or a letter in every tile with `{ snap: true }`), `g.clear()` and `on(g, 'click', (tile) => ...)` draw and listen; `g.focus()` and `on(g, 'key', (key, info) => ...)` make the grid take the keyboard (a terminal, a text field). Other cells reach a tile by its path: `at('A16/3,4')`, which moves along with the block. Everything about tiles is in [8.20](#820-tiles-in-a-block-grids-text-and-the-keyboard). See the Game of Life in the Lab tab (A16) and the terminal chat in the Examples tab (board K51). |
 | `view(text)` | Replace what is shown in view mode (default: the code itself). |
 | `color(fill)` | Background colour, e.g. `'#ffd6e7'` or `'lightgreen'`. |
 | `log(...values)` | Like `print`, and also writes to the browser console. |
@@ -847,6 +870,7 @@ cell (cells that hold code are never overwritten). The examples are listed in
 - Everything runs on the page's main thread. A tight loop without `await`
   freezes the page, because there are no Web Workers yet. See [9.3](#93-multitasking-how-several-cells-and-timers-run-at-once).
 - The global `mode` is a snapshot while `sheet.mode` is live.
+- Tile grids have no hover, drag or pointer-move events, and a tile cannot hold code or a cell ([8.20.6](#8206-choosing-between-tiles-svg-and-cells)). One grid has the keyboard at a time, and a click elsewhere takes it away ([8.20.4](#8204-the-keyboard-a-grid-that-takes-your-typing)). A line of text in a grid is one line; it is clipped to its stretch of tiles.
 
 ### 8.8 Examples
 
@@ -885,10 +909,10 @@ show('board A12 says: ' + at('/board/A12').text)
 ```
 
 - *Reading works and is reactive:* the cell runs again when the other cell
-  changes. `.text`, `.code`, `.cols`, `.rows`, `.piece` and a tile's `.fill` and
-  `.text` can be read. `at('@c-1a2b3c4d')` finds a cell by its identity.
+  changes. `.text`, `.code`, `.cols`, `.rows`, `.piece` and a tile's `.fill`,
+  `.text`, `.textColor` and `.isBold` can be read. `at('@c-1a2b3c4d')` finds a cell by its identity.
 - *Writing is not allowed:* `print`, `show`, `color`, `span(4, 2)` and a tile's
-  `color()` on a cell in another tab throw a clear error ("only its own tab's
+  `color()`, `show()`, `ink()` and `bold()` on a cell in another tab throw a clear error ("only its own tab's
   code can change it"). A cell that writes into another tab could not clean up
   after itself when it runs again.
 - *Paths follow moves:* insert a row or move a block in the Lab and every
@@ -1486,6 +1510,188 @@ Monitor like any other traffic and `trace` can follow it. `node scripts/mcp-smok
 For a small model the helper's `mcp_call` is forgiving: `server` alone lists the server's tools, `server` and `tool`
 with `arguments_json` calls one (`method` and `params_json` are only needed for resources), `"weather.now"` as the server works,
 and answers come back as plain text instead of the whole MCP envelope.
+
+### 8.20 Tiles in a block: grids, text and the keyboard
+
+[↑ Contents](#contents)
+
+A block (a cell that was made bigger with `span(cols, rows)`) can hold a **grid of tiles** that fills it:
+`span(6, 4)` then `const g = grid(12, 8)` makes 96 tiles, however big the block is on the screen. The tiles are
+deliberately *not* cells. A tile has a colour, one short text and some text style, and nothing else: no code, no
+address on the sheet, no output of its own. That keeps them cheap (a grid may hold up to 10 000 tiles, at most 200
+along one side) and impossible to break, and it is what makes them good for finer, game-like and screen-like
+visuals: Game of Life, a board, a chart, a menu, a terminal.
+
+Everything inside the grid is addressed by the tile's **own coordinates**: `x` counts across and `y` counts down,
+both from 0. Because the block's own address is never used, the code keeps working when the block is moved,
+resized or a row is inserted above it. Other cells reach a tile with its path: `at('A16/3,4')` is the tile in
+column 3, row 4 of the grid in block A16, and `at('/lab/A16/3,4')` is the same kind of tile in another tab (read-only
+from other tabs, like all cells, see [8.9](#89-cells-in-other-tabs-atlabj24)).
+
+```ts
+span(6, 4)
+const g = grid(12, 8)                       // 12 tiles across, 8 down
+g.paint((x, y) => (x + y) % 2 ? '#d9e8dd' : null)   // a chess pattern
+on(g, 'click', (tile) => tile.color('tomato').show(tile.x + ',' + tile.y))
+```
+
+#### 8.20.1 The grid: `grid(cols, rows?, options?)`
+
+| Call | What it does |
+|---|---|
+| `grid(cols, rows?, { lines? })` | Gives this cell's block a grid. `rows` defaults to `cols`. `{ lines: false }` leaves out the thin white line between tiles, for a smooth surface (a terminal, a picture). Calling `grid()` again starts a fresh, empty grid. |
+| `g.cols`, `g.rows`, `g.address` | The size of the grid and the address of its block. |
+| `g.at(x, y)` | The tile in column `x`, row `y` (see 8.20.2). Outside the grid it throws a clear error. |
+| `g.each(fn)` | Runs `fn(tile)` for every tile, row by row. |
+| `g.paint((x, y) => colour)` | Colours every tile in one pass. Answer a colour, or `null` / `undefined` to leave the tile blank. This is the fast way to draw a whole picture. |
+| `g.fill(colour)` | Colours every tile the same (`null` blanks them). |
+| `g.box(x, y, w, h, colour)` | Colours a rectangle of tiles: `x, y` is its top-left tile, `w` and `h` its size in tiles. The part outside the grid is left out. `null` blanks it. |
+| `g.text(x, y, 'words', options?)` | One line of text over a stretch of tiles, see 8.20.3. |
+| `g.clear()` | Blanks every tile and removes their text, text colours and lines of text. |
+| `g.focus()`, `g.blur()`, `g.focused` | The keyboard, see 8.20.4. |
+| `on(g, 'click', (tile) => ...)` | Runs when a tile is clicked; `tile` is the tile that was hit. Works on the board, in the Lab and in the Examples notebook. |
+| `on(g, 'key' \| 'focus' \| 'blur', fn)` | The keyboard events, see 8.20.4. |
+
+Painting is cheap: all the writes of one run (or one handler) become a single redraw, so `g.paint(...)` over 80 tiles
+and 80 separate `tile.color(...)` calls cost the same.
+
+#### 8.20.2 One tile: `g.at(x, y)` and `at('A16/3,4')`
+
+| On a tile | What it does |
+|---|---|
+| `tile.color(fill)` | Colours the tile; `color(null)` blanks it. Returns the tile, so calls chain: `t.color('gold').show('★').bold()`. |
+| `tile.show(...values)` | Puts a short text (a number, an emoji, one letter) on the tile, centred; `show()` with nothing removes it. |
+| `tile.ink(colour)` | The colour of the tile's text; `ink(null)` is the default dark again. |
+| `tile.bold(on = true)` | Bold text on this tile (`bold(false)` turns it off). |
+| `tile.clear()` | Blank: no colour, no text, default ink, not bold. |
+| `tile.fill`, `tile.text`, `tile.textColor`, `tile.isBold` | Read them back (reactive: a cell that reads a tile of another block runs again when it changes). |
+| `tile.x`, `tile.y`, `tile.block`, `tile.tab`, `tile.address`, `tile.path` | Where it is: its own coordinates, the block and tab it lives in, `'A16/3,4'` and `'/lab/A16/3,4'`. |
+
+Text on a tile is for one short thing per tile. Its size follows the tile (about 60% of the smaller side, at most 22
+pixels), so it is the right tool for numbers, symbols and single letters, not for sentences. Sentences are
+`g.text(...)`.
+
+#### 8.20.3 Lines of text: `g.text(x, y, text, options?)`
+
+`g.text` lays **one line of text over a stretch of tiles**, starting at tile `x, y`. It is drawn as one piece of
+text, clipped to the stretch, on top of the tiles' colours. It can be used in two ways:
+
+- **Flowing text** (the default) is smooth, in the normal font, and not tied to the tile boundaries: a title bar, a
+  caption, a label, a speech bubble, a menu entry. `align` puts it at the left, centre or right of its stretch.
+- **Snapped text** (`{ snap: true }`) puts **one letter in every tile**, in a monospace font, so that the letters
+  line up in columns exactly. A grid of 78 by 20 tiles is then a **terminal** of 78 letters by 20 lines. The size
+  of the letters follows the tiles (a letter is about 0.6 of its size wide, so the size is chosen so that one fits in a tile).
+
+| Option | Meaning |
+|---|---|
+| `w` | How many tiles wide the line is (it is clipped there). Default: to the end of the row. |
+| `fill` | Also colours the tiles under the line (the same as a `g.box(x, y, w, 1, fill)` first). |
+| `ink` | The text colour. Default: the dark of the other tile texts. |
+| `bold` | Bold letters. |
+| `align` | `'left'` (default), `'center'` or `'right'` for flowing text. |
+| `snap` | One letter per tile, monospace (a terminal). |
+| `mono` | A monospace font for flowing text (`snap` always has one). |
+| `size` | The height of the letters as a fraction of a tile's height (default 0.62; 0.8 with `snap`). |
+
+Rules to know: a line is **identified by the tile it starts on**. Writing `g.text(0, 3, ...)` again replaces the
+earlier line that started at 0, 3, and `g.text(0, 3, '')` removes it, so a line can be updated without a `g.clear()`.
+Newlines in the text become spaces (one line only; a terminal breaks its lines in its own code, with a little
+`wrap` function, see the example). A grid may hold up to 2000 lines of text. `g.clear()` removes them all. The
+text is clipped to the tiles `x ... x + w - 1` and to one tile's height; to colour one letter differently
+(a cursor), split the text into several `g.text` calls at different `x` positions.
+
+```ts
+span(8, 4)
+const g = grid(32, 8, { lines: false })
+g.fill('#0d1117')
+g.box(0, 0, 32, 1, '#161b22')
+g.text(1, 0, 'Report', { ink: '#c9d1d9', bold: true })                 // flowing, in the title bar
+g.text(1, 2, 'cpu   31 %', { snap: true, ink: '#7ee787' })             // letters in columns
+g.text(1, 3, 'disk  88 %', { snap: true, ink: '#d29922' })
+```
+
+#### 8.20.4 The keyboard: a grid that takes your typing
+
+A grid can **take the keyboard**, so a cell can be a terminal, a text field, a game with keys or a form.
+
+| Call | What it does |
+|---|---|
+| `g.focus()` | The grid takes the keyboard. Call it from a click handler: `on(g, 'click', () => g.focus())`. |
+| `g.blur()` | The grid lets go of it. |
+| `g.focused` | `true` while the grid has the keyboard. |
+| `on(g, 'key', (key, info) => ...)` | Runs for **every** key that is typed while the grid has the keyboard; none is skipped, even when typing is fast. `key` is what the keyboard says: the letter or sign as typed (`'a'`, `'A'`, `'?'`, `' '`) or a name (`'Enter'`, `'Backspace'`, `'Delete'`, `'ArrowLeft'`, `'ArrowUp'`, `'Home'`, `'End'`, `'PageUp'`, `'PageDown'`, `'Escape'` ...). `info` is `{ shift, ctrl, alt, repeat }` (`repeat` is true while a key is held down). |
+| `on(g, 'focus', fn)`, `on(g, 'blur', fn)` | Run when the grid gets or loses the keyboard: redraw a cursor, a hint, a frame. |
+
+How it works, and what to expect:
+
+- The keys go to a small **hidden text box** that has the browser's focus (`src/sheet/tileKeys.ts`). The sheet's own
+  key shortcuts (Delete clears the picked cells, Enter opens the editor) ignore keys typed in a text box, so they
+  stay out of the way: Backspace in a terminal block does not wipe the block's code. A phone shows its on-screen
+  keyboard, input methods work, and pasted text arrives as keys (a line break becomes a space).
+- Only **one grid has the keyboard at a time**. A click anywhere takes it away (the browser moves focus), and the
+  grid's own click handler can take it back at once with `g.focus()`; so a click on the grid focuses it and a click
+  elsewhere blurs it, with a `'blur'` event to redraw. `Tab` moves focus on like in any page.
+- Keys with **Ctrl** or **Alt** are delivered (`info.ctrl`, `info.alt`) but never cancelled, so browser shortcuts
+  (Ctrl+R, Ctrl+W ...) keep working. Do not use them for the grid's own commands; use Escape and the plain keys.
+- The key handlers belong to the cell that started them: when the cell runs again (or is edited), they stop by
+  themselves, and the grid lets go of the keyboard. Start them again in the new run, as you do with `every` and `on`.
+- A key handler is called one key after the other, in order. An `async` handler is fine too.
+- This is separate from `input.onKey` (8.14), which hears keys *anywhere* on the page while nothing else is being
+  typed, and in lower case. Use `input.onKey` for a game steered with the arrow keys, `on(g, 'key')` for typing.
+
+#### 8.20.5 The example: a terminal chat
+
+(Examples tab, board K51.) The Examples tab has one example that uses all of it: **a terminal chat with a small bot, Tilly, in one block of
+tiles**. The block is 78 by 20 tiles, dark, without lines: a screen of 78 letters by 20 lines. Click it and type. It has
+the title bar and a hint that says what the keyboard is doing (flowing text with `fill`), the talk in snapped
+text, one colour per speaker (`you>` blue, `tilly>` green), and the prompt line with a blinking cursor (a light tile with
+the letter under it in dark ink, made from three `g.text` pieces). Keys: Enter sends; Backspace and Delete edit; the
+arrows, Home and End move the cursor; Up and Down walk through the lines sent before; PageUp and PageDown scroll
+back through the talk; Escape lets go of the keyboard. Tilly types her answers out letter by letter with `after()`,
+and a blink with `every('500ms')` that only runs while the grid has the keyboard. The talk is kept in `memory`, so it
+survives when the cell runs again. The bot is a short list of `if`s: `hi`, `time`, `dice`, `joke`, `help`, `my name is
+Ada`, and sums like `6 * 7`; `clear` wipes the screen.
+
+The shape of such a program is always the same, and small:
+
+```ts
+span(10, 5)
+const g = grid(60, 14, { lines: false })
+let typed = ''
+let focused = false
+const draw = () => {
+  g.clear()
+  g.fill('#0d1117')
+  g.text(0, 13, '> ' + typed + (focused ? '_' : ''), { snap: true, ink: '#c9d1d9' })
+}
+on(g, 'click', () => g.focus())
+on(g, 'focus', () => { focused = true; draw() })
+on(g, 'blur', () => { focused = false; draw() })
+on(g, 'key', (key) => {
+  if (key === 'Enter') typed = ''
+  else if (key === 'Backspace') typed = typed.slice(0, -1)
+  else if (key.length === 1) typed += key
+  draw()
+})
+draw()
+```
+
+#### 8.20.6 Choosing between tiles, `svg()` and cells
+
+| You want | Use |
+|---|---|
+| Squares to colour or mark: a board, a Life world, a heat map, a menu, a terminal, a form | **A grid of tiles.** Simple, fast, addressable by `x, y`, and the keyboard works. |
+| Free shapes that move, turn and animate: figures, machines, dials, wires | **`svg()`** ([8.15](#815-animated-drawings-the-svg-global)). Parts are found by id and animated; a picture can sit inside a part. |
+| A pointer-and-click picture with a lot of detail | `svg()` for the picture, `on(part, 'click')` for the clicks. |
+| A little program of its own with its own output, a size on the sheet and an address | **A cell** ([8.2](#82-the-cell-itself-and-other-cells)). A tile cannot run code; if each part needs its own code, give it a cell. |
+
+The three combine: a block can hold the grid while the cells around it read its tiles with `at('A16/3,4').fill`,
+or react to its clicks, and a cell next to it can be an `svg()` drawing.
+
+What tiles do **not** have (yet): hover and pointer-move events, drag, a tile that links to another block's tile, and
+tiles that hold a small cell of their own. A tile's click arrives as `on(g, 'click')` with the tile; double-clicks and
+right-clicks keep their sheet meaning (edit, menu).
+
 
 ## 9 How the cell code is run (internals)
 
@@ -2349,7 +2555,7 @@ the shift. The rules are the same as for moved cells, see
 [↑ Contents](#contents)
 
 ```
-src/sheet/        Sheet model: cells, addresses, dependency tracking (reactivity.ts), run contexts and timers (tasks.ts), the cell API (api.ts)
+src/sheet/        Sheet model: cells, addresses, dependency tracking (reactivity.ts), run contexts and timers (tasks.ts), the cell API (api.ts), the API's typings and their doc comments (apiTypes.ts: what the editor shows beside the suggestion list), tile grids (drawn by plot.ts's tilesSvg; the keyboard of a grid, a hidden text box, is tileKeys.ts)
 src/editor/       Monaco integration, popup editor, inline per-cell editor
 src/game/     Game rules, board state, AI move suggestions
 src/ui/           Control panel, phone dock, touch gestures, the tab strip (Tabs.ts, drawn by TabStrip.ts), the Share window (ShareDialog.ts), the Examples notebook (Notebook.ts), SheetPane.ts (everything one sheet needs; used by the board and the Lab), the ⋮ menu (CellMenu.ts, HoverMenu.ts) and ZoomControls.ts (Ctrl + wheel / Ctrl + - 0 zoom and the − 100% + control)

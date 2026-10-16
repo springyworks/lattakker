@@ -388,8 +388,17 @@ export function createNotebook(view: GameView, board: NotebookBoard, examples: R
     copy.addEventListener('click', () => {
       void navigator.clipboard?.writeText(e.editor?.getValue() ?? e.example.code).then(() => flash(copy, '✓ Copied', '⧉ Copy', 1500), () => {});
     });
-    out.addEventListener('click', () => {
+    out.addEventListener('click', (ev) => {
       if (!e.bound) return;
+      // A grid of tiles: tell the block which tile was clicked (the output here is a picture of the cell, scaled to fit).
+      const tiles = board.sheet.dataAt(home)?.tiles;
+      const svg = outCell.querySelector('.cell-tiles svg');
+      if (tiles && svg) {
+        const r = svg.getBoundingClientRect();
+        const fx = (ev.clientX - r.left) / r.width;
+        const fy = (ev.clientY - r.top) / r.height;
+        if (fx >= 0 && fx < 1 && fy >= 0 && fy < 1) board.sheet.noteTileClick(home, Math.floor(fx * tiles.cols), Math.floor(fy * tiles.rows));
+      }
       board.sheet.pulse(clickNode(home));
       board.sheet.flash(home, '#f2e4bd', 300);
     });

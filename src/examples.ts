@@ -1689,4 +1689,225 @@ pic.el('dialFace').on('click', () => {
 })
 pic.el('caption').text('Click the lever and the dial')`,
   ],
+  [
+    'K51',
+    String.raw`// A TERMINAL CHAT in one block of tiles. Click it, type, press Enter, and talk to Tilly.
+// The block is a screen of 78 by 20 tiles. With { snap: true } every letter of a text
+// sits in its own tile, so the grid is a terminal: 78 letters wide, 20 lines tall.
+// The tiles are NOT cells (no code, no address), so they stay simple and cannot break.
+// What makes it a terminal is the keyboard: g.focus() gives the grid your typing,
+// and on(g, 'key', ...) hears every key.
+
+// The block is 13 columns wide and 7 rows tall.
+span(13, 7)
+
+// A dark background for the block, like a terminal window.
+color('#0d1117')
+
+// The tile grid: 78 across, 20 down. { lines: false } leaves out the thin lines between tiles.
+const g = grid(78, 20, { lines: false })
+const W = g.cols, H = g.rows
+
+// The rows: row 0 is the title bar, rows 1 to 18 show the talk, the last row is where you type.
+const TITLE = 0, TOP = 1, ROWS = H - 2, PROMPT = H - 1
+
+// The colours: a background, and a text colour for each speaker.
+const BG = '#0d1117', BAR = '#161b22'
+const INK = { me: '#79c0ff', bot: '#7ee787', sys: '#8b949e' }
+
+// What each speaker's lines start with.
+const PRE = { me: 'you> ', bot: 'tilly> ', sys: '' }
+
+// memory is this cell's notebook, so the talk survives when the cell runs again.
+// log is the list of lines said, buf is what you are typing, pos is where the cursor is in it,
+// hist is the lines you sent before (arrow up brings them back), scroll is how far up you looked.
+if (!memory.log) memory.log = [{ who: 'sys', text: 'Tilly terminal. Type help and press Enter.' }, { who: 'bot', text: 'Hello! Click here and type something.' }]
+memory.buf = memory.buf ?? ''
+memory.pos = memory.pos ?? 0
+memory.hist = memory.hist ?? []
+memory.scroll = memory.scroll ?? 0
+
+// focused says if the grid has the keyboard now. blink flips every half second, for the cursor.
+let focused = false
+let blink = true
+
+// wrap cuts a text into pieces of at most width letters, at the spaces.
+const wrap = (text, width) => {
+  const lines = []
+  let line = ''
+  for (let word of text.split(' ')) {
+    // A word that is too long for a line is chopped.
+    while (word.length > width) {
+      if (line) { lines.push(line); line = '' }
+      lines.push(word.slice(0, width))
+      word = word.slice(width)
+    }
+    // If the word does not fit on this line any more, start a new one.
+    if ((line + ' ' + word).trim().length > width) { lines.push(line); line = word }
+    else line = (line + ' ' + word).trim()
+  }
+  if (line) lines.push(line)
+  return lines
+}
+
+// draw paints the whole terminal: title bar, the talk, and the line where you type.
+const draw = () => {
+  // Wipe the grid and give it the dark background.
+  g.clear()
+  g.fill(BG)
+
+  // The title bar. On its right it says what the keyboard is doing.
+  g.box(0, TITLE, W, 1, BAR)
+  g.text(1, TITLE, 'tilly@tiles ~ terminal chat', { snap: true, ink: '#c9d1d9', fill: BAR })
+  const hint = focused ? 'Esc leaves · PgUp PgDn scroll' : 'click here to type'
+  g.text(W - 1 - hint.length, TITLE, hint, { snap: true, ink: focused ? '#7ee787' : '#d29922', fill: BAR })
+
+  // Every message becomes one or more lines. The first line starts with who spoke;
+  // the lines after it are indented the same width.
+  const lines = []
+  for (const m of memory.log) {
+    const pre = PRE[m.who]
+    const parts = wrap(m.text, W - 2 - pre.length)
+    if (!parts.length) parts.push('')
+    parts.forEach((p, i) => lines.push({ who: m.who, text: (i === 0 ? pre : ' '.repeat(pre.length)) + p }))
+  }
+
+  // Show the newest lines that fit, less the ones we scrolled away.
+  memory.scroll = Math.max(0, Math.min(memory.scroll, lines.length - ROWS))
+  const end = lines.length - memory.scroll
+  const shown = lines.slice(Math.max(0, end - ROWS), end)
+  shown.forEach((l, i) => g.text(1, TOP + ROWS - shown.length + i, l.text, { snap: true, ink: INK[l.who] }))
+
+  // The line where you type. If the text is longer than the line, the start scrolls out of sight.
+  const room = W - 3 - PRE.me.length
+  const from = Math.max(0, memory.pos - room + 1)
+  const typed = memory.buf.slice(from, from + room)
+  const at = memory.pos - from
+  g.text(1, PROMPT, PRE.me + typed.slice(0, at), { snap: true, ink: '#c9d1d9' })
+  if (focused && blink) {
+    // The cursor is a light tile with the letter under it in dark ink.
+    g.text(1 + PRE.me.length + at, PROMPT, typed[at] ?? ' ', { snap: true, w: 1, ink: BG, fill: '#c9d1d9' })
+    g.text(2 + PRE.me.length + at, PROMPT, typed.slice(at + 1), { snap: true, ink: '#c9d1d9' })
+  } else {
+    g.text(1 + PRE.me.length + at, PROMPT, typed.slice(at), { snap: true, ink: '#c9d1d9' })
+  }
+}
+
+// reply is Tilly's little brain: it looks for a word in what you said and answers.
+// It is only a list of ifs. That is all a chat bot needs to start with.
+const jokes = ['Why do programmers like tiles? Every bug has a square to hide in.', 'What is a tile hungry for? A little grout.', 'I told my grid a joke. It had too many rows to laugh.']
+const reply = (said) => {
+  const t = said.toLowerCase()
+
+  // "my name is Ada" teaches Tilly your name. She keeps it in memory.
+  const named = /my name is (\w+)/.exec(t)
+  if (named) { memory.name = named[1][0].toUpperCase() + named[1].slice(1); return 'Nice to meet you, ' + memory.name + '!' }
+
+  // A sum like 6 * 7 or 2.5 + 1 is worked out.
+  const sum = /(-?\d+(?:\.\d+)?)\s*([-+*\/x])\s*(-?\d+(?:\.\d+)?)/.exec(t)
+  if (sum) {
+    const a = Number(sum[1]), b = Number(sum[3])
+    const answer = sum[2] === '+' ? a + b : sum[2] === '-' ? a - b : sum[2] === '/' ? a / b : a * b
+    return sum[1] + ' ' + sum[2] + ' ' + sum[3] + ' = ' + (Number.isFinite(answer) ? Math.round(answer * 1000) / 1000 : 'no way!')
+  }
+  if (/\b(hi|hello|hey)\b/.test(t)) return 'Hello' + (memory.name ? ', ' + memory.name : '') + '!'
+  if (t.includes('time') || t.includes('date')) return 'It is ' + new Date().toLocaleString() + '.'
+  if (t.includes('dice') || t.includes('roll')) return 'You rolled a ' + (1 + Math.floor(Math.random() * 6)) + '!'
+  if (t.includes('joke')) return jokes[Math.floor(Math.random() * jokes.length)]
+  if (t.includes('who are you') || t.includes('your name')) return 'I am Tilly. My whole body is tiles.'
+  if (t.includes('help')) return 'Try: hi, time, dice, joke, "my name is ...", or a sum like 6 * 7. Type clear to wipe the screen.'
+  return 'I only know a few words. Type help to see them.'
+}
+
+// Tilly types her answers letter by letter, like a real terminal. The answers wait in a queue.
+const replies = []
+let working = false
+
+// work takes the next answer from the queue and types it out two letters at a time.
+const work = () => {
+  working = true
+  const text = replies.shift()
+  memory.log.push({ who: 'bot', text: '' })
+  const index = memory.log.length - 1
+  let n = 0
+  const tick = () => {
+    n += 2
+    memory.log[index].text = text.slice(0, n)
+    memory.scroll = 0
+    draw()
+    if (n < text.length) after('30ms', tick)
+    else if (replies.length) after('250ms', work)
+    else working = false
+  }
+  after('350ms', tick)
+}
+
+// submit sends what you typed: it joins the talk, goes into the history, and Tilly answers.
+const submit = () => {
+  const text = memory.buf.trim()
+  memory.buf = ''
+  memory.pos = 0
+  memory.histAt = undefined
+  if (!text) return
+  memory.hist.push(text)
+  memory.scroll = 0
+
+  // The word clear wipes the screen; anything else is answered.
+  if (text.toLowerCase() === 'clear') { memory.log = []; return }
+  memory.log.push({ who: 'me', text })
+  replies.push(reply(text))
+  if (!working) work()
+}
+
+// The keyboard. key is the name of the key: a letter or sign as typed ('a', 'A', '?'),
+// or a word like 'Enter', 'Backspace', 'ArrowLeft'. Every key arrives, none is skipped.
+on(g, 'key', (key, info) => {
+  // Keys with Ctrl or Alt are for the browser, not for us.
+  if (info.ctrl || info.alt) return
+  const buf = memory.buf
+  blink = true
+
+  // Enter sends. Backspace and Delete remove a letter before and after the cursor.
+  if (key === 'Enter') submit()
+  else if (key === 'Backspace') { if (memory.pos > 0) { memory.buf = buf.slice(0, memory.pos - 1) + buf.slice(memory.pos); memory.pos-- } }
+  else if (key === 'Delete') memory.buf = buf.slice(0, memory.pos) + buf.slice(memory.pos + 1)
+
+  // The arrows, Home and End move the cursor.
+  else if (key === 'ArrowLeft') memory.pos = Math.max(0, memory.pos - 1)
+  else if (key === 'ArrowRight') memory.pos = Math.min(buf.length, memory.pos + 1)
+  else if (key === 'Home') memory.pos = 0
+  else if (key === 'End') memory.pos = buf.length
+
+  // Arrow up and down walk through the lines you sent before.
+  else if (key === 'ArrowUp' || key === 'ArrowDown') {
+    const at = memory.histAt ?? memory.hist.length
+    const next = Math.max(0, Math.min(memory.hist.length, at + (key === 'ArrowUp' ? -1 : 1)))
+    memory.histAt = next
+    memory.buf = memory.hist[next] ?? ''
+    memory.pos = memory.buf.length
+  }
+
+  // Page up and down look back through the talk.
+  else if (key === 'PageUp') memory.scroll += ROWS - 2
+  else if (key === 'PageDown') memory.scroll = Math.max(0, memory.scroll - (ROWS - 2))
+
+  // Escape gives the keyboard back.
+  else if (key === 'Escape') g.blur()
+
+  // A single letter or sign is typed in at the cursor.
+  else if (Array.from(key).length === 1 && buf.length < 200) { memory.buf = buf.slice(0, memory.pos) + key + buf.slice(memory.pos); memory.pos++ }
+  draw()
+})
+
+// A click on the terminal gives it the keyboard. When it gets or loses the keyboard, redraw.
+on(g, 'click', () => g.focus())
+on(g, 'focus', () => { focused = true; blink = true; draw() })
+on(g, 'blur', () => { focused = false; draw() })
+
+// The cursor blinks twice a second, but only while you can type.
+every('500ms', () => { if (focused) { blink = !blink; draw() } })
+
+// The first drawing.
+draw()`,
+  ],
 ];

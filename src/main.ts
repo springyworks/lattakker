@@ -207,7 +207,7 @@ function showOnBoard(address: string): void {
   pane.selectCodeCell(address);
 }
 
-const FEATURED = ['A45', 'K45', 'A51'];
+const FEATURED = ['A45', 'K45', 'A51', 'K51'];
 // The Examples tab is a notebook: a sheet of its own with big blocks (see ui/Notebook.ts).
 const notebook = createNotebook(
   view,

@@ -4,6 +4,7 @@ import type { GameView } from '../game/GameView';
 import { isLake } from '../game/model';
 import { GAME_NODE, MODE_NODE, describeNode, ROWS_NODE, clickNode, codeNode, sizeNode } from './reactivity';
 import { parseTilePath } from './address';
+import { blurTiles, focusTiles, listenTileKeys, tilesHaveFocus } from './tileKeys';
 import { workspace } from '../workspace';
 import { router, type Traffic } from '../mcp/router';
 import { SIGNAL } from '../mcp/tabServer';
@@ -23,9 +24,22 @@ import { inputPanel, type ControlKind, type ControlSpec } from '../ui/InputPanel
 
 const MIN_INTERVAL_MS = 10;
 const MAX_OUTPUT_LINES = 300;
+/** What g.text(...) understands. */
+interface TextOptions {
+  w?: number;
+  fill?: string | null;
+  ink?: string | null;
+  bold?: boolean;
+  align?: 'left' | 'center' | 'right';
+  snap?: boolean;
+  mono?: boolean;
+  size?: number;
+}
+
 /** Most tiles one block's grid may hold, and the most along one side. */
 const MAX_TILES = 10000;
 const MAX_TILE_SIDE = 200;
+const MAX_LABELS = 2000;
 /** An on() handler that wakes up more often than this is stuck in a loop and gets stopped. */
 const MAX_FIRES_PER_SECOND = 50;
 
@@ -290,11 +304,15 @@ export function buildApi(
 
   // ------------------------------------------------------------ tiles inside a block
 
-  const newTiles = (cols: number, rows: number): TileGrid => ({
+  const newTiles = (cols: number, rows: number, lines = true): TileGrid => ({
     cols,
     rows,
     fills: new Array<string | null>(cols * rows).fill(null),
     texts: new Array<string | null>(cols * rows).fill(null),
+    inks: new Array<string | null>(cols * rows).fill(null),
+    bolds: new Array<boolean>(cols * rows).fill(false),
+    labels: [],
+    lines,
   });
 
   /** One tile of a block's grid: it is addressed by its own x,y inside the block, never by a sheet address. */
@@ -332,8 +350,25 @@ export function buildApi(
         sheet.refreshSoon(block.address);
         return tile;
       },
+      get textColor() {
+        return read().inks[i];
+      },
+      get isBold() {
+        return read().bolds[i];
+      },
       show(...values: unknown[]) {
         write().texts[i] = values.length ? values.map(fmt).join(' ') : null;
+        sheet.refreshSoon(block.address);
+        return tile;
+      },
+      /** The colour of this tile's text; ink(null) is the default dark. */
+      ink(color: string | null) {
+        write().inks[i] = color === null || color === undefined ? null : String(color);
+        sheet.refreshSoon(block.address);
+        return tile;
+      },
+      bold(on = true) {
+        write().bolds[i] = !!on;
         sheet.refreshSoon(block.address);
         return tile;
       },
@@ -341,6 +376,8 @@ export function buildApi(
         const g = write();
         g.fills[i] = null;
         g.texts[i] = null;
+        g.inks[i] = null;
+        g.bolds[i] = false;
         sheet.refreshSoon(block.address);
         return tile;
       },
@@ -352,7 +389,7 @@ export function buildApi(
   };
 
   /** grid(cols, rows) gives this cell's block a tile grid of its own; tiles are reached with g.at(x, y). */
-  const grid = (cols: number, rows?: number) => {
+  const grid = (cols: number, rows?: number, options?: { lines?: boolean }) => {
     ctx.guard();
     const c = Math.floor(Number(cols));
     const r = Math.floor(Number(rows ?? cols));
@@ -360,11 +397,13 @@ export function buildApi(
       throw new Error(`grid(${cols}, ${rows ?? cols}): use whole numbers from 1 up to ${MAX_TILE_SIDE} (at most ${MAX_TILES} tiles)`);
     }
     // If something cleared the block meanwhile, a tile write quietly makes the grid again at this size.
-    const ensure = (): TileGrid => (data.tiles ??= newTiles(c, r));
+    const lines = options?.lines !== false;
+    const ensure = (): TileGrid => (data.tiles ??= newTiles(c, r, lines));
     markWrite(data.address);
-    data.tiles = newTiles(c, r);
+    data.tiles = newTiles(c, r, lines);
     sheet.refreshSoon(data.address);
     const tileAt = (x: number, y: number) => makeTile(data, x, y, ensure);
+    const tileKeyId = `${sheet.id}:${data.address}`;
     const g = {
       isGrid: true,
       address: data.address,
@@ -391,13 +430,73 @@ export function buildApi(
       fill(color: string | null) {
         return g.paint(() => color);
       },
+      /** box(x, y, w, h, colour): colours a rectangle of tiles (the part outside the grid is left out); null blanks it. */
+      box(x: number, y: number, w: number, h: number, color: string | null) {
+        markWrite(data.address);
+        const tiles = ensure();
+        const fill = color === null || color === undefined ? null : String(color);
+        for (let yy = Math.max(0, Math.floor(y)); yy < Math.min(r, Math.floor(y) + Math.floor(h)); yy++) {
+          for (let xx = Math.max(0, Math.floor(x)); xx < Math.min(c, Math.floor(x) + Math.floor(w)); xx++) tiles.fills[yy * c + xx] = fill;
+        }
+        sheet.refreshSoon(data.address);
+        return g;
+      },
+      /** text(x, y, 'words', options): one line of text over a stretch of tiles. Empty text removes the line that starts at x, y. */
+      text(x: number, y: number, text: unknown, options: TextOptions = {}) {
+        markWrite(data.address);
+        const tiles = ensure();
+        const x0 = Math.floor(Number(x));
+        const y0 = Math.floor(Number(y));
+        if (!Number.isInteger(x0) || !Number.isInteger(y0) || x0 < 0 || y0 < 0 || x0 >= c || y0 >= r) {
+          throw new Error(`g.text(${x}, ${y}, ...) starts outside the ${c}×${r} grid (x goes 0 to ${c - 1}, y goes 0 to ${r - 1})`);
+        }
+        const opts = options ?? {};
+        const content = fmt(text).replace(/\s*\n\s*/g, ' ');
+        tiles.labels = tiles.labels.filter((l) => !(l.x === x0 && l.y === y0));
+        if (!content) {
+          sheet.refreshSoon(data.address);
+          return g;
+        }
+        const w = Math.max(1, Math.min(c - x0, Math.floor(Number(opts.w ?? c - x0))));
+        if (tiles.labels.length >= MAX_LABELS) throw new Error(`A grid can hold ${MAX_LABELS} lines of text: use g.clear() to start again`);
+        if (opts.fill !== undefined) g.box(x0, y0, w, 1, opts.fill);
+        tiles.labels.push({
+          x: x0,
+          y: y0,
+          w,
+          text: content,
+          ink: opts.ink === undefined || opts.ink === null ? null : String(opts.ink),
+          bold: !!opts.bold,
+          align: opts.align === 'center' || opts.align === 'right' ? opts.align : 'left',
+          snap: !!opts.snap,
+          mono: !!opts.mono || !!opts.snap,
+          size: typeof opts.size === 'number' && opts.size > 0 ? opts.size : null,
+        });
+        sheet.refreshSoon(data.address);
+        return g;
+      },
       clear() {
         markWrite(data.address);
         const tiles = ensure();
         tiles.fills.fill(null);
         tiles.texts.fill(null);
+        tiles.inks.fill(null);
+        tiles.bolds.fill(false);
+        tiles.labels = [];
         sheet.refreshSoon(data.address);
         return g;
+      },
+      /** focus(): this grid takes the keyboard; on(g, 'key', ...) hears the keys. A click anywhere else takes it away again. */
+      focus() {
+        focusTiles(tileKeyId);
+        return g;
+      },
+      blur() {
+        blurTiles(tileKeyId);
+        return g;
+      },
+      get focused() {
+        return tilesHaveFocus(tileKeyId);
       },
     };
     return g;
@@ -671,7 +770,31 @@ export function buildApi(
     const gridBlock = typeof target === 'object' && target !== null && (target as { isGrid?: boolean }).isGrid ? (target as { address: string }).address : null;
     if (gridBlock) {
       label = `${gridBlock} grid`;
-      if (event !== 'click') throw new Error("on(grid, ...) only has the 'click' event: on(g, 'click', (tile) => { ... })");
+      if (event === 'key' || event === 'focus' || event === 'blur') {
+        let off = () => {};
+        let forgetKeys = () => {};
+        const stopKeys = (): void => {
+          off();
+          forgetKeys();
+        };
+        // The keys come one after the other, none is skipped, so they do not go through the one-at-a-time callback.
+        const hear = async (...args: unknown[]): Promise<void> => {
+          if (ctx.cancelled) return;
+          try {
+            await (fn as (...a: unknown[]) => unknown)(...args);
+          } catch (err) {
+            if (err instanceof CancelError) return;
+            data.error = err instanceof Error ? err.message : String(err);
+            stopKeys();
+            ctx.touched.set(data.address, '');
+          }
+          if (!ctx.cancelled) ctx.flush();
+        };
+        off = listenTileKeys(`${sheet.id}:${gridBlock}`, event === 'key' ? { key: (k, i) => void hear(k, i) } : event === 'focus' ? { focus: () => void hear() } : { blur: () => void hear() });
+        forgetKeys = ctx.addTask(stopKeys);
+        return stopKeys;
+      }
+      if (event !== 'click') throw new Error("on(grid, ...) understands 'click' (a tile was clicked), 'key' (a key was typed while the grid has the keyboard), 'focus' and 'blur': on(g, 'click', (tile) => { ... })");
       nodes = [clickNode(gridBlock)];
     } else if (target === 'sheet') {
       label = 'sheet';

@@ -86,6 +86,31 @@ export interface TileGrid {
   /** Row-major; null leaves the block's own colour showing. */
   fills: Array<string | null>;
   texts: Array<string | null>;
+  /** Text colour per tile (null: the default dark ink). */
+  inks: Array<string | null>;
+  /** Bold text per tile. */
+  bolds: boolean[];
+  /** Runs of text that flow across several tiles (g.text(...)). */
+  labels: TileLabel[];
+  /** A thin white line between the tiles (grid(cols, rows, { lines: false }) leaves it out, for a smooth surface). */
+  lines: boolean;
+}
+
+/** A line of text laid over a stretch of tiles. */
+export interface TileLabel {
+  x: number;
+  y: number;
+  /** How many tiles wide it is. */
+  w: number;
+  text: string;
+  ink: string | null;
+  bold: boolean;
+  align: 'left' | 'center' | 'right';
+  /** One letter per tile (a terminal), instead of flowing text. */
+  snap: boolean;
+  mono: boolean;
+  /** The letters' height as a fraction of a tile's height. */
+  size: number | null;
 }
 
 /** Where a sheet is looking: zoom and scroll position. */
@@ -928,6 +953,11 @@ export class Sheet {
     const fy = (evt.clientY - rect.top + c.scrollTop - state.y) / state.height;
     if (fx < 0 || fy < 0 || fx >= 1 || fy >= 1) return null;
     return { x: Math.floor(fx * tiles.cols), y: Math.floor(fy * tiles.rows) };
+  }
+
+  /** A click on a block's grid that did not come through the sheet's own canvas (the Examples notebook shows the output in a page of its own). */
+  noteTileClick(address: string, x: number, y: number): void {
+    this.lastTileClick = { address, x, y, time: performance.now() };
   }
 
   /** The tile of the latest click on a block, if it was that recent (the click event reads it as it fires). */

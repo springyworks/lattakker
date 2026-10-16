@@ -1,4 +1,4 @@
-import type { TileGrid } from './Sheet';
+import type { TileGrid, TileLabel } from './Sheet';
 /** XY plots for cells: turns what plot(...) was given into numbers, and the numbers into an SVG that fits the cell. */
 export interface PlotSeries {
   name: string;
@@ -188,6 +188,30 @@ export function plotSvg(spec: PlotSpec, width: number, height: number): string {
 }
 
 /** A block's tile grid as an SVG stretched over the block; blank tiles let the block's own colour show. */
+const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+
+/** One line of text over a stretch of tiles, clipped to it: flowing across the tiles, or one letter in each tile. Its own little svg, so its coordinates start at the run's top-left corner. */
+function labelSvg(l: TileLabel, tw: number, th: number): string {
+  const w = l.w * tw;
+  const family = l.mono ? ` font-family="${MONO}"` : '';
+  const weight = l.bold ? ' font-weight="700"' : '';
+  const common = `y="${(th / 2).toFixed(2)}"${family}${weight} dominant-baseline="central" fill="${esc(l.ink ?? '#1f2933')}" xml:space="preserve"`;
+  let body: string;
+  if (l.snap) {
+    // A letter is about 0.6 of its size wide, so the size is chosen to fit one tile.
+    const fs = Math.max(6, Math.min(th * (l.size ?? 0.8), tw / 0.6));
+    const letters = Array.from(l.text).slice(0, l.w);
+    const xs = letters.map((_, i) => ((i + 0.5) * tw).toFixed(2)).join(' ');
+    body = `<text x="${xs}" font-size="${fs.toFixed(1)}" text-anchor="middle" ${common}>${esc(letters.join(''))}</text>`;
+  } else {
+    const fs = Math.max(6, th * (l.size ?? 0.62));
+    const pad = Math.min(4, tw * 0.3);
+    const [x, anchor] = l.align === 'center' ? [w / 2, 'middle'] : l.align === 'right' ? [w - pad, 'end'] : [pad, 'start'];
+    body = `<text x="${x.toFixed(2)}" font-size="${fs.toFixed(1)}" text-anchor="${anchor}" ${common}>${esc(l.text)}</text>`;
+  }
+  return `<svg x="${(l.x * tw).toFixed(2)}" y="${(l.y * th).toFixed(2)}" width="${w.toFixed(2)}" height="${th.toFixed(2)}" overflow="hidden">${body}</svg>`;
+}
+
 export function tilesSvg(tiles: TileGrid, width: number, height: number): string {
   const w = Math.max(1, width);
   const h = Math.max(1, height);
@@ -195,15 +219,21 @@ export function tilesSvg(tiles: TileGrid, width: number, height: number): string
   const th = h / tiles.rows;
   const fs = Math.max(6, Math.min(th * 0.6, tw * 0.6, 22));
   const parts: string[] = [];
+  const edge = tiles.lines ? ' stroke="#ffffff" stroke-opacity="0.6" stroke-width="0.6"' : ' shape-rendering="crispEdges"';
   for (let y = 0; y < tiles.rows; y++) {
     for (let x = 0; x < tiles.cols; x++) {
       const i = y * tiles.cols + x;
       const fill = tiles.fills[i];
       const text = tiles.texts[i];
-      if (fill) parts.push(`<rect x="${(x * tw).toFixed(2)}" y="${(y * th).toFixed(2)}" width="${tw.toFixed(2)}" height="${th.toFixed(2)}" fill="${esc(fill)}" stroke="#ffffff" stroke-opacity="0.6" stroke-width="0.6"/>`);
-      if (text) parts.push(`<text x="${((x + 0.5) * tw).toFixed(2)}" y="${((y + 0.5) * th).toFixed(2)}" font-size="${fs.toFixed(1)}" text-anchor="middle" dominant-baseline="central" fill="#1f2933">${esc(text)}</text>`);
+      if (fill) parts.push(`<rect x="${(x * tw).toFixed(2)}" y="${(y * th).toFixed(2)}" width="${tw.toFixed(2)}" height="${th.toFixed(2)}" fill="${esc(fill)}"${edge}/>`);
+      if (text) {
+        const ink = tiles.inks[i] ?? '#1f2933';
+        const weight = tiles.bolds[i] ? ' font-weight="700"' : '';
+        parts.push(`<text x="${((x + 0.5) * tw).toFixed(2)}" y="${((y + 0.5) * th).toFixed(2)}" font-size="${fs.toFixed(1)}"${weight} text-anchor="middle" dominant-baseline="central" fill="${esc(ink)}">${esc(text)}</text>`);
+      }
     }
   }
+  for (const l of tiles.labels) parts.push(labelSvg(l, tw, th));
   // The label box shrinks to its content, so percentages would collapse to a default size: use the block's real size, less the label's padding.
   const pw = Math.max(1, w - 8);
   const ph = Math.max(1, h - 6);

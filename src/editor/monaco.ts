@@ -78,6 +78,87 @@ const widgetHost = document.createElement('div');
 widgetHost.className = 'monaco-editor mms-widgets';
 document.body.appendChild(widgetHost);
 
+// The text beside the suggestion list (Monaco's "show more", which Ctrl+Space opens) is opened the first time a list
+// appears, so the documentation is there without asking. It uses only Monaco's public command, and only once: after that
+// Monaco remembers whether the person wants it, and closing it with its x stays closed.
+let docsOpened = false;
+new MutationObserver(() => {
+  if (docsOpened) return;
+  const list = widgetHost.querySelector('.suggest-widget.visible');
+  if (!list) return;
+  docsOpened = true;
+  if (!list.classList.contains('shows-details')) monaco.editor.getEditors().find((e) => e.hasTextFocus())?.trigger('lattakker', 'toggleSuggestionDetails', {});
+}).observe(widgetHost, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] });
+
+// Pointing at an entry of the list shows its text, as the hover does: the highlighted entry follows the mouse. It moves
+// the highlight with Monaco's own "next" and "previous" commands, one step at a time. Only a real mouse move counts,
+// because the list scrolls under a still mouse when the highlight moves, and that must not start a chase.
+let followedAt = 0;
+widgetHost.addEventListener('mousemove', (e) => {
+  const row = (e.target as HTMLElement).closest('.suggest-widget .monaco-list-row');
+  if (!row || (e.movementX === 0 && e.movementY === 0) || performance.now() - followedAt < 120) return;
+  const list = row.closest('.suggest-widget');
+  const focused = list?.querySelector('.monaco-list-row.focused');
+  const want = Number(row.getAttribute('data-index'));
+  const have = Number(focused?.getAttribute('data-index'));
+  if (!Number.isFinite(want) || !Number.isFinite(have) || want === have || Math.abs(want - have) > 40) return;
+  const editor = monaco.editor.getEditors().find((ed) => ed.hasTextFocus());
+  if (!editor) return;
+  followedAt = performance.now();
+  for (let i = 0; i < Math.abs(want - have); i++) editor.trigger('lattakker', want > have ? 'selectNextSuggestion' : 'selectPrevSuggestion', {});
+});
+
+/**
+ * The text beside the suggestion list says the same as the hover: the signature as highlighted code, the documentation
+ * (with its @param lines), and the 💡 line for the words a child meets first. Monaco's own TypeScript list gives the
+ * signature as plain text and the documentation without the kid line, and it shows "Loading..." until the engine
+ * answers (for ever, when the engine is stuck). So the answer of the engine is reshaped here, and an answer that does
+ * not come is replaced by a plain sentence after a few seconds.
+ *
+ * This has to be in place before the TypeScript support registers its list, which it does when the first TypeScript
+ * model is made: that is why this is at the top of the file, and why it wraps the registration.
+ */
+const ENGINE_PATIENCE_MS = 6000;
+/** The first list of a page also loads the engine and the browser's type library, which can take a while. */
+const ENGINE_LIST_PATIENCE_MS = 15000;
+
+function reshapeDetails(item: monaco.languages.CompletionItem, answer: monaco.languages.CompletionItem | null | undefined): monaco.languages.CompletionItem {
+  const uri = (item as { uri?: monaco.Uri }).uri;
+  if (!uri || !isCodeUri(uri)) return answer ?? item;
+  if (!answer) {
+    return { ...item, detail: undefined, documentation: { value: '_The TypeScript engine is slow to answer. Press Esc, then type the dot again._' } };
+  }
+  const signature = (answer.detail ?? '').trim();
+  const documentation = typeof answer.documentation === 'string' ? answer.documentation : (answer.documentation?.value ?? '');
+  // A word that is a member (after a dot) is not the global of the same name, so it gets no kid line.
+  const model = monaco.editor.getModel(uri);
+  const range = item.range && 'startColumn' in item.range ? item.range : null;
+  const member = !!model && !!range && /\.\s*$/.test(model.getLineContent(range.startLineNumber).slice(0, range.startColumn - 1));
+  const kid = member ? undefined : KID_WORDS[typeof item.label === 'string' ? item.label : item.label.label];
+  const parts = [signature && '```typescript\n' + signature + '\n```', documentation.trim(), kid && '---\n💡 ' + kid].filter(Boolean);
+  if (!parts.length) return answer;
+  return { ...answer, detail: undefined, documentation: { value: parts.join('\n\n') } };
+}
+
+const registerCompletions = monaco.languages.registerCompletionItemProvider.bind(monaco.languages);
+(monaco.languages as { registerCompletionItemProvider: typeof registerCompletions }).registerCompletionItemProvider = (selector, provider) => {
+  const resolve = provider.resolveCompletionItem?.bind(provider);
+  if (!resolve) return registerCompletions(selector, provider);
+  const wrapped = Object.create(provider) as monaco.languages.CompletionItemProvider;
+  // The list itself says "Loading..." until the engine answers, so it gets the same patience: no answer, no list (and no stuck sign).
+  const provide = provider.provideCompletionItems.bind(provider);
+  wrapped.provideCompletionItems = (model, position, context, token) =>
+    Promise.race([Promise.resolve(provide(model, position, context, token)), new Promise<undefined>((done) => window.setTimeout(() => done(undefined), ENGINE_LIST_PATIENCE_MS))]);
+  wrapped.resolveCompletionItem = async (item, token) => {
+    const answer = await Promise.race([
+      Promise.resolve(resolve(item, token)).catch(() => null),
+      new Promise<null>((done) => window.setTimeout(() => done(null), ENGINE_PATIENCE_MS)),
+    ]);
+    return reshapeDetails(item, answer);
+  };
+  return registerCompletions(selector, wrapped);
+};
+
 /** Editor features that help a child write code; everything that only adds noise stays off. */
 const KID_FRIENDLY: monaco.editor.IStandaloneEditorConstructionOptions = {
   theme: 'mms',
