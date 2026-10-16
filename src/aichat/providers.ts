@@ -1,5 +1,6 @@
-import { DEFAULT_OLLAMA_CONTEXT, getKey, getSettings, type AiSettings } from './config';
+import { DEFAULT_OLLAMA_CONTEXT, getKey, getSettings, localWindow, noteServerWindow, type AiSettings } from './config';
 import { ammo } from './ammo';
+import { describeModel, loadEstimate, parsePs, rememberLoad, type PsModel } from './ollamaLoad';
 import { jobs, type JobHandle } from './jobs';
 
 /**
@@ -213,17 +214,16 @@ export class OpenAiCompatProvider implements ModelProvider {
     }
   }
 
-  /** What Ollama says about its memory right now: is our model in it, which other models are, and how big a window ours has (null for servers without /api/ps). */
-  private async ps(): Promise<{ loaded: boolean | null; others: string[]; window: number | null }> {
+  /** What Ollama says about its memory right now: is our model in it (and how), which other models are, and how big a window ours has (null for servers without /api/ps). */
+  private async ps(): Promise<{ loaded: boolean | null; others: string[]; window: number | null; mine: PsModel | null }> {
     try {
       const res = await fetch(`${this.root()}/api/ps`, { signal: AbortSignal.timeout(1500) });
-      if (!res.ok) return { loaded: null, others: [], window: null };
-      const data = (await res.json()) as { models?: Array<{ name?: string; model?: string; context_length?: number }> };
-      const list = data.models ?? [];
-      const mine = list.find((m) => m.name === this.model || m.model === this.model);
-      return { loaded: !!mine, others: list.filter((m) => m !== mine).map((m) => m.name ?? m.model ?? '').filter(Boolean), window: mine?.context_length ?? null };
+      if (!res.ok) return { loaded: null, others: [], window: null, mine: null };
+      const list = parsePs(await res.json());
+      const mine = list.find((m) => m.name === this.model) ?? null;
+      return { loaded: !!mine, others: list.filter((m) => m !== mine).map((m) => m.name), window: mine?.context || null, mine };
     } catch {
-      return { loaded: null, others: [], window: null };
+      return { loaded: null, others: [], window: null, mine: null };
     }
   }
 
@@ -232,7 +232,8 @@ export class OpenAiCompatProvider implements ModelProvider {
     const context = this.context;
     if (native) {
       const inMemory = await this.ps();
-      if (inMemory.loaded && inMemory.window && inMemory.window !== context) {
+      if (inMemory.window) noteServerWindow(inMemory.window);
+      if (context && inMemory.loaded && inMemory.window && inMemory.window !== context) {
         const note = `Changing Ollama context from ${inMemory.window} to ${context} tokens; the model may reload. Match other clients and the server to this size to avoid repeated reloads.`;
         job.say(note, false);
         this.onNote?.(note);
@@ -259,11 +260,12 @@ export class OpenAiCompatProvider implements ModelProvider {
     let body: Record<string, unknown>;
     if (native) {
       // Ollama's own door: the memory (num_ctx) is ours to choose here, the OpenAI-style door always uses the server's default.
-      body = { model: this.model, messages: wire, stream: true, options: { num_ctx: context, temperature: 0.4, num_predict: MAX_OUTPUT_TOKENS } };
+      // With no size chosen nothing is sent: a different num_ctx makes Ollama start a new instance (and drop the old one's cache).
+      body = { model: this.model, messages: wire, stream: true, options: { ...(context ? { num_ctx: context } : {}), temperature: 0.4, num_predict: MAX_OUTPUT_TOKENS } };
       // A child should not wait while a model thinks out loud.
       if (this.thinkingOff) body.think = false;
       if (withTools) body.tools = declared;
-      ammo.setWindow(context);
+      ammo.setWindow(localWindow(context));
     } else {
       body = { model: this.model, messages: wire, temperature: 0.4, stream: true, max_tokens: MAX_OUTPUT_TOKENS };
       // A child should not wait while a model thinks out loud; servers that do not know the setting ignore it.
@@ -282,23 +284,31 @@ export class OpenAiCompatProvider implements ModelProvider {
     let askedWindow = false;
     let waitingForFirst = true;
     let stuck = '';
+    let sawAbsent = false;
     job.state('waiting');
     job.say(`question sent to ${new URL(this.baseUrl, location.href).host}; nothing has come back yet`, false);
     const watch = window.setInterval(() => {
       if (!waitingForFirst) return;
       const quiet = Math.round((performance.now() - sentAt) / 1000);
-      void this.ps().then(({ loaded, others }) => {
+      void this.ps().then(({ loaded, others, mine }) => {
         if (!waitingForFirst) return;
         if (loaded === false) {
+          sawAbsent = true;
           const busy = others.length ? ` Ollama is also holding ${others.join(', ')} in memory: it has to make room first (to free it: ollama stop ${others[0]}).` : '';
-          job.say(`the server has not answered and the model is not in memory yet: it is most likely still loading (a big model can take minutes). Waiting ${quiet} s so far.${busy}`, false);
+          job.say(`the model is not in memory yet: loading it. ${quiet} s so far, ${loadEstimate(this.model, quiet)}.${busy}`, false);
           // Loading is slow but allowed; a model that never shows up in memory is given up on after 20 minutes.
           if (quiet > 1200) {
             stuck = 'The model did not finish loading within 20 minutes.';
             ctl.abort();
           }
         } else {
-          job.say(loaded === true ? `the model is in memory and works on the question; no word yet (${quiet} s)` : `waiting for the server; nothing has come back yet (${quiet} s)`, false);
+          if (loaded && sawAbsent) {
+            // It appeared while we waited: that was a load, and its length is the best guess for the next one.
+            sawAbsent = false;
+            rememberLoad(this.model, quiet);
+          }
+          const how = mine ? ` (${describeModel(mine)})` : '';
+          job.say(loaded === true ? `the model is in memory${how} and is reading the question; no word yet (${quiet} s)` : `waiting for the server; nothing has come back yet (${quiet} s)`, false);
           if (quiet > 300) {
             stuck = `The model gave no word for ${quiet} s although it is in memory: it looks stuck.`;
             ctl.abort();

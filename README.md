@@ -1255,14 +1255,22 @@ are already running.
 
 **Keeping the model loaded (no reloading again and again).** Ollama reloads a model when
 a request asks for another context size (`num_ctx`) than the one loaded, or when a second model
-needs the memory. The chat asks for the size in its settings (⚙, default 262144), while a
-plain `/v1` call (curl, an editor) gets the server's own default, so they push each other out.
-For one model that is always ready, give the server the same size for everybody and keep one
+needs the memory. By default the chat sends **no** size (⚙ › Memory of the chat: "As the server runs it"),
+so it uses whatever instance the server already has; a size chosen there, or a different one in a
+plain `/v1` call (curl, an editor), makes the clients push each other out.
+For one model that is always ready, give the server the one size for everybody and keep one
 model loaded: `sudo sh scripts/ollama-persistent.sh` (it writes a systemd drop-in with
 `OLLAMA_KEEP_ALIVE=-1`, `OLLAMA_CONTEXT_LENGTH=262144`, `OLLAMA_MAX_LOADED_MODELS=1`,
 `OLLAMA_NUM_PARALLEL=1`, `OLLAMA_FLASH_ATTENTION=1`, and loads the model after every start;
-`sudo env MODEL=qwen3.6:latest CTX=65536 sh scripts/ollama-persistent.sh` for 64k), and set the same
-"memory of the chat" in ⚙. `ollama ps` shows what is loaded and at what context. A reasoning
+`sudo env MODEL=qwen3.6:latest CTX=32768 sh scripts/ollama-persistent.sh` for 32k). Connecting or
+disconnecting clients never stops Ollama or unloads the model: `OLLAMA_KEEP_ALIVE=-1` keeps it in
+memory, and the service keeps running under systemd. `ollama ps` shows what is loaded and at what context.
+The helper's small print and the `ollama` server's `status` and `warm` say the same in words (size, how
+much of the model is on the GPU, its window, how long it stays). Ollama does **not** report how far a load has
+come (`/api/ps` lists a model only once it is loaded), so while it loads the helper shows a percentage that is
+an estimate from how long the last load of that model took (remembered in this browser) and marks it as one. A
+model that is only partly on the GPU (for example 18%) runs the rest on the CPU, which is far slower: choose a
+smaller memory size or model. A reasoning
 model such as `qwen3.6` answers over `/v1` with its thinking in a separate `reasoning` field, so
 give it a generous `max_tokens`. LM Studio and other servers with the OpenAI-style door work
 for `ask` and `chat`; `status` then says it is not Ollama itself. Over MCP: the
@@ -1274,8 +1282,8 @@ share exactly two things: the one copy of the model in memory, and the context s
 started with (`OLLAMA_CONTEXT_LENGTH`, 262144 in the persistent setup). They do **not** share chats:
 every request carries its whole conversation, and with `OLLAMA_NUM_PARALLEL=1` requests wait in line
 (one answer at a time, in order). A request that asks for another `num_ctx` than the loaded one makes
-Ollama reload the model, so clients should omit it or send the same size. This page explicitly uses
-the size selected in settings, even when a smaller context is already loaded, and reports the change. A prompt
+Ollama reload the model, so clients should omit it or send the same size. This page omits it by default
+("As the server runs it"); if a size is selected in settings it is sent, even when a smaller context is already loaded, and the change is reported. A prompt
 that starts with the same tokens as an earlier one is read about three times faster (the server keeps
 that cache for several prompts, even when another client's request comes in between). So agents that
 should be aware of each other share a *room*: a transcript that comes first in every prompt, with the
@@ -1284,11 +1292,11 @@ requests: it pings first, refuses to run when the model is not loaded (it never 
 lets the agents ask at the same moment and reports who waited how long and that nothing was reloaded.
 
 **Large context on this computer.** The installed `qwen3.6:latest` reports a native
-262,144-token limit. Settings offer 4k, 8k, 16k, 32k, 64k, 128k and 256k; new settings
-default to 256k for this setup. Existing saved choices are preserved: select **256k**
-in **AI settings > Memory of the chat** to upgrade an existing browser. The main
+262,144-token limit. Settings offer "as the server runs it" (default), 4k, 8k, 16k, 32k, 64k, 128k and 256k.
+A browser that saved a size earlier keeps it: choose **As the server runs it** in
+**AI settings > Memory of the chat** to stop it forcing reloads. The main
 helper, local librarian, cell `ollama.ask`/`chat`, MCP requests and cold-model warm-up
-all use that setting. Changing it applies on the next question and can reload the model.
+all use that setting. Choosing a size that differs from the loaded one applies on the next question and reloads the model.
 
 Tokens are not bytes: 256k here means **262,144 tokens**, not 256 kB. RAM holds the
 weights **and** the KV cache, runtime buffers and the OS; a 24–32 GB model on a
@@ -2236,7 +2244,7 @@ context window). Ollama's own default is 4096, which is less than the helper's
 instructions plus its tool descriptions plus one `read_guide` answer; the server then
 silently drops the oldest part, which is the instructions, and the answers turn
 strange. So: for Ollama the page uses its native `/api/chat` and asks for `num_ctx`
-itself (**⚙ › Memory of the chat**, 256k by default for this setup); the header shows a measured
+itself (**⚙ › Memory of the chat**, by default "as the server runs it", which sends no size and never forces a reload); the header shows a measured
 **🔋 4.9k of 16k tokens in use** (the server's own count); before every question
 old, long tool answers are shortened to fit, and a model with a tiny memory gets the
 shortest tool list, each with a note in the chat. Other servers (LM Studio ...) keep

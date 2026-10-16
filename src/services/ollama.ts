@@ -1,4 +1,5 @@
 import { getKey, getSettings } from '../aichat/config';
+import { describeModel, lastLoadSeconds, parsePs, rememberLoad } from '../aichat/ollamaLoad';
 import { OpenAiCompatProvider, friendly, type ChatMsg } from '../aichat/providers';
 import { ERR, McpError, type Json, type McpServer } from '../mcp/router';
 
@@ -31,7 +32,8 @@ export interface OllamaStatus {
   /** The models that are installed, and those that are in memory right now. */
   models: string[];
   loaded: string[];
-  /** The model chosen in the helper's settings ('' when none). */
+  /** One line per model in memory: its size, how much of it is on the GPU, its window and how long it stays (from /api/ps). */
+  memory: string[];
   selected: string;
   /** True when ask() can work: the server answers and the model that will be used is installed. */
   ready: boolean;
@@ -92,7 +94,7 @@ const notFound = (): string =>
 /** Is the model server there, which models does it have, and what is the problem if it cannot be used. Never throws. */
 export async function ollamaStatus(): Promise<OllamaStatus> {
   const selected = getSettings().local.model;
-  const status: OllamaStatus = { running: false, isOllama: false, server: hostOf(), version: null, models: [], loaded: [], selected, ready: false, message: '' };
+  const status: OllamaStatus = { running: false, isOllama: false, server: hostOf(), version: null, models: [], loaded: [], memory: [], selected, ready: false, message: '' };
   const root = nativeBase();
   const [version, tags, ps] = await Promise.all([getJson(`${root}/api/version`), getJson(`${root}/api/tags`), getJson(`${root}/api/ps`)]);
   const names = (data: Record<string, unknown> | null, key: string): string[] =>
@@ -103,6 +105,7 @@ export async function ollamaStatus(): Promise<OllamaStatus> {
     status.version = typeof version?.version === 'string' ? version.version : null;
     status.models = names(tags, 'models');
     status.loaded = names(ps, 'models');
+    status.memory = parsePs(ps).map((m) => `${m.name}: ${describeModel(m)}`);
   } else {
     // Not Ollama's own door: maybe another server with the OpenAI-style one (LM Studio ...).
     const listed = await getJson(`${base()}/models`);
@@ -173,14 +176,20 @@ export async function ollamaWarm(model?: string): Promise<{ model: string; loade
   const name = model || status.selected || status.models[0] || '';
   if (!name) throw new Error(status.message || 'No model chosen.');
   if (status.models.length && !status.models.some((m) => m === name || m.split(':')[0] === name.split(':')[0])) throw new Error(`The model “${name}” is not installed. Installed: ${status.models.join(', ')}.`);
-  if (status.loaded.includes(name)) return { model: name, loaded: true, started: false, message: `${name} is in memory.` };
+  if (status.loaded.includes(name)) return { model: name, loaded: true, started: false, message: `${name} is in memory${status.memory.find((l) => l.startsWith(`${name}:`)) ? ` (${status.memory.find((l) => l.startsWith(`${name}:`))!.slice(name.length + 2)})` : ''}.` };
+  const last = lastLoadSeconds(name);
   if (!warming.has(name)) {
     warming.add(name);
-    fetch(`${nativeBase()}/api/generate`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: name, prompt: '', keep_alive: -1, options: { num_ctx: getSettings().local.context } }) })
+    const began = performance.now();
+    const num_ctx = getSettings().local.context;
+    fetch(`${nativeBase()}/api/generate`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: name, prompt: '', keep_alive: -1, ...(num_ctx ? { options: { num_ctx } } : {}) }) })
+      .then((res) => {
+        if (res.ok) rememberLoad(name, (performance.now() - began) / 1000);
+      })
       .catch(() => undefined)
       .finally(() => warming.delete(name));
   }
-  return { model: name, loaded: false, started: true, message: `${name} is loading into memory (a big model can take minutes the first time). Ask again when status says it is in "loaded".` };
+  return { model: name, loaded: false, started: true, message: `${name} is loading into memory (${last ? `the last load took about ${last} s` : 'a big model can take minutes the first time'}; Ollama does not report load progress). Ask again when status says it is in "loaded".` };
 }
 
 let running = 0;

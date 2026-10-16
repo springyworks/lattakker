@@ -1,7 +1,7 @@
 import { friendly, makeProvider, type ChatMsg, type ToolCall } from './providers';
 import { localAssistantReady, probeLocal } from './localAi';
 import { router } from '../mcp/router';
-import { getSettings } from './config';
+import { getSettings, localWindow } from './config';
 import { CLIENT, runTool, setTurnTrace, toolsFor, WriteLedger, type AiContext, type ToolHost } from './tools';
 import { workspace } from '../workspace';
 import { jobs } from './jobs';
@@ -191,8 +191,8 @@ export class Conversation {
         const write = tools.some((t) => t.name === 'write_code');
         // A model on this computer has no way to open the README itself: it is given the Bible (the rules and the README chapters that fit) up front.
         const local = getSettings().provider === 'local';
-        ammo.setWindow(local ? getSettings().local.context : null);
-        const bible = local ? await bibleFor(getSettings().local.context, 0.35) : null;
+        ammo.setWindow(local ? localWindow() : null);
+        const bible = local ? await bibleFor(localWindow(), 0.35) : null;
         if (bible?.hasReadme) markOriented('helper');
         const system = `${bible ? `${bible.text}\n\n` : ''}${buildPrompt({ small, write })}${second && !small ? LOCAL_PROMPT : ''}\n${small ? '' : `(Your memory holds ${memoryInfo().count} notes.)`}`;
         // The model can only hold so much in mind. Make the conversation fit (shortening old, long tool answers first) and say so.

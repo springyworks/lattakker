@@ -7,8 +7,24 @@
 
 export type ProviderId = 'local' | 'gemini';
 
-export const OLLAMA_CONTEXT_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072, 262144];
-export const DEFAULT_OLLAMA_CONTEXT = 262144;
+/** 0 = "as the server runs it": no num_ctx is sent, so Ollama never starts a new instance because of this page (a different num_ctx always does). */
+export const SERVER_CONTEXT = 0;
+export const OLLAMA_CONTEXT_OPTIONS = [SERVER_CONTEXT, 4096, 8192, 16384, 32768, 65536, 131072, 262144];
+export const DEFAULT_OLLAMA_CONTEXT = SERVER_CONTEXT;
+
+/** Used for budgeting when the server's own size is not known yet (before the first answer from /api/ps). */
+const ASSUMED_SERVER_WINDOW = 32768;
+let serverWindow = 0;
+
+/** Remember the window the server really runs the model with. */
+export function noteServerWindow(tokens: number): void {
+  if (tokens > 0) serverWindow = tokens;
+}
+
+/** How many tokens the model can hold: the chosen size, or the server's own when "as the server" is chosen. */
+export function localWindow(chosen: number = getSettings().local.context): number {
+  return chosen || serverWindow || ASSUMED_SERVER_WINDOW;
+}
 
 export interface AiSettings {
   provider: ProviderId;

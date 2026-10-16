@@ -547,7 +547,8 @@ interface OllamaStatus {
   /** Installed models, and the ones that are in memory right now. */
   models: string[];
   loaded: string[];
-  /** The model chosen in the helper settings ('' when none). */
+  /** One line per model in memory: size, share on the GPU, window, how long it stays. */
+  memory: string[];
   selected: string;
   /** ask() can work. */
   ready: boolean;
