@@ -57,6 +57,7 @@ Live demo: https://springyworks.github.io/lattakker/
   - [8.16 How this computer is doing: the system global](#816-how-this-computer-is-doing-the-system-global)
   - [8.17 Making tabs from code: the tabs global](#817-making-tabs-from-code-the-tabs-global)
   - [8.18 Animated pictures you control: the anim global](#818-animated-pictures-you-control-the-anim-global)
+  - [8.19 Mail: letters between the person, AIs and cells](#819-mail-letters-between-the-person-ais-and-cells)
 - [9 How the cell code is run (internals)](#9-how-the-cell-code-is-run-internals)
   - [9.1 When does a cell run?](#91-when-does-a-cell-run)
   - [9.2 Is this reactive programming?](#92-is-this-reactive-programming)
@@ -471,7 +472,11 @@ box, the AI dialog of the sidebar: you ask, the question goes into the chat, the
 `ollama`) and each tool it uses through the router, and the answer comes back to you. An AI chat outside the page
 (the `outside_ai` box at the bottom, over the dev server's `/mcp`, see [11.3](#113-connect-an-external-ai-chat-mcp)) runs
 its calls in along the whole way, and the answer comes back. Every line also has a tiny two-line ticker with the last two messages
-over it (`→` a question going to the box, `←` its answer with the time it took, `✕` an error). To watch it
+over it (`→` a question going to the box, `←` its answer with the time it took, `✕` an error). Three tabs come with the
+page and have a box of their own (`board`, `lab`, `examples`). Every other tab, the Monitor itself and each tab you make with
+the **＋**, shares **one block, `other_tabs : Tab [0..*]`**: in SysML a part with the multiplicity `[0..*]` means "any
+number of these", and a stack of boxes is the usual way to draw it. So the drawing never has to grow or shrink when a tab is
+made or closed, and the traffic of all those tabs runs to that one block (the Monitor's cell **A1** decides this in `boxOf`). To watch it
 busy, open the page with `?mcp` on the dev server and run `node scripts/mcp-smoke.mjs` (a scripted outside AI).
 Next to the drawing: live graphs of this computer (processor and graphics card load,
 temperatures, memory, frames per second), the router's messages per second and the
@@ -986,6 +991,7 @@ one, and they all sit on the same router:
 | `board`, `lab`, `examples` | the cells of a tab | `list_cells`, `get_cell`, `run_cell`, `set_code`, `click`, `flash`, `signal` |
 | `router` | the router itself | `stats`, `catalog`, `servers`, `recent`, `packets`, `analyze`, `ask`, `callers`, `reset_stats`, `trace`, `history`, `change`, `endpoints`, `self_check` |
 | `code` | all the TypeScript of the page as text for a small AI ([8.11.3](#8113-the-code-of-the-page-for-a-small-ai)) | `overview`, `dump`, `search`, `read`, `list` |
+| `mail` | letters between the person, the helper, outside AI chats and cells ([8.19](#819-mail-letters-between-the-person-ais-and-cells)) | `check`, `inbox`, `read`, `send`, `reply`, `sent`, `delete`, `boxes` |
 | `weather` | the weather ([8.12](#812-the-weather)) | `now`, `forecast`, `find` |
 | `ollama` | the model on this computer ([8.13](#813-the-model-on-this-computer-ollama)) | `status`, `ping`, `warm`, `models`, `ask` |
 | `memory` | the helper's notes and little database | `remember`, `recall`, `db_put` ... |
@@ -1429,6 +1435,50 @@ clip.onFrame((n) => print('frame', n))
 - All frames are kept in memory (up to about 256 MB), and are released when the cell runs again.
   Needs a browser with `ImageDecoder` (Chrome, Edge). See the Lab's **A53** and **K53**, and the Examples **A45**, **K45** and **A51**. The picture files live in `public/anim/` (kept small on purpose, under 1 MB each, so they load fast from GitHub Pages).
 
+### 8.19 Mail: letters between the person, AIs and cells
+
+[↑ Contents](#contents)
+
+The page has its own internal mail, so the parties that talk over the router can leave each other a letter
+that waits until it is read: the person, the built-in helper, an AI chat outside the page and cells. (The
+cells of the old "mailbox" example only pass one text through a cell; this is a real mailbox with a sender,
+a subject, a conversation and read/unread.) The person reads and writes under the **✉** button in the tab strip;
+it shows how many letters are unread and a notice appears when a new one comes. Letters are kept in this browser
+(at most 300).
+
+An **address** is the name a party has on the router: `you` (the person), `ai-chat` (the helper in the sidebar),
+`outside-ai:<client>@<model>` (an AI chat over `/mcp`) and a cell, like `lab:A16`. A shorter address covers
+everybody it starts: a letter to `outside-ai` reaches every outside AI, one to `lab` every cell of the Lab. Words
+a small model may use are understood (`helper`, `me`, `player`, `outside`). Who you are is never said in a letter:
+it is who the router says is calling, so nobody can write in another's name.
+
+The MCP server `mail` is made to be easy for a small AI: few tools, flat arguments, other names for the same
+argument accepted (`recipient` for `to`, `text` for `body`), and every answer says what to do next.
+
+| Tool | What it does |
+| --- | --- |
+| `check` | how many unread letters wait for you, and who wrote them (cheap: call it now and then) |
+| `inbox` | the list: id, from, subject, first words (`unread_only`, `limit`) |
+| `read` | one letter by id (`m-3`) with the conversation it belongs to; it then counts as read |
+| `send` | `to` (one address, or several with commas), `body`, optional `subject` |
+| `reply` | `id` and `body`: goes to whoever wrote it, same subject |
+| `sent`, `delete`, `boxes` | what you wrote, throw a letter away (for you only), who can be written to |
+
+```ts
+// In a cell:
+await mcp.call('mail', 'tools/call', { name: 'send', arguments: { to: 'you', subject: 'Done', body: 'The timer cell has finished.' } })
+const inbox = (await mcp.call('mail', 'tools/call', { name: 'inbox', arguments: { unread_only: true } })).structuredContent
+```
+
+An outside AI has three short tools next to `mcp_request`: `check_mail`, `read_mail` (without an id: the inbox) and
+`send_mail` (with `reply_to` it answers a letter). The built-in helper has `check_mail` and `send_mail` too, and
+`look_around` tells it how many letters wait (`unread_mail`). Every letter crosses the router, so it shows in the
+Monitor like any other traffic and `trace` can follow it. `node scripts/mcp-smoke.mjs` plays two outside AIs writing to each other.
+
+For a small model the helper's `mcp_call` is forgiving: `server` alone lists the server's tools, `server` and `tool`
+with `arguments_json` calls one (`method` and `params_json` are only needed for resources), `"weather.now"` as the server works,
+and answers come back as plain text instead of the whole MCP envelope.
+
 ## 9 How the cell code is run (internals)
 
 [↑ Contents](#contents)
@@ -1827,7 +1877,7 @@ The tools are the ones in `mms.help()`: `get_state`, `get_board`,
 `resume_battle`, `undo_move`, `new_game`, `list_tabs`, `list_cells`, `get_cell`,
 `resolve_cell`, `set_cell_code`, `write_code_live`, `get_requests`,
 `wait_for_request`, `reply_to_request`, `run_cell`, `set_mode`, `say_to_player`,
-`mcp_request`, `mcp_log` and `export_svg`. The assistant gets the list from the page itself, so it is
+`check_mail`, `read_mail`, `send_mail` ([8.19](#819-mail-letters-between-the-person-ais-and-cells)), `mcp_request`, `mcp_log` and `export_svg`. The assistant gets the list from the page itself, so it is
 always current.
 
 #### 11.3.2 Talking to the AI from a cell

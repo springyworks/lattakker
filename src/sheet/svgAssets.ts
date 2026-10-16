@@ -9,10 +9,10 @@ import routerArchitecture from '../../resources/router-architecture-Lattakker-ge
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const num = (el: Element, name: string): number => Number.parseFloat(el.getAttribute(name) ?? '0') || 0;
 
-/** The name a box in the router drawing goes by: "board : Tab" is board, "mcp_router : Router" is router, "outside_ai : Client" is outside_ai ... */
+/** The name a box in the router drawing goes by: "board : Tab" is board, "other_tabs : Tab [0..*]" is other_tabs, "mcp_router : Router" is router, "outside_ai : Client" is outside_ai ... */
 function nodeName(text: string): string | null {
   const t = text.trim();
-  const m = /^(\w+) : (Tab|Service|Router|Client|Panel)$/.exec(t);
+  const m = /^(\w+) : (Tab|Service|Router|Client|Panel)(?: \[[^\]]*\])?$/.exec(t);
   if (m) return m[1] === 'mcp_router' ? 'router' : m[1];
   if (/^Cell Scripts/.test(t)) return 'cells';
   if (/^WebRTC/.test(t)) return 'webrtc';

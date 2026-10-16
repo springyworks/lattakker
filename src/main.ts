@@ -34,6 +34,7 @@ import { TabServer } from './mcp/tabServer';
 import { installServices } from './services';
 import { nav } from './nav';
 import { ShareDialog } from './ui/ShareDialog';
+import { MailPanel } from './ui/MailPanel';
 import { installHelp, toggleHelp } from './ui/help';
 
 const HELP = `How to play Lattakker
@@ -257,6 +258,7 @@ tabs.strip.onReload = () => {
   })();
 };
 const share = new ShareDialog(tabs.strip);
+const mailPanel = new MailPanel(tabs.strip, (text) => hud.say(text, 'info'));
 
 // The strip always says where you are, as a cell path: click a cell (or a tile) and it follows.
 const showHere = (): void => tabs.setPath(workspace.hereText());
@@ -327,7 +329,7 @@ if (brought > 0) hud.say(`${brought} new or updated examples are on your sheet â
 scheduleSave = startAutoSave(view.game, sheet);
 
 // Expose a few handles for tinkering from the browser console / AI chats.
-Object.assign(window as unknown as Record<string, unknown>, { sheet, game: view.game, view, hud, loadExamples, tabs, lab: lab.sheet, labPane: lab.pane, workspace, share, mcpRouter: router, nav, tabManager });
+Object.assign(window as unknown as Record<string, unknown>, { sheet, game: view.game, view, hud, loadExamples, tabs, lab: lab.sheet, labPane: lab.pane, workspace, share, mailPanel, mcpRouter: router, nav, tabManager });
 const surface = installAiSurface({ sheet, view, hud, editor });
 // The AI helper (chat, pop-up, "// AI:" watcher): silent until someone chooses a helper in its settings.
 installAiChat({ surface, strip: tabs.strip, say: (text) => hud.say(text, 'info') });

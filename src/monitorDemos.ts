@@ -18,8 +18,23 @@ span(12, 9)
 
 // svg.asset('router-architecture') is the drawing from resources/. Its boxes are called node-board,
 // node-lab, node-weather ... and their lines link-board, link-lab ...
+// The tabs you make yourself (and this Monitor) are not drawn one by one: the block "other_tabs : Tab [0..*]" stands for all of them
+// (in SysML, [0..*] means any number of this part, drawn as a stack of blocks), so the drawing never has to grow.
 const pic = svg(svg.asset('router-architecture'))
 const nodes = pic.ids.filter((id) => id.startsWith('node-')).map((id) => id.slice(5))
+
+// The drawing has a box for the tabs that come with the page (board, lab, examples) and ONE block, other_tabs [0..*], for all the others
+// (the Monitor and the tabs people make with the +). So a tab that is made later needs no new box: its traffic goes to that block.
+let tabIds: string[] = []
+let tabIdsAt = 0
+function isTab(name: string): boolean {
+  const now = performance.now()
+  if (now - tabIdsAt > 1000) {
+    tabIds = tabs.list().map((t) => t.id)
+    tabIdsAt = now
+  }
+  return tabIds.includes(name)
+}
 
 // Which box of the drawing belongs to who is talking: a cell ('lab:A3') is "cells", the AI helper is "helper".
 function boxOf(name: string): string {
@@ -29,9 +44,10 @@ function boxOf(name: string): string {
   if (first === 'ai') return 'outside_ai' // an AI chat outside the page, over the dev server's /mcp
   if (first === 'ai-chat') return 'sidebar_chat' // the chat in the sidebar of this page
   if (first === 'you') return 'user' // the person typing in it
-  if (first.startsWith('ai')) return 'helper'
   if (first === 'system') return 'devserver' // the readings come from the dev server
-  if (first === 'tabs' || first === '*') return 'router'
+  if (first === 'tabs' || first === 'code' || first === 'mail' || first === '*') return 'router' // services of the router itself
+  if (nodes.includes('other_tabs') && isTab(first)) return 'other_tabs'
+  if (first.startsWith('ai')) return 'helper'
   return 'cells'
 }
 

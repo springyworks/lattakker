@@ -20,6 +20,7 @@ const TAB_GAP = 6;
 const PATH_H = 24;
 const NAV_W = 30;
 const RELOAD_W = 82;
+const MAIL_W = 58;
 
 const INK = '#1f2933';
 const INK_SOFT = '#3e4c59';
@@ -31,6 +32,7 @@ export class TabStrip {
   private pathCell!: Cell;
   private shareCell!: Cell;
   private aiCell!: Cell;
+  private mailCell!: Cell;
   private backCell!: Cell;
   private forwardCell!: Cell;
   private remoteCell!: Cell;
@@ -49,12 +51,15 @@ export class TabStrip {
   onShare: () => void = () => {};
   /** What a click on the 🤖 helper button does. */
   onAi: () => void = () => {};
+  /** What a click on the ✉ mail button does. */
+  onMail: () => void = () => {};
   /** What the ◀ and ▶ buttons do: go to the previous or the next place visited. */
   onBack: () => void = () => {};
   onForward: () => void = () => {};
   private canBack = false;
   private canForward = false;
   private aiOn = false;
+  private mailUnread = 0;
   private shareText = '🤝 Share';
   private shareOn = false;
   private remoteText = '';
@@ -95,6 +100,7 @@ export class TabStrip {
         if (id === 'strip:back') return 'Back to the previous place (Alt+←)';
         if (id === 'strip:forward') return 'Forward to the next place (Alt+→)';
         if (id === 'strip:ai') return 'Ask the AI helper (Alt+I). It can look at the cell you are in';
+        if (id === 'strip:mail') return 'Mail: letters from the helper, from AI chats and from cells';
         if (id === 'strip:share') return 'Work together with a tutor or a friend: a direct link between two browsers, no server';
         if (id === 'strip:remote') return 'Where the other person is pointing right now';
         if (id === `strip:${ADD_ID}`) return 'A new tab with a sheet of its own (right-click a tab to rename or close it)';
@@ -131,6 +137,14 @@ export class TabStrip {
         position: [x + 130, (STRIP_H - PATH_H) / 2 + 2],
         size: [72, PATH_H],
         style: this.aiStyle(),
+      });
+      this.mailCell = graph.insertVertex({
+        parent: graph.getDefaultParent(),
+        id: 'strip:mail',
+        value: '✉',
+        position: [x + 206, (STRIP_H - PATH_H) / 2 + 2],
+        size: [MAIL_W, PATH_H],
+        style: this.mailStyle(),
       });
       this.backCell = graph.insertVertex({
         parent: graph.getDefaultParent(),
@@ -189,6 +203,7 @@ export class TabStrip {
       if (id === 'strip:path') this.copyPath();
       else if (id === 'strip:share') this.onShare();
       else if (id === 'strip:ai') this.onAi();
+      else if (id === 'strip:mail') this.onMail();
       else if (id === 'strip:help') this.onHelp();
       else if (id === 'strip:reload') this.onReload();
       else if (id === 'strip:back') {
@@ -205,7 +220,7 @@ export class TabStrip {
       mouseDown: () => {},
       mouseMove: (_s: unknown, me: { getCell(): Cell | null }) => {
         const id = me.getCell()?.getId() ?? '';
-        const over = id.startsWith('strip:') && !['strip:path', 'strip:share', 'strip:ai', 'strip:remote', 'strip:back', 'strip:forward', 'strip:help', 'strip:reload'].includes(id) ? id.slice(6) : null;
+        const over = id.startsWith('strip:') && !['strip:path', 'strip:share', 'strip:ai', 'strip:mail', 'strip:remote', 'strip:back', 'strip:forward', 'strip:help', 'strip:reload'].includes(id) ? id.slice(6) : null;
         if (id === 'strip:reload' || this.reloadHover) this.hoverReload(id === 'strip:reload');
         if (id === 'strip:path' || this.pathHover) this.hoverPath(id === 'strip:path');
         if (over !== this.hovered) {
@@ -286,9 +301,9 @@ export class TabStrip {
     return { ...this.tabStyle(false, hover), fillColor: hover ? '#e9edf1' : '#e6eaee', strokeColor: '#c5ccd3', fontSize: 16, spacingTop: 4, fontColor: INK_SOFT };
   }
 
-  /** Where a control of the strip is on screen: 'tabs' (all the tabs), 'ai', 'share', 'back', 'forward', 'help', 'reload' or 'path'. */
+  /** Where a control of the strip is on screen: 'tabs' (all the tabs), 'ai', 'mail', 'share', 'back', 'forward', 'help', 'reload' or 'path'. */
   rectOf(id: string): DOMRect | null {
-    const named: Record<string, Cell | undefined> = { ai: this.aiCell, share: this.shareCell, back: this.backCell, forward: this.forwardCell, help: this.helpCell, reload: this.reloadCell, path: this.pathCell };
+    const named: Record<string, Cell | undefined> = { ai: this.aiCell, mail: this.mailCell, share: this.shareCell, back: this.backCell, forward: this.forwardCell, help: this.helpCell, reload: this.reloadCell, path: this.pathCell };
     const cells = id === 'tabs' ? [...this.tabCells.values()] : named[id] ? [named[id]!] : [];
     const view = this.graph.getView();
     const boxes = cells.map((c) => view.getState(c)).filter((s): s is NonNullable<typeof s> => !!s);
@@ -359,6 +374,23 @@ export class TabStrip {
 
   private aiStyle(): Record<string, unknown> {
     return { ...this.shareStyle(), fillColor: this.aiOn ? '#d9e8dd' : '#f6f7f9', strokeColor: this.aiOn ? '#5b9a74' : EDGE };
+  }
+
+  private mailStyle(): Record<string, unknown> {
+    return { ...this.shareStyle(), fillColor: this.mailUnread ? '#fde7b0' : '#f6f7f9', strokeColor: this.mailUnread ? '#d49a1a' : EDGE };
+  }
+
+  /** The ✉ button says how many unread letters wait for the person. */
+  setMail(unread: number): void {
+    this.mailUnread = unread;
+    const model = this.graph.getDataModel();
+    model.beginUpdate();
+    try {
+      model.setValue(this.mailCell, unread ? `✉ ${unread}` : '✉');
+      model.setStyle(this.mailCell, this.mailStyle());
+    } finally {
+      model.endUpdate();
+    }
   }
 
   private reloadStyle(hover: boolean): Record<string, unknown> {
@@ -504,10 +536,13 @@ export class TabStrip {
     move(this.shareCell, shareX, shareW);
     const aiX = shareX + shareW + 8;
     move(this.aiCell, aiX, 72);
-    move(this.backCell, aiX + 72 + 8, NAV_W);
-    move(this.forwardCell, aiX + 72 + 8 + NAV_W + 4, NAV_W);
-    move(this.helpCell, aiX + 72 + 8 + NAV_W * 2 + 4 + 8, NAV_W);
-    const reloadX = aiX + 72 + 8 + NAV_W * 3 + 4 + 8 + 4;
+    const mailX = aiX + 72 + 4;
+    move(this.mailCell, mailX, MAIL_W);
+    const navX = mailX + MAIL_W + 8;
+    move(this.backCell, navX, NAV_W);
+    move(this.forwardCell, navX + NAV_W + 4, NAV_W);
+    move(this.helpCell, navX + NAV_W * 2 + 4 + 8, NAV_W);
+    const reloadX = navX + NAV_W * 3 + 4 + 8 + 4;
     move(this.reloadCell, reloadX, RELOAD_W);
     const rightOfButtons = reloadX + RELOAD_W + 12;
     const pathText = this.flashing ? 'copied ✓' : `📍 ${this.pathText}`;

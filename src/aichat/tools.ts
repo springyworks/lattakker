@@ -1,4 +1,5 @@
 import { router, type Trace } from '../mcp/router';
+import { mailbox } from '../mcp/mailbox';
 import { isOriented, markOriented, orientation } from '../ai/orientation';
 
 /** The message the running chat turn is answering: what the tools ask the router is marked as caused by it (see mcp/router.ts, Trace). */
@@ -160,16 +161,28 @@ export const TOOL_DECLS: ToolDecl[] = [
   {
     name: 'mcp_call',
     description:
-      'Talk MCP to the app directly, like any MCP client. Every tab is an MCP server (its id is the server name: "board", "lab", "examples", "monitor", and tabs the person made), and so are "router" (statistics, catalog, recent traffic), "memory" (notes and the little database), "weather" (tools now, forecast, find), "ollama" (the model on this computer: status, models, ask), "system" (CPU, memory, temperatures, graphics card: read, history), "tabs" (list, select; create, rename, close need write permission), "local-ai" (the second brain, if there is one) and "status" (what is going on right now). Methods: "resources/list" (the cells), "resources/read" with {"uri":"lattakker:///board/A12"}, "tools/list", "tools/call" with {"name":"get_cell"|"list_cells"|"run_cell"|"click"|"flash"|"signal","arguments":{...}}. Changing a cell\'s code is not allowed here: use suggest_code, so the person decides.',
+      'Talk MCP to the app directly, like any MCP client. The simple way: give server (alone: you get its list of tools), or server and tool and arguments_json. Servers also include "mail" (letters), "code" (search and read all the cells\' code). Every tab is an MCP server (its id is the server name: "board", "lab", "examples", "monitor", and tabs the person made), and so are "router" (statistics, catalog, recent traffic), "memory" (notes and the little database), "weather" (tools now, forecast, find), "ollama" (the model on this computer: status, models, ask), "system" (CPU, memory, temperatures, graphics card: read, history), "tabs" (list, select; create, rename, close need write permission), "local-ai" (the second brain, if there is one) and "status" (what is going on right now). Methods: "resources/list" (the cells), "resources/read" with {"uri":"lattakker:///board/A12"}, "tools/list", "tools/call" with {"name":"get_cell"|"list_cells"|"run_cell"|"click"|"flash"|"signal","arguments":{...}}. Changing a cell\'s code is not allowed here: use suggest_code, so the person decides.',
     parameters: {
       type: 'object',
       properties: {
         server: { type: 'string', description: 'The tab id, e.g. "board" or "lab".' },
-        method: { type: 'string', description: 'resources/list, resources/read, tools/list or tools/call' },
-        params_json: { type: 'string', description: 'The params as JSON text, e.g. {"name":"get_cell","arguments":{"address":"A12"}}. Empty when the method needs none.' },
+        tool: { type: 'string', description: 'The simplest way: the name of a tool of that server, e.g. "now" for weather. Leave out to get the list of its tools. Then give its arguments as arguments_json.' },
+        arguments_json: { type: 'string', description: 'The arguments of that tool as JSON text, e.g. {"address":"A12"}. Empty when it needs none.' },
+        method: { type: 'string', description: 'Only when you need something else: resources/list, resources/read, tools/list or tools/call. Leave out when you give tool.' },
+        params_json: { type: 'string', description: 'Only with method: its params as JSON text, e.g. {"name":"get_cell","arguments":{"address":"A12"}}.' },
       },
-      required: ['server', 'method'],
+      required: ['server'],
     },
+  },
+  {
+    name: 'check_mail',
+    description: 'Your mailbox (internal mail between you, the person, AI chats outside the page and cells). Without an id: the list of letters waiting for you (id, from, subject). With an id like "m-3": the whole letter. Letters from the person are for you to answer with send_mail.',
+    parameters: { type: 'object', properties: { id: { type: 'string', description: 'A letter id like "m-3". Leave out to see the list.' } } },
+  },
+  {
+    name: 'send_mail',
+    description: 'Write a letter. to: "you" (the person, who reads it under the ✉ button), "outside-ai" (AI chats outside the page) or a cell like "lab:A16". To answer a letter give reply_to (its id) and no to. Example: to "you", subject "Tip", body "Look at cell A12".',
+    parameters: { type: 'object', properties: { to: { type: 'string' }, body: { type: 'string' }, subject: { type: 'string' }, reply_to: { type: 'string', description: 'The id of the letter you answer.' } }, required: ['body'] },
   },
   {
     name: 'flash_cell',
@@ -222,7 +235,7 @@ export const TOOL_DECLS: ToolDecl[] = [
 ];
 
 /** What a small model is offered: the tools for looking, going there, trying and suggesting. More tools make small models fumble. */
-const SMALL_MODEL_TOOLS = new Set(['look_around', 'list_cells', 'read_cell', 'goto_cell', 'flash_cell', 'run_cell', 'find_free_cell', 'write_code', 'suggest_code', 'read_docs']);
+const SMALL_MODEL_TOOLS = new Set(['check_mail', 'send_mail', 'look_around', 'list_cells', 'read_cell', 'goto_cell', 'flash_cell', 'run_cell', 'find_free_cell', 'write_code', 'suggest_code', 'read_docs']);
 
 /** The shortest list that still lets a model look, go there, try and suggest: for a model whose memory is tiny. */
 const TIGHT_TOOLS = new Set(['look_around', 'read_cell', 'goto_cell', 'run_cell', 'write_code', 'suggest_code']);
@@ -293,6 +306,29 @@ function inner(answer: unknown): { ok: boolean; value: unknown } {
   const a = answer as { structuredContent?: unknown; isError?: boolean; content?: Array<{ text?: string }> };
   if (a?.isError) return { ok: false, value: a.content?.[0]?.text ?? 'the tool failed' };
   return { ok: true, value: a?.structuredContent ?? answer };
+}
+
+/**
+ * A tool answer or a tool list, made short for a small model: only the text of a tool answer (the same thing is also sent as structured data,
+ * and an answer has trace information), and for a tool list only the name, the start of its description and the names of the arguments.
+ */
+function plain(answer: unknown, method: string): unknown {
+  const a = answer as { content?: Array<{ text?: string }>; isError?: boolean; tools?: Array<{ name?: string; description?: string; inputSchema?: { properties?: Record<string, unknown>; required?: string[] } }> } | null;
+  if (method === 'tools/call' && Array.isArray(a?.content)) {
+    const text = a.content.map((c) => c.text ?? '').filter(Boolean).join('\n');
+    return a.isError ? { error: text } : text;
+  }
+  if (method === 'tools/list' && Array.isArray(a?.tools)) {
+    return {
+      tools: a.tools.map((t) => ({
+        name: t.name,
+        about: String(t.description ?? '').slice(0, 220),
+        arguments: Object.keys(t.inputSchema?.properties ?? {}).map((k) => (t.inputSchema?.required?.includes(k) ? `${k} (needed)` : k)),
+      })),
+      how: 'Call one with mcp_call: server, tool (its name) and arguments_json (the arguments as JSON text).',
+    };
+  }
+  return answer;
 }
 
 async function readCell(host: ToolHost, path: string): Promise<unknown> {
@@ -437,7 +473,7 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
       case 'look_around': {
         const here = host.context();
         const cell = here.address ? await readCell(host, workspace.pathOf(here.tab, here.address)) : null;
-        return limit(asText({ tab: here.tab, cell: here.address ? workspace.pathOf(here.tab, here.address) : null, line: here.line ?? null, theCell: cell, tabs: workspace.list().map((t) => ({ id: t.id, title: t.title })) }));
+        return limit(asText({ tab: here.tab, cell: here.address ? workspace.pathOf(here.tab, here.address) : null, line: here.line ?? null, theCell: cell, tabs: workspace.list().map((t) => ({ id: t.id, title: t.title })), unread_mail: mailbox.unread(client) }));
       }
       case 'list_tabs':
         return asText(workspace.list().map((t) => ({ id: t.id, title: t.title, codeCells: t.sheet.codeCells().length })));
@@ -505,20 +541,35 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
         return limit(asText({ servers, router: { messages: s.messages, errors: s.errors, ratePerSecond: s.ratePerSecond, busiest: (s.servers ?? []).slice(0, 3) } }));
       }
       case 'mcp_call': {
-        const server = String(args.server ?? '');
-        let method = String(args.method ?? '');
-        if (!router.names().includes(server)) return asText({ error: `There is no MCP server "${server}". Servers: ${router.names().join(', ')}.` });
-        if (!['resources/list', 'resources/read', 'tools/list', 'tools/call', 'ping'].includes(method)) return asText({ error: `Method "${method}" is not available to you. Use resources/list, resources/read, tools/list or tools/call.` });
-        let params: Record<string, unknown> = {};
-        const raw = typeof args.params_json === 'string' ? args.params_json.trim() : '';
-        if (raw) {
+        // A small model gets things a little wrong: "weather.now" as the server, the params as an object, no method at all. What it meant is done.
+        let server = String(args.server ?? '').trim();
+        let toolName = typeof args.tool === 'string' ? args.tool.trim() : '';
+        const dotted = /^([\w-]+)[./:]([\w-]+)$/.exec(server);
+        if (dotted && router.names().includes(dotted[1])) {
+          server = dotted[1];
+          toolName ||= dotted[2];
+        }
+        if (!router.names().includes(server)) return asText({ error: `There is no MCP server "${server}". Servers: ${router.names().join(', ')}. Example: server "weather", tool "now".` });
+        let method = String(args.method ?? '').trim() || (toolName ? 'tools/call' : 'tools/list');
+        if (!['resources/list', 'resources/read', 'tools/list', 'tools/call', 'ping'].includes(method)) return asText({ error: `Method "${method}" is not available to you. Use resources/list, resources/read, tools/list or tools/call. The simplest: give only server (to see its tools), or server and tool.` });
+        // null means the text is not a JSON object.
+        const asObject = (value: unknown): Record<string, unknown> | null => {
+          if (value === undefined || value === null || value === '') return {};
+          if (typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
           try {
-            const v = JSON.parse(raw) as unknown;
-            if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new Error('not an object');
-            params = v as Record<string, unknown>;
+            const v = JSON.parse(String(value)) as unknown;
+            return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
           } catch {
-            return asText({ error: 'params_json must be JSON text for an object, e.g. {"uri":"lattakker:///board/A12"}' });
+            return null;
           }
+        };
+        let params = asObject(args.params_json ?? args.params);
+        if (!params) return asText({ error: 'params_json must be JSON text for an object, e.g. {"uri":"lattakker:///board/A12"}. The simplest: give tool and arguments_json instead.' });
+        if (toolName) {
+          const given = asObject(args.arguments_json ?? args.arguments);
+          if (!given) return asText({ error: 'arguments_json must be JSON text for an object, e.g. {"address":"A12"}' });
+          params = { name: toolName, arguments: given };
+          method = 'tools/call';
         }
         // A small model often puts the method where the tool name goes (method tools/call, name "tools/list"): do what it meant.
         if (method === 'tools/call' && ['tools/list', 'resources/list', 'ping'].includes(String(params.name ?? ''))) {
@@ -529,7 +580,21 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
           return asText({ error: 'Making, renaming and closing tabs is switched off for you (a grown-up can allow it in the helper settings, "Let the helper write code"). You can list tabs and select one; ask the person to use the ＋ in the tab strip.' });
         }
         if (method === 'tools/call' && String(params.name ?? '') === 'set_code') return asText({ error: 'set_code is not allowed for you. Use suggest_code: the person looks at the code and decides.' });
-        return limit(asText(await router.request(CLIENT, server, method, params, turnTrace)));
+        return limit(asText(plain(await router.request(CLIENT, server, method, params, turnTrace), method)));
+      }
+      case 'check_mail':
+      case 'send_mail': {
+        const id = typeof args.id === 'string' ? args.id.trim() : '';
+        const [tool, a]: [string, Args] =
+          name === 'check_mail'
+            ? id
+              ? ['read', { id }]
+              : ['inbox', {}]
+            : typeof args.reply_to === 'string' && args.reply_to.trim()
+              ? ['reply', { id: args.reply_to, body: args.body }]
+              : ['send', { to: args.to, subject: args.subject, body: args.body }];
+        const r = inner(await router.request(client, 'mail', 'tools/call', { name: tool, arguments: a }, turnTrace));
+        return limit(asText(r.ok ? r.value : { error: r.value }));
       }
       case 'flash_cell': {
         const hit = resolveSmart(String(args.path ?? ''), host.context().tab);

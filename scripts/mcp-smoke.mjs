@@ -167,6 +167,48 @@ const codeRead = await codeTool('read', { path: '/monitor/A1', from_line: 1, lin
 check('code.read gives numbered lines and where to go on', /^\s+1  /m.test(codeRead.content[0].text) && codeRead.structuredContent.next === 4);
 check('code.dump refuses a stale cursor', (await codeTool('dump', { cursor: 'deadbeef:2:3000' })).isError === true);
 
+// The internal mail: letters between parties. A second outside AI ("smoke-b") plays the other side; the person's side is tested in the page (playwright).
+const other = { 'content-type': 'application/json', 'x-mcp-client': 'smoke-b', 'x-mcp-model': 'model-b' };
+const asOther = async (name, args = {}) => {
+  const res = await fetch(`${base}/mcp`, { method: 'POST', headers: other, body: JSON.stringify({ jsonrpc: '2.0', id: nextId++, method: 'tools/call', params: { name, arguments: args } }) });
+  const body = await res.json();
+  return body.error ? { rpcError: body.error } : JSON.parse(body.result.content[0].text);
+};
+// A new outside AI must confirm it read the README first (orientation gate); this passes it through.
+const gate = await asOther('check_mail');
+if (gate.orientation) await asOther('confirm_readme', { summary: 'It is a game and a spreadsheet; I read the README for the smoke test.' });
+const mailTool = async (name, args) => (await tool('mcp_request', { server: 'mail', method: 'tools/call', params: { name, arguments: args } })).result;
+const sentMail = await tool('send_mail', { to: 'outside-ai:smoke-b', subject: 'Smoke hello', body: 'Hello from the smoke test. Please answer.' });
+check('send_mail sends a letter to another AI (a short address covers it)', sentMail.ok === true && /^m-\d+$/.test(sentMail.sent), sentMail.sent);
+const waiting = await asOther('check_mail');
+check('the other AI sees one unread letter, from the smoke test', waiting.ok === true && waiting.unread >= 1 && waiting.from.includes('outside-ai:smoke@smoke-model'), JSON.stringify(waiting).slice(0, 100));
+check('the sender does not get its own letter', (await tool('check_mail')).unread === 0);
+const theirList = await asOther('read_mail', { unread_only: true });
+const letterId = theirList.letters?.find((l) => l.subject === 'Smoke hello')?.id;
+check('read_mail lists it with id, from, subject and a preview', !!letterId && /Hello from the smoke/.test(theirList.letters[0].preview));
+const theirLetter = await asOther('read_mail', { id: letterId });
+check('read_mail with an id gives the whole letter', theirLetter.letter?.body === 'Hello from the smoke test. Please answer.');
+check('reading it makes it read', (await asOther('read_mail', { unread_only: true })).letters.every((l) => l.id !== letterId));
+const answered = await asOther('send_mail', { reply_to: letterId, body: 'Answer from smoke-b.' });
+check('reply_to answers the sender, same subject', answered.ok === true && answered.to?.[0] === 'outside-ai:smoke@smoke-model' && answered.subject === 'Smoke hello', JSON.stringify(answered).slice(0, 120));
+const myMail = await tool('read_mail', { unread_only: true });
+const reply = myMail.letters?.find((l) => l.from === 'outside-ai:smoke-b@model-b');
+check('the first AI finds the answer in its inbox', !!reply && /Answer from smoke-b/.test(reply.preview), JSON.stringify(reply ?? myMail).slice(0, 100));
+const conversation = await tool('read_mail', { id: reply?.id });
+check('the answer comes with the conversation it belongs to', conversation.conversation?.some((l) => l.id === sentMail.sent), `${conversation.conversation?.length} earlier`);
+// A small AI says things its own way: other names for the same things are understood, mistakes are explained.
+const clumsy = await mailTool('send', { recipient: 'outside', text: 'Written the clumsy way.' });
+check('mail understands recipient/text and "outside" as the address outside-ai', clumsy.structuredContent?.ok === true && clumsy.structuredContent.to[0] === 'outside-ai', JSON.stringify(clumsy.structuredContent?.to));
+const noBody = await mailTool('send', { to: 'you' });
+check('a letter without a body is refused with an example', noBody.isError === true && /example/.test(noBody.content[0].text));
+const noWho = await mailTool('send', { body: 'to nobody' });
+check('a letter without an address is refused with an example', noWho.isError === true && /example/.test(noWho.content[0].text));
+check('boxes lists who can be written to', (await mailTool('boxes', {})).structuredContent.usual.length >= 4);
+// The person's mailbox: this letter waits for the person in the ✉ panel; the letters sent here are cleaned up.
+for (const id of [sentMail.sent, clumsy.structuredContent?.sent, reply?.id]) if (id) await mailTool('delete', { id });
+for (const id of [letterId, clumsy.structuredContent?.sent, answered.sent]) if (id) await asOther('mcp_request', { server: 'mail', method: 'tools/call', params: { name: 'delete', arguments: { id } } });
+check('delete throws a letter away for the one who deletes it', (await tool('read_mail', {})).letters.every((l) => l.id !== reply?.id));
+
 // The smoke test inside the router: harmless read-only traffic to every server, then a report with its own checks.
 const routerCall = async (name, args) => JSON.parse((await tool('mcp_request', { server: 'router', method: 'tools/call', params: { name, arguments: args } })).result.content[0].text);
 const snapshotBefore = (await codeTool('overview', {})).structuredContent.snapshot;

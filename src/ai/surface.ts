@@ -92,7 +92,7 @@ ACT
 
 IDENTITY: every code cell has a uid such as c-1a2b3c4d. The uid stays with its content when cells move, swap or rows are inserted; the address changes. Keep the uid to find code again later; mms.resolve(uid) gives the current address.
 
-WebMCP: if the browser supports it, the same actions are registered as tools: get_state, get_board, legal_moves, make_move, shuffle_army, start_battle, pause_battle, resume_battle, undo_move, new_game, list_tabs, list_cells, get_cell, resolve_cell, set_cell_code, write_code_live, get_requests, wait_for_request, reply_to_request, run_cell, set_mode, say_to_player, mcp_request, mcp_log, export_svg. mms.webmcp tells you what was registered.
+WebMCP: if the browser supports it, the same actions are registered as tools: get_state, get_board, legal_moves, make_move, shuffle_army, start_battle, pause_battle, resume_battle, undo_move, new_game, list_tabs, list_cells, get_cell, resolve_cell, set_cell_code, write_code_live, get_requests, wait_for_request, reply_to_request, run_cell, set_mode, say_to_player, check_mail, read_mail, send_mail, mcp_request, mcp_log, export_svg. mms.webmcp tells you what was registered.
 An outside AI chat can use the same tools over MCP: run the dev server, open this page with ?mcp added to the URL, and connect to http://localhost:5178/mcp (see the README, section 11.3).
 The page also keeps an accessible text mirror in #mms-text (board grid, captured pieces, last move, code cells with output and errors). Each code cell is one list item: "A12: code: <first 3 lines, max 200 chars> | output: ... | error: ..."; use getCell for the whole code.
 
@@ -654,6 +654,23 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
       }
     },
 
+    /** The page's internal mail, for an outside AI: the same `mail` server everybody uses, asked as the outside AI. */
+    async mail(tool: string, args: Record<string, unknown>): Promise<Result> {
+      try {
+        const answer = (await router.request('ai', 'mail', 'tools/call', { name: tool, arguments: args }, outsideTrace())) as { isError?: boolean; structuredContent?: Record<string, unknown>; content?: Array<{ text?: string }> };
+        if (answer.structuredContent) return ok(answer.structuredContent);
+        let detail: unknown = answer.content?.[0]?.text;
+        try {
+          detail = JSON.parse(String(detail));
+        } catch {
+          // plain text stays as it is
+        }
+        return fail(`mail ${tool} failed`, { detail });
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err), { code: err instanceof McpError ? err.code : undefined });
+      }
+    },
+
     /** The last messages that crossed the page's MCP router: who asked whom, and what. */
     mcpLog(count?: unknown): Result {
       return ok({ servers: router.names(), messages: router.recent(typeof count === 'number' && isFinite(count) ? count : 20) });
@@ -932,6 +949,27 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
       run: (a) => api.mcp(a.server, a.method, a.params),
     },
     {
+      name: 'check_mail',
+      description: 'The internal mail: how many unread letters wait for you (letters from the player, the helper or cells). Cheap: call it now and then, then read_mail. To write: send_mail.',
+      inputSchema: obj({}),
+      readOnly: true,
+      run: () => api.mail('check', {}),
+    },
+    {
+      name: 'read_mail',
+      description: 'The internal mail. Without an id: your inbox (id, from, subject, first words; unread_only=true for the new ones). With an id (like "m-3"): that whole letter and its conversation.',
+      inputSchema: obj({ id: str('A letter id like "m-3". Leave out to list the inbox.'), unread_only: { type: 'boolean', description: 'Only letters not read yet.' } }),
+      readOnly: false,
+      run: (a) => (typeof a.id === 'string' && a.id ? api.mail('read', { id: a.id }) : api.mail('inbox', { unread_only: a.unread_only === true })),
+    },
+    {
+      name: 'send_mail',
+      description: 'The internal mail: write a letter. to is "you" (the player, who reads it under the ✉ button), "ai-chat" (the helper in the sidebar), "lab:A16" (a cell) or several with commas. Or answer a letter: give reply_to (its id) and a body. Example: {"to":"you","subject":"Hi","body":"Try cell A12!"}',
+      inputSchema: obj({ to: str('Who gets it. Leave out when you give reply_to.'), body: str('The letter (at most 4000 characters)'), subject: str('A few words (optional)'), reply_to: str('The id of the letter you answer (optional)') }, ['body']),
+      readOnly: false,
+      run: (a) => (typeof a.reply_to === 'string' && a.reply_to ? api.mail('reply', { id: a.reply_to, body: a.body }) : api.mail('send', { to: a.to, subject: a.subject, body: a.body })),
+    },
+    {
       name: 'mcp_log',
       description: "The last messages that crossed the page's MCP router (who asked whom, what the answer was, how long it took). Use it to see what the cells and tabs are saying to each other.",
       inputSchema: obj({ count: { type: 'number', description: 'How many messages, newest last (default 20, at most 400)' } }),
@@ -968,7 +1006,7 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
     };
   }
   for (const t of tools) {
-    if (t.name === 'mcp_request') continue;
+    if (t.name === 'mcp_request' || t.name.endsWith('_mail')) continue;
     const run = t.run.bind(t);
     t.run = (args) => {
       router.notify('ai', targetOf(t.name, args), `tools/${t.name}`, args, outsideTrace());
