@@ -2627,6 +2627,9 @@ the start that there is one. Nothing is sent until you press ➤ Send or Ctrl+En
 #### 11.4.10 The GUI deep drill: one key for GUI trouble
 
 **We have no secrets and no privacy, period.** The **GUI deep-drill key** is an ordinary, documented key, and nothing about it is hidden.
+That sentence is about how the app works (no hidden features, no hidden keys, nothing in the code that is not in this README). It does **not**
+mean that anyone's personal information, a child's above all, is collected or passed on: nothing leaves the page unless a person pastes it
+somewhere, and the rules about children's safety always come first.
 When something looks wrong (or lovely) and it is hard to put into words for an AI, press **Ctrl+Alt+Shift+G**
 anywhere on the page (also inside an editor; the same keys or Esc close the window again). The page freezes what is
 on the screen as a **text tree** and puts it on the **clipboard at once**, with a free text box on top where you say, in your own
