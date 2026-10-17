@@ -110,13 +110,19 @@ export class GameView {
     return p ? this.pieceInfo(p, peek) : null;
   }
 
+  /**
+   * A move as plain data, for AIs and cells. What is hidden on the board stays hidden here: a Blue piece is named only when combat has
+   * revealed it (or the game is over). Before, the name of every Blue piece that moved was in `lastMove`, and so in the history.
+   */
   moveInfo(r: MoveResult): MoveInfo {
+    const seen = (p: Piece): boolean => p.color === 'red' || p.revealed || this.game.phase === 'over';
+    const called = (p: Piece): string => (seen(p) ? pieceName(p) : 'hidden Blue piece');
     return {
       from: this.addrOf(r.from),
       to: this.addrOf(r.to),
       color: r.color,
-      piece: pieceName(r.piece),
-      defender: r.defender ? pieceName(r.defender) : null,
+      piece: called(r.piece),
+      defender: r.defender ? called(r.defender) : null,
       outcome: r.outcome,
       flagCaptured: r.flagCaptured,
     };

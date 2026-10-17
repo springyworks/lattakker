@@ -19,6 +19,8 @@ export function installMcpBridge(tools: BridgeTool[]): void {
   const hot = import.meta.hot;
   if (!hot || !new URLSearchParams(location.search).has('mcp')) return;
 
+  // One name per page load: the dev server tells two open pages apart, and prefers the one that is visible.
+  const pageId = Math.random().toString(36).slice(2, 10);
   const catalogue = tools.map(({ name, description, inputSchema, readOnly }) => ({ name, description, inputSchema, readOnly }));
   // Vite's send() does not throw while its socket is closed: it writes an error to the console, and a heartbeat would do that every
   // 2 seconds (a hidden page, a restarting server). So the page only announces itself while Vite says the socket is open.
@@ -27,7 +29,7 @@ export function installMcpBridge(tools: BridgeTool[]): void {
   const announce = (): void => {
     if (!open) return;
     try {
-      hot.send('mms:hello', { tools: catalogue });
+      hot.send('mms:hello', { tools: catalogue, id: pageId, visible: document.visibilityState === 'visible' });
     } catch {
       // The socket closed in this very moment; the next heartbeat retries.
     }
@@ -47,6 +49,8 @@ export function installMcpBridge(tools: BridgeTool[]): void {
     announce();
   }, 1500);
   window.setInterval(announce, HEARTBEAT_MS);
+  // Coming to the front or going to the back is told at once, not at the next beat.
+  document.addEventListener('visibilitychange', announce);
 
   hot.on('mms:call', async (msg: { id: string; name: string; args?: Record<string, unknown>; caller?: Caller }) => {
     const tool = tools.find((t) => t.name === msg.name);

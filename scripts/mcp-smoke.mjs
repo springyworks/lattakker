@@ -241,6 +241,12 @@ check('the demonstration in the new tab runs and prints', ran.ok === true && /su
 const closed = await tabs('close', { id: TAB });
 check('tabs.close removes the tab again', JSON.stringify(closed).includes('"ok":false') === false && !JSON.stringify(await tabs('list', {})).includes(`"${TAB}"`));
 
+// Subtitles for screen recordings: shown, and removed again; what is not text is refused.
+const sub = await tool('subtitle', { text: 'Smoke test subtitle', seconds: 0 });
+check('subtitle shows a line on the screen', sub.ok === true && sub.shown === true, JSON.stringify(sub).slice(0, 90));
+check('an empty subtitle removes it', (await tool('subtitle', { text: '' })).ok === true);
+check('subtitle refuses what is not text', (await tool('subtitle', { text: 5 })).ok === false);
+
 // Bad input stays polite.
 check('bad address gives ok:false, not a crash', (await tool('get_cell', { address: 'not-a-cell' })).ok === false);
 const unknown = await rpc('tools/call', { name: 'no_such_tool', arguments: {} });

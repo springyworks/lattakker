@@ -27,6 +27,10 @@ interface Tool {
 }
 
 interface PageLink {
+  /** One per page load, so two pages (two tabs, a hidden one) are told apart. */
+  id?: string;
+  /** Whether the page is the one in front: a hidden page is slowed down by the browser and is only used when nothing visible answers. */
+  visible?: boolean;
   send(event: string, payload?: unknown): void;
   seen: number;
 }
@@ -92,13 +96,15 @@ export function mcpBridge(): Plugin {
     name: 'lattakker-mcp-bridge',
     apply: 'serve',
     configureServer(server: ViteDevServer) {
-      let page: PageLink | null = null;
+      const pages = new Map<string, PageLink>();
       let tools: Tool[] = [];
       let nextId = 1;
       const pending = new Map<string, { resolve(result: unknown): void; timer: ReturnType<typeof setTimeout> }>();
 
-      server.ws.on('mms:hello', (data: { tools: Tool[] }, client: PageLink) => {
-        page = { send: (event, payload) => client.send(event, payload), seen: Date.now() };
+      server.ws.on('mms:hello', (data: { tools: Tool[]; id?: string; visible?: boolean }, client: PageLink) => {
+        const id = typeof data.id === 'string' ? data.id.slice(0, 40) : 'page';
+        pages.set(id, { id, visible: data.visible !== false, send: (event, payload) => client.send(event, payload), seen: Date.now() });
+        for (const [key, p] of pages) if (Date.now() - p.seen > PAGE_TTL_MS * 20) pages.delete(key);
         tools = data.tools;
       });
 
@@ -136,7 +142,11 @@ export function mcpBridge(): Plugin {
         };
       };
 
-      const livePage = (): PageLink | null => (page && Date.now() - page.seen < PAGE_TTL_MS ? page : null);
+      // With several pages open (two tabs, an old one in the background), the page in front answers; among equals the one that spoke last.
+      const livePage = (): PageLink | null => {
+        const fresh = [...pages.values()].filter((p) => Date.now() - p.seen < PAGE_TTL_MS);
+        return fresh.sort((a, b) => Number(!!b.visible) - Number(!!a.visible) || b.seen - a.seen)[0] ?? null;
+      };
 
       function callPage(name: string, args: unknown, caller?: Caller): Promise<unknown> {
         const target = livePage();

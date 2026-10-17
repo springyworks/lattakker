@@ -214,7 +214,7 @@ export const TOOL_DECLS: ToolDecl[] = [
   {
     name: 'find_free_cell',
     description: `Find an empty spot (${FREE_COLS} columns wide, ${FREE_ROWS} rows tall) where new code can go without touching anybody's work. Answers with the cell path.`,
-    parameters: { type: 'object', properties: { tab: { type: 'string', description: 'Tab id: "board" or "lab". Default: the tab the person is in.' } } },
+    parameters: { type: 'object', properties: { tab: { type: 'string', description: 'Tab id: "board", "lab" or a tab the person made. Default: the tab the person is in.' } } },
   },
   {
     name: 'write_code',
@@ -402,16 +402,22 @@ function reportText(path: string, report: RunReport): Record<string, unknown> {
     : { path, ran: false, error: report.error ?? 'it did not finish', printed: cut(report.output, 600) || null };
 }
 
-/** The tab for new code: the one the person is in when it can hold code of its own, else the lab. */
+/** The page's own tabs that are not for the helper's code: the examples notebook and the monitor drawing. */
+const NOT_FOR_NEW_CODE = new Set(['examples', 'monitor']);
+
+/** Where the helper may write: the board, the lab, and any tab the person made (like "scratch"), never the examples or the monitor. */
+const canWriteIn = (tabId: string): boolean => !NOT_FOR_NEW_CODE.has(tabId) && !!workspace.get(tabId);
+
+/** The tab for new code: the one the person is in when the helper may write there, else the lab. */
 function tabForNewCode(host: ToolHost, asked: unknown): string {
   const wanted = typeof asked === 'string' ? asked.trim().replace(/^\//, '') : '';
   const id = wanted || host.context().tab;
-  return id === 'board' || id === 'lab' ? id : 'lab';
+  return canWriteIn(id) ? id : 'lab';
 }
 
 function freeSpot(tabId: string): { path: string } | { error: string } {
   const tab = workspace.get(tabId);
-  if (!tab) return { error: `There is no tab "${tabId}". Use "board" or "lab".` };
+  if (!tab) return { error: `There is no tab "${tabId}". Use "board", "lab" or one of the person's own tabs.` };
   const address = tab.sheet.findFreeBlock(FREE_COLS, FREE_ROWS, tabId === 'board' ? BOARD_FIRST_FREE_ROW : 0);
   return address ? { path: workspace.pathOf(tabId, address) } : { error: `The ${tabId} tab has no empty ${FREE_COLS}x${FREE_ROWS} spot left. Try the other tab.` };
 }
@@ -468,7 +474,7 @@ async function writeCode(host: ToolHost, args: Args): Promise<string> {
   if ('error' in hit) return asText({ error: hit.error });
   const { tab, address } = hit;
   if (tab.sheet.isBoardAddress(address)) return asText({ error: `${address} is a board square. Code goes in a lower row such as A12.` });
-  if (tab.id !== 'board' && tab.id !== 'lab') return asText({ error: `You may only write in the board and lab tabs, not in ${tab.id}.` });
+  if (!canWriteIn(tab.id)) return asText({ error: `You may write in the board, the lab and the person's own tabs, not in ${tab.id}.` });
   const data = tab.sheet.dataAt(address)!;
   const own = !!data.uid && host.ledger.uids.has(data.uid);
   const append = args.mode === 'append';

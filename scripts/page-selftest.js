@@ -29,6 +29,19 @@
     t('the old option alone still allows write_code', names({ small: false, second: false }).includes('write_code'));
     config.updateSettings((s) => Object.assign(s, { autonomous: true, allowWrite: false }));
 
+    // ---- hidden information: what is hidden on the board stays hidden in what AIs and cells can read
+    {
+      const game = window.game;
+      const view = window.view;
+      const hiddenBlue = game.history.filter((m) => m.color === 'blue' && m.outcome === null && !m.piece.revealed && game.phase !== 'over');
+      const leaked = hiddenBlue.filter((m) => view.moveInfo(m).piece !== 'hidden Blue piece');
+      t('a Blue piece that has not been revealed is not named in the move history', leaked.length === 0, hiddenBlue.length ? `${hiddenBlue.length} moves checked` : 'no such move in this game yet');
+      const last = game.lastMove;
+      if (last && last.color === 'blue' && last.outcome === null && !last.piece.revealed) t('lastMove does not name a hidden Blue piece', view.moveInfo(last).piece === 'hidden Blue piece');
+      const mine = game.history.find((m) => m.color === 'red');
+      t('Red\'s own pieces are named', !mine || view.moveInfo(mine).piece !== 'hidden Blue piece');
+    }
+
     // ---- the editor check (Monaco's TypeScript engine)
     const bad = await monaco.checkCode("span(6, 4)\nconst n: number = 'x'\nprint(nothingHere)\nlet a = [\n", '');
     t('checkCode finds a type mistake, an unknown name and a syntax error, with lines', bad.length === 3 && bad[0].line === 2 && /not assignable/.test(bad[0].message) && bad.some((p) => /nothingHere/.test(p.message)) && bad.some((p) => /expected/.test(p.message)), bad.map((p) => `${p.line}:${p.message}`).join(' | '));
@@ -201,6 +214,17 @@
     await wait(100);
     t('a forgotten caller disappears from the screen', !/selftest-ai/.test(document.querySelector('.presence')?.textContent ?? ''));
     }
+
+    // ---- the helper may write in the person's own tabs, not in the examples or the monitor
+    await router.request('you', 'tabs', 'tools/call', { name: 'ensure', arguments: { id: 'selftest-tab', title: 'Selftest', select: false } });
+    const inTab = (tab) => ({ ...host(), context: () => ({ tab, address: null }) });
+    r = await call(inTab('selftest-tab'), 'find_free_cell', {});
+    t('a free spot is found in the tab the person is in, when it is their own tab', /^\/selftest-tab\//.test(r.path ?? ''), JSON.stringify(r).slice(0, 80));
+    r = await call(inTab('examples'), 'find_free_cell', {});
+    t('but not in the examples notebook: the Lab is used then', /^\/lab\//.test(r.path ?? ''), JSON.stringify(r).slice(0, 80));
+    r = await call(inTab('monitor'), 'write_code', { path: '/monitor/B3', code: 'print(1)' });
+    t('and write_code refuses the monitor', /may write in the board/.test(r.error ?? ''), JSON.stringify(r).slice(0, 100));
+    await router.request('you', 'tabs', 'tools/call', { name: 'close', arguments: { id: 'selftest-tab' } }).catch(() => {});
 
     // ---- the mail draft: typed, not sent, must survive a letter arriving and a reload (the reload itself is checked by hand: storage is read here)
     const { mailbox } = await import('/src/mcp/mailbox.ts');

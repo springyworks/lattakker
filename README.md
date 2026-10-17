@@ -1167,6 +1167,9 @@ server of `npm run dev`. `?mcp` is a switch: only a page opened with it connects
 endpoint, so an outside AI or the script can drive it (a page without it is never driven from outside). `#monitor`
 is the tab to show; the tabs are `#board`, `#lab`, `#examples` and `#monitor`, and a link with `#lab` opens the
 Lab straight away. They can be combined in any order of use: `/?mcp#lab`.
+With more than one page open with `?mcp` (two tabs, an old one left in the background), the dev server sends each call to the page
+that is **in front**; among equals, to the one that spoke last. A background page is slowed down by the browser and would otherwise
+answer late or not at all. Each page names itself and says whether it is visible with every heartbeat.
 
 `--client` and `--model` are who shows as the origin in the traffic (`outside-ai:brain-demo@gpt-5`).
 `--check` runs the router's own `self_check` and then tests from outside: that its calls
@@ -2371,7 +2374,7 @@ times). It may go round up to 16 times and write up to 12 times per conversation
 the option is off). Every write gets a card with *👀 Show me*, the editor's verdict and
 *↶ Undo* (undo only acts if nobody changed the cell since: it empties a cell the helper
 wrote, and gives back the old code of a cell it appended to). It never replaces code that is
-not its own (it may only append to it), only writes in the board and Lab tabs, and no single tool call
+not its own (it may only append to it), only writes in the board, the Lab and the person's own tabs (like a scratch tab; never in the examples or the monitor), and no single tool call
 keeps the chat waiting longer than 40 seconds; Stop ends it at once. Turn the option off and
 only *Only let the helper write code in empty cells* remains (no carrying on by itself, 6 writes), or
 neither, and the helper only offers code with `suggest_code`.
