@@ -2638,6 +2638,19 @@ selector, place and size in pixels, and what is special (focus, hidden, transpar
 sheet's drawing is summarised (how many parts, and the pieces with words that are on the screen, each at the real place of its text), and the text of cells' code and what is typed into boxes
 are never included (only the length); other text is cut to 60 characters. The code is in `src/ui/problemReport.ts`.
 
+#### 11.4.11 Subtitles and the demo video
+
+`window.subtitle('text', seconds)` (also `mms.subtitle(text, seconds)` and the MCP tool `subtitle`) puts one calm line at the bottom of the screen,
+large and on top of everything, never in the way of a click: for a screen recording, so the viewer of the video is told what is going on. It
+goes away after a reading time (or after `seconds`; `0` = until the next one); an empty text removes it. An AI, a cell or a script can use it. The code is in `src/ui/subtitles.ts`.
+
+`node scripts/demo-show.mjs` makes such a video by itself: it opens your installed Google Chrome (no browser download; `npm run dev` must be running)
+with a fresh profile, shows a red cursor and a ripple on every click (a screen recording does not show the mouse), and plays a person using the page: the board,
+the Lab and Monitor tabs, a scratch tab, typing code (the editor underlines a mistake and it is fixed), mail with a kept draft, the GUI deep-drill key, an outside AI
+showing its sign of life, and the helper writing code with the local model, with a subtitle for each step. Options: `--base URL`, `--headed` (watch it happen), `--no-ai` (leave out the
+model part), `--out DIR`, `--model NAME`. The result is `resources/demo/lattakker-demo.webm` and, with ffmpeg installed, an `.mp4` (about 3½ minutes); the folder is kept out of git. The first time,
+Playwright needs its small recording tool: `npx playwright-core install ffmpeg`.
+
 ## 12 Rows
 
 [↑ Contents](#contents)

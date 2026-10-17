@@ -5,3 +5,6 @@ dist
 
 # the screen recording is kept out of the repository (the .gif next to it is what the README shows)
 resources/animated_screen_recording.mp4
+
+# recorded demo videos are made by scripts/demo-show.mjs and kept out of the repository
+resources/demo/

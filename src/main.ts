@@ -1,6 +1,7 @@
 import { watchCells } from './stallWatch';
 import './ui/problemReport';
 import './ui/outsidePresence';
+import './ui/subtitles';
 import { parseLink } from './deeplink';
 import { applyViewLink, wantsTheView } from './viewLink';
 import '@maxgraph/core/css/common.css';

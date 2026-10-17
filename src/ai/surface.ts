@@ -10,6 +10,7 @@ import { installMcpBridge } from './bridge';
 import { workspace, type WorkspaceTab } from '../workspace';
 import { McpError, router } from '../mcp/router';
 import { callers, currentCaller, outsideTrace, participant, throughChannel } from './entry';
+import { showSubtitle } from '../ui/subtitles';
 import { README_URL, isOriented, markOriented, orientation, readReadme } from './orientation';
 import { docUrls } from '../aichat/docs';
 
@@ -85,6 +86,7 @@ ACT
   mms.clearCell('A12')       empty a cell
   mms.setMode('run'|'view')  cells show output (run) or their code (view)
   mms.say('Nice move!')      show a message to the player in the speech bubble
+  mms.subtitle('Now Red moves', 4)   a subtitle at the bottom of the screen for a screen recording (0 = until the next; '' removes it)
   mms.writeCodeLive('A12', code) (async)   open the cell's editor and type the code in slowly; the player presses Esc or Restart & close to keep and run it
   mms.requests()             questions the player wrote as "// AI: ..." comment lines: { requests: [{address, uid, line, text, answered, unsaved}] }
   mms.waitForRequest(15) (async)   wait up to 20 s for a new question, then return like requests()
@@ -676,6 +678,13 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
       return ok({ servers: router.names(), messages: router.recent(typeof count === 'number' && isFinite(count) ? count : 20) });
     },
 
+    subtitle(text: unknown, seconds?: unknown): Result {
+      if (typeof text !== 'string') return fail('subtitle(text, seconds?) needs a string (an empty one removes the subtitle)');
+      const s = typeof seconds === 'number' && Number.isFinite(seconds) ? Math.min(Math.max(seconds, 0), 60) : undefined;
+      showSubtitle(text, s);
+      return ok({ shown: text.trim().length > 0, seconds: s ?? 'a reading time' });
+    },
+
     say(text: unknown): Result {
       if (typeof text !== 'string' || !text.trim()) return fail('say(text) needs a non-empty string');
       hud.say(text.slice(0, 500), 'info');
@@ -932,6 +941,13 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
       inputSchema: obj({ mode: { type: 'string', enum: ['run', 'view'], description: "'run' shows output, 'view' shows code" } }, ['mode']),
       readOnly: false,
       run: (a) => api.setMode(a.mode),
+    },
+    {
+      name: 'subtitle',
+      description: 'Show a subtitle at the bottom of the screen, for a screen recording: it tells the viewer of the video what is going on. It goes away after a reading time (or after seconds; 0 = until the next one). An empty text removes it.',
+      inputSchema: obj({ text: str('The subtitle (one or two short lines, at most 220 characters)'), seconds: { type: 'number', description: 'How long to show it (0 to 60; 0 = until the next subtitle). Default: a reading time.' } }, ['text']),
+      readOnly: false,
+      run: (a) => api.subtitle(a.text, a.seconds),
     },
     {
       name: 'say_to_player',

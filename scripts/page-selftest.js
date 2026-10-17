@@ -228,6 +228,18 @@
     for (const l of [...mailbox.sent('you'), ...mailbox.inbox('you')]) if (/^SELFTEST/.test(l.subject)) mailbox.discard(l.id, 'you');
     document.querySelector('.mail-dialog')?.close();
 
+    // ---- subtitles for screen recordings
+    window.subtitle('Hello  viewer,   this is a test', 0);
+    const sub = document.querySelector('.subtitle');
+    t('window.subtitle shows one clean line (blanks squeezed)', !!sub && !sub.hidden && sub.textContent === 'Hello viewer, this is a test');
+    window.subtitle('x'.repeat(500), 0);
+    t('a subtitle is cut to 220 characters', document.querySelector('.subtitle').textContent.length === 220);
+    window.subtitle('');
+    t('an empty subtitle removes it', document.querySelector('.subtitle').hidden === true);
+    const mms = window.mms;
+    t('mms.subtitle works for scripts and AIs, and refuses what is not text', !mms?.subtitle || (mms.subtitle('from mms', 0).ok === true && mms.subtitle(5).ok === false));
+    window.subtitle('');
+
     // ---- the helper's window: the live line and the setting
     const live = document.querySelectorAll('[data-role=live]');
     t('both the sidebar and the pop-up have the tiny live line', live.length === 2);
