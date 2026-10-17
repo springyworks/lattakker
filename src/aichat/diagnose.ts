@@ -41,8 +41,8 @@ export function diagnose(tree: JobNode[]): Diagnosis | null {
 
   if (leaf.service === 'local-model') {
     if (/not in memory yet/.test(detail)) {
-      line = 'The model is being loaded into this computer’s memory.';
-      hint = `The first question after a pause, or a big model, takes a while: this is normal.${/ollama stop/.test(detail) ? ` ${detail.slice(detail.indexOf('Ollama is also'))}` : ''} Press Stop to give up.`;
+      line = 'The model is probably being loaded into this computer’s memory (known: Ollama does not list it as in memory yet; Ollama does not say it is loading).';
+      hint = `The first question after a pause, or a big model, takes a while.${/ollama stop/.test(detail) ? ` ${detail.slice(detail.indexOf('Ollama is also'))}` : ''} Press Stop to give up.`;
     } else if (/thinking/.test(detail)) {
       line = `The model is thinking before it writes (${detail.match(/\((\d+) pieces/)?.[1] ?? '…'} pieces so far).`;
       hint = 'A small model may think for a while. Stop ends it.';

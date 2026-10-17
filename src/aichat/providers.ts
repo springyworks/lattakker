@@ -1,6 +1,6 @@
 import { DEFAULT_OLLAMA_CONTEXT, getKey, getSettings, localWindow, noteServerWindow, type AiSettings } from './config';
 import { ammo } from './ammo';
-import { describeModel, loadEstimate, parsePs, rememberLoad, type PsModel } from './ollamaLoad';
+import { describeModel, describeTimings, loadEstimate, parsePs, parseTimings, rememberLoad, setLastRun, setLive, type PsModel, type Timings } from './ollamaLoad';
 import { jobs, type JobHandle } from './jobs';
 
 /**
@@ -227,6 +227,17 @@ export class OpenAiCompatProvider implements ModelProvider {
     }
   }
 
+  /** How many milliseconds Ollama needs to answer a ping (its version door), or null when it does not within 1.5 s. */
+  private async alive(): Promise<number | null> {
+    const start = performance.now();
+    try {
+      const res = await fetch(`${this.root()}/api/version`, { signal: AbortSignal.timeout(1500) });
+      return res.ok ? performance.now() - start : null;
+    } catch {
+      return null;
+    }
+  }
+
   private async send(job: JobHandle, system: string, messages: ChatMsg[], tools: ToolDecl[], signal: AbortSignal): Promise<ModelReply> {
     const native = await this.isOllama();
     const context = this.context;
@@ -290,12 +301,19 @@ export class OpenAiCompatProvider implements ModelProvider {
     const watch = window.setInterval(() => {
       if (!waitingForFirst) return;
       const quiet = Math.round((performance.now() - sentAt) / 1000);
-      void this.ps().then(({ loaded, others, mine }) => {
+      void Promise.all([this.ps(), native ? this.alive() : Promise.resolve(null)]).then(([{ loaded, others, mine }, ping]) => {
         if (!waitingForFirst) return;
+        const known = [`question sent ${quiet} s ago; not one word has come back`];
+        const maybe: string[] = [];
+        if (native) known.push(ping ? `the server answers a ping in ${Math.round(ping)} ms (it is alive)` : 'the server did not answer a ping within 1.5 s');
+        if (native && !ping) maybe.push('Ollama may be restarting, out of memory or busy loading; if it never answers, check that "ollama serve" runs');
         if (loaded === false) {
           sawAbsent = true;
-          const busy = others.length ? ` Ollama is also holding ${others.join(', ')} in memory: it has to make room first (to free it: ollama stop ${others[0]}).` : '';
-          job.say(`the model is not in memory yet: loading it. ${quiet} s so far, ${loadEstimate(this.model, quiet)}.${busy}`, false);
+          known.push(`Ollama's list of models in memory does not have ${this.model}`);
+          if (others.length) known.push(`it does list ${others.join(', ')}`);
+          maybe.push(`${this.model} is being loaded (Ollama does not say so; this is the usual reason)`, loadEstimate(this.model, quiet));
+          if (others.length) maybe.push(`it has to make room first (to free it: ollama stop ${others[0]})`);
+          job.say(`the model is not in memory yet: loading it, probably. ${quiet} s so far, ${loadEstimate(this.model, quiet)}.${others.length ? ` Ollama is also holding ${others.join(', ')} in memory: it has to make room first (to free it: ollama stop ${others[0]}).` : ''}`, false);
           // Loading is slow but allowed; a model that never shows up in memory is given up on after 20 minutes.
           if (quiet > 1200) {
             stuck = 'The model did not finish loading within 20 minutes.';
@@ -307,13 +325,20 @@ export class OpenAiCompatProvider implements ModelProvider {
             sawAbsent = false;
             rememberLoad(this.model, quiet);
           }
-          const how = mine ? ` (${describeModel(mine)})` : '';
-          job.say(loaded === true ? `the model is in memory${how} and is reading the question; no word yet (${quiet} s)` : `waiting for the server; nothing has come back yet (${quiet} s)`, false);
+          if (mine) {
+            known.push(`${this.model} is in memory (${describeModel(mine)})`);
+            if (mine.gpuPercent < 99) maybe.push('part of the model runs on the CPU, which makes reading and writing slower');
+            maybe.push('the model is reading the question (a long conversation takes longer) or thinking');
+          } else if (loaded === null) {
+            maybe.push('this server does not tell what is in its memory, so nothing more can be said');
+          }
+          job.say(loaded === true ? `the model is in memory${mine ? ` (${describeModel(mine)})` : ''} and is reading the question; no word yet (${quiet} s)` : `waiting for the server; nothing has come back yet (${quiet} s)`, false);
           if (quiet > 300) {
             stuck = `The model gave no word for ${quiet} s although it is in memory: it looks stuck.`;
             ctl.abort();
           }
         }
+        setLive({ known, maybe });
       });
     }, 3000);
     const sentAt = performance.now();
@@ -323,6 +348,8 @@ export class OpenAiCompatProvider implements ModelProvider {
     } catch (err) {
       window.clearInterval(watch);
       signal.removeEventListener('abort', relay);
+      waitingForFirst = false;
+      setLive(null);
       if (signal.aborted) throw err;
       if (stuck) throw new AiError('server', stuck);
       throw this.unreachable(err);
@@ -330,6 +357,8 @@ export class OpenAiCompatProvider implements ModelProvider {
     if (!res.ok) {
       window.clearInterval(watch);
       signal.removeEventListener('abort', relay);
+      waitingForFirst = false;
+      setLive(null);
       const message = await errorMessage(res);
       if (res.status === 400 && this.thinkingOff && /reasoning|think/i.test(message)) {
         this.thinkingOff = false;
@@ -376,7 +405,8 @@ export class OpenAiCompatProvider implements ModelProvider {
     };
     // Ollama's own door speaks one JSON object per line; its pieces are turned into the shape `take` knows.
     let nativeCalls = 0;
-    const takeNative = (c: { message?: { content?: string; thinking?: string; tool_calls?: Array<{ function?: { name?: string; arguments?: unknown } }> }; done?: boolean; done_reason?: string; prompt_eval_count?: number; eval_count?: number; error?: string }): void => {
+    let timings: Timings | null = null;
+    const takeNative = (c: { total_duration?: number; load_duration?: number; prompt_eval_duration?: number; eval_duration?: number; message?: { content?: string; thinking?: string; tool_calls?: Array<{ function?: { name?: string; arguments?: unknown } }> }; done?: boolean; done_reason?: string; prompt_eval_count?: number; eval_count?: number; error?: string }): void => {
       if (c.error) throw new AiError('server', c.error);
       take({
         choices: [
@@ -391,6 +421,11 @@ export class OpenAiCompatProvider implements ModelProvider {
         ],
       });
       if (c.done && c.prompt_eval_count) ammo.record(c.prompt_eval_count, c.eval_count ?? 0);
+      if (c.done) {
+        timings = parseTimings(c);
+        // The measured load time is a better yardstick for the next estimate than our own clock.
+        if (timings && timings.loadS >= 3) rememberLoad(this.model, timings.loadS);
+      }
     };
     try {
       if (!native && !(res.headers.get('content-type') ?? '').includes('event-stream')) {
@@ -426,6 +461,9 @@ export class OpenAiCompatProvider implements ModelProvider {
     } finally {
       window.clearInterval(watch);
       signal.removeEventListener('abort', relay);
+      waitingForFirst = false;
+      if (timings) setLastRun(describeTimings(timings));
+      else setLive(null);
     }
     const toolCalls: ToolCall[] = [...calls.entries()].sort((x, y) => x[0] - y[0]).map(([, c], i) => ({ id: c.id || `call_${Date.now()}_${i}`, name: c.name, args: parseArgs(c.args) }));
     if (!text.trim() && !toolCalls.length && finish === 'length') {

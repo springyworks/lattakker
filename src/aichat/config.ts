@@ -42,6 +42,11 @@ export interface AiSettings {
   allowWeather: boolean;
   /** Let the helper write code into an EMPTY cell on its own (the person watches it being typed and can undo it). */
   allowWrite: boolean;
+  /**
+   * Let the helper work on its own: write or add code, let the editor check it for mistakes, run it, read what came out
+   * and keep going until it works. On by default; it also lets the helper write (the person watches and can undo).
+   */
+  autonomous: boolean;
 }
 
 export const DEFAULT_SETTINGS: AiSettings = {
@@ -54,6 +59,7 @@ export const DEFAULT_SETTINGS: AiSettings = {
   allowOutside: false,
   allowWeather: true,
   allowWrite: false,
+  autonomous: true,
 };
 
 const SETTINGS_KEY = 'lattakker:ai:v1';
@@ -77,6 +83,7 @@ function merge(base: AiSettings, saved: Partial<AiSettings> | null): AiSettings 
     allowOutside: saved.allowOutside === true,
     allowWeather: saved.allowWeather !== false,
     allowWrite: saved.allowWrite === true,
+    autonomous: saved.autonomous !== false,
     autoSeconds: Number.isFinite(seconds) ? Math.min(600, Math.max(3, Math.round(seconds))) : base.autoSeconds,
   };
 }
@@ -106,6 +113,9 @@ function persist(): void {
 }
 
 export const getSettings = (): AiSettings => settings;
+
+/** May the helper write code itself? Yes when the person allowed it, or when it may work on its own. */
+export const canWrite = (): boolean => settings.allowWrite || settings.autonomous;
 export const getKey = (provider: ProviderId): string => keys[provider];
 
 export function updateSettings(change: (s: AiSettings) => void): void {

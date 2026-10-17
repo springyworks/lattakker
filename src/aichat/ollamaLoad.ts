@@ -75,3 +75,64 @@ export function loadEstimate(model: string, elapsedSeconds: number): string {
   const pct = Math.min(95, Math.round((elapsedSeconds / last) * 100));
   return `about ${pct}% by estimate (the last load took ${last} s; Ollama itself does not report load progress)${elapsedSeconds > last * 1.5 ? ', it is taking longer than last time: memory may be short or swapping' : ''}`;
 }
+
+/** What Ollama itself measured for one answer (the last piece of its reply carries these, in nanoseconds). */
+export interface Timings {
+  totalS: number;
+  loadS: number;
+  readTokens: number;
+  readS: number;
+  writeTokens: number;
+  writeS: number;
+}
+
+const seconds = (ns: unknown): number => Math.round((Number(ns) / 1e9) * 10) / 10;
+
+/** The timings of a finished native reply, or null when the piece has none (other servers do not send them). */
+export function parseTimings(done: { total_duration?: number; load_duration?: number; prompt_eval_count?: number; prompt_eval_duration?: number; eval_count?: number; eval_duration?: number }): Timings | null {
+  if (!(Number(done.total_duration) > 0)) return null;
+  return {
+    totalS: seconds(done.total_duration),
+    loadS: seconds(done.load_duration ?? 0),
+    readTokens: Number(done.prompt_eval_count) || 0,
+    readS: seconds(done.prompt_eval_duration ?? 0),
+    writeTokens: Number(done.eval_count) || 0,
+    writeS: seconds(done.eval_duration ?? 0),
+  };
+}
+
+/** What is measured (known) and what is only a reading of it (maybe): never mixed in one sentence. */
+export interface LiveNote {
+  known: string[];
+  maybe: string[];
+}
+
+export function describeTimings(t: Timings): LiveNote {
+  const known = [`Ollama measured: loading the model ${t.loadS} s, reading ${t.readTokens} tokens ${t.readS} s, writing ${t.writeTokens} tokens ${t.writeS} s${t.writeS > 0 ? ` (${Math.round((t.writeTokens / t.writeS) * 10) / 10} tokens/s)` : ''}, in all ${t.totalS} s`];
+  const maybe: string[] = [];
+  if (t.loadS >= 1) maybe.push('the model was not in memory for this question (first use, a different window size, or another model pushed it out)');
+  else if (t.readS > 10) maybe.push('a long conversation or a slow part of the model (CPU) made the reading slow');
+  return { known, maybe };
+}
+
+const EMPTY: LiveNote = { known: [], maybe: [] };
+let current: LiveNote | null = null;
+let last: LiveNote = EMPTY;
+const liveListeners: Array<() => void> = [];
+
+export const onLiveChange = (l: () => void): void => void liveListeners.push(l);
+
+/** What is going on right now, while a question waits. */
+export function setLive(note: LiveNote | null): void {
+  current = note;
+  liveListeners.forEach((l) => l());
+}
+
+/** What the last finished question measured. */
+export function setLastRun(note: LiveNote): void {
+  last = note;
+  current = null;
+  liveListeners.forEach((l) => l());
+}
+
+export const getLive = (): { note: LiveNote; now: boolean } => (current ? { note: current, now: true } : { note: last, now: false });

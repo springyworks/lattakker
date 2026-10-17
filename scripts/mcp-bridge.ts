@@ -196,7 +196,12 @@ export function mcpBridge(): Plugin {
               const a = record(args);
               remember(who, { client: text(a.client, 40), version: text(a.version, 30), model: text(a.model, 40), note: text(a.note, 120) });
             }
-            const result = (await callPage(name, args, callerOf(msg, who, startedAt))) as { ok?: boolean };
+            const caller = callerOf(msg, who, startedAt);
+            const label = `${caller.client ?? 'unknown client'}${caller.model ? `@${caller.model}` : ''}`;
+            const shown = JSON.stringify(args);
+            server.config.logger.info(`\x1b[36m[mcp]\x1b[0m ${label} \x1b[1m▶ ${name}\x1b[0m ${shown.length > 160 ? `${shown.slice(0, 160)}…` : shown}`);
+            const result = (await callPage(name, args, caller)) as { ok?: boolean; error?: string };
+            server.config.logger.info(`\x1b[36m[mcp]\x1b[0m ${label} ${result?.ok === true ? '\x1b[32m◀ ok\x1b[0m' : `\x1b[31m◀ failed: ${String(result?.error ?? '').slice(0, 120)}\x1b[0m`} ${name} (${Date.now() - startedAt} ms)`);
             // Inside the text too: an agent that only reads the text still sees the moment of the initiative.
             const body = JSON.stringify(result && typeof result === 'object' ? { ...result, _meta: meta } : result, null, 2);
             return reply({ content: [{ type: 'text', text: body }], isError: result?.ok !== true });

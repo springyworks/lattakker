@@ -203,6 +203,11 @@ const noBody = await mailTool('send', { to: 'you' });
 check('a letter without a body is refused with an example', noBody.isError === true && /example/.test(noBody.content[0].text));
 const noWho = await mailTool('send', { body: 'to nobody' });
 check('a letter without an address is refused with an example', noWho.isError === true && /example/.test(noWho.content[0].text));
+const ghost = await mailTool('send', { to: 'nobody-called-this', body: 'Is anybody there?' });
+check('a letter to a name nobody has is sent but flagged: nobody will read it, and who to write to instead', ghost.structuredContent?.unreachable?.[0] === 'nobody-called-this' && /outside-ai/.test(ghost.structuredContent?.next ?? ''), JSON.stringify(ghost.structuredContent).slice(0, 110));
+const group = await mailTool('send', { to: 'outside-ai', body: 'Hello to every AI.' });
+check('a letter to a real address is not flagged', group.structuredContent?.ok === true && !group.structuredContent?.unreachable);
+for (const id of [ghost.structuredContent?.sent, group.structuredContent?.sent]) if (id) await mailTool('delete', { id });
 check('boxes lists who can be written to', (await mailTool('boxes', {})).structuredContent.usual.length >= 4);
 // The person's mailbox: this letter waits for the person in the ✉ panel; the letters sent here are cleaned up.
 for (const id of [sentMail.sent, clumsy.structuredContent?.sent, reply?.id]) if (id) await mailTool('delete', { id });
@@ -218,6 +223,23 @@ check('the exercise ran under one moment of initiative', exerciseReport.checks.s
 const pendingList = await routerCall('pending', {});
 check('router.pending lists what is waiting, with Unix ms times', typeof pendingList.now === 'number' && Array.isArray(pendingList.pending) && pendingList.pending.every((p) => p.deadline > p.sentAt && p.sentAt >= p.startedAt));
 check('the exercise changed no code (the fingerprint of all cells is the same before and after)', (await codeTool('overview', {})).structuredContent.snapshot === snapshotBefore, snapshotBefore);
+
+// Standing directives: what the owner told every AI is in the published rules (and an ended one is not).
+const rulesText = await (await fetch(`${base}/ai/rules.md`)).text();
+check('ai/rules.md carries the standing directives with their strength scale', !/Standing directives/.test(rulesText) || (/0 to 100 %/.test(rulesText) && /\d+\. \[\d+ % · /.test(rulesText)));
+check('ai/everything.md has the same section', (await (await fetch(`${base}/ai/everything.md`)).text()).includes('Standing directives') === /Standing directives/.test(rulesText));
+
+// The scratch-tab habit (a directive): "ensure" makes the tab once, its first cell runs, and "close" removes it again.
+const tabs = (name, args) => tool('mcp_request', { server: 'tabs', method: 'tools/call', params: { name, arguments: args } }).then((r) => r.result?.structuredContent ?? r);
+const TAB = 'smoke-scratch';
+const made = await tabs('ensure', { id: TAB, title: 'Smoke', icon: '🧫', select: false, cells: { A1: "span(6, 2)\nprint(`sum: ${[1, 2, 3].reduce((a, b) => a + b, 0)}`)" } });
+check('tabs.ensure makes a new tab with its first cell', made.tab?.id === TAB && made.firstCell === `/${TAB}/A1`, JSON.stringify(made).slice(0, 90));
+const again = await tabs('ensure', { id: TAB, title: 'Other title', cells: { A1: 'print("should not replace")' } });
+check('tabs.ensure again changes nothing (safe to repeat)', again.tab?.id === TAB && again.tab?.title === 'Smoke');
+const ran = await tool('run_cell', { address: 'A1', tab: TAB });
+check('the demonstration in the new tab runs and prints', ran.ok === true && /sum: 6/.test(ran.output ?? ''), JSON.stringify(ran).slice(0, 90));
+const closed = await tabs('close', { id: TAB });
+check('tabs.close removes the tab again', JSON.stringify(closed).includes('"ok":false') === false && !JSON.stringify(await tabs('list', {})).includes(`"${TAB}"`));
 
 // Bad input stays polite.
 check('bad address gives ok:false, not a crash', (await tool('get_cell', { address: 'not-a-cell' })).ok === false);

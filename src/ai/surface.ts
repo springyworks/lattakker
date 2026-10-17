@@ -65,7 +65,7 @@ READ
   mms.tabs()                 { current, tabs: [{ id, title, path, mode, codeCells, rows, columns }], paths } the tabs that hold code cells and which one the player sees
   mms.state()                { phase: 'setup'|'play'|'over', turn, winner, moveCount, lastMove, message, busy, redPieces, bluePieces }
   mms.board()                { rows: [10 strings, row 1 first], legend, text }. Hidden Blue pieces stay hidden (B?).
-  mms.legalMoves(x)          x = 'red' or a Red square like 'B7' -> [{from,to}]. Only Red is shown (Blue stays secret).
+  mms.legalMoves(x)          x = 'red' or a Red square like 'B7' -> [{from,to}]. Only Red is shown (Blue stays hidden).
   mms.cells('board'|'lab'|'all')  cells holding code: [{uid, tab, address, path, code, output, error, mode}]; board by default
   mms.getCell('A12')         one cell: { uid, tab, address, path, code, output, error, text, mode, ... }. Also accepts a path ('/lab/J24'), a uid, or a tab: mms.getCell('J24', 'lab').
   mms.resolve('@c-1a2b3c4d') where a cell is now: { tab, address, path, uid, hasCode }. Takes an address, a path or a uid.
@@ -417,7 +417,7 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
     legalMoves(fromOrColor: unknown): Result {
       if (typeof fromOrColor !== 'string') return fail("pass 'red' or a Red square such as 'B7'");
       const key = fromOrColor.trim();
-      if (key.toLowerCase() === 'blue') return fail("Blue's moves are secret. Ask for 'red' or a Red square.");
+      if (key.toLowerCase() === 'blue') return fail("Blue's moves are hidden. Ask for 'red' or a Red square.");
       if (key.toLowerCase() === 'red') {
         const moves = game()
           .allLegalMoves('red')
@@ -428,7 +428,7 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
       if (!pos) return fail(`"${key}" is not a board square (A1 to J10)`);
       const piece = game().at(pos);
       if (!piece) return ok({ moves: [], note: 'That square is empty.' });
-      if (piece.color !== 'red') return fail("That is a Blue piece; Blue's moves are secret.");
+      if (piece.color !== 'red') return fail("That is a Blue piece; Blue's moves are hidden.");
       return ok({ moves: game().legalMoves(pos).map((to) => ({ from: view.addrOf(pos), to: view.addrOf(to) })) });
     },
 

@@ -1,5 +1,6 @@
 import { router } from '../mcp/router';
 import { covers, mailbox, normalizeAddress, type Letter } from '../mcp/mailbox';
+import { clearDraft, loadDraft, saveDraft, type Draft } from '../mcp/mailDraft';
 import type { TabStrip } from './TabStrip';
 
 /**
@@ -8,6 +9,7 @@ import type { TabStrip } from './TabStrip';
  */
 
 const ME = 'you';
+const store = typeof localStorage === 'undefined' ? null : localStorage;
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, props: Partial<HTMLElementTagNameMap[K]> & { className?: string } = {}, ...kids: Array<Node | string>): HTMLElementTagNameMap[K] => {
   const node = Object.assign(document.createElement(tag), props);
@@ -17,15 +19,18 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, props: Partial<HTMLEl
 
 const when = (t: number): string => new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-async function mailTool(name: string, args: Record<string, unknown>): Promise<void> {
-  await router.request(ME, 'mail', 'tools/call', { name, arguments: args });
+async function mailTool(name: string, args: Record<string, unknown>): Promise<{ unreachable?: string[]; next?: string } | null> {
+  const answer = (await router.request(ME, 'mail', 'tools/call', { name, arguments: args })) as { structuredContent?: { unreachable?: string[]; next?: string } } | null;
+  return answer?.structuredContent ?? null;
 }
 
 export class MailPanel {
   private readonly dialog = el('dialog', { className: 'mail-dialog' });
   private view: 'inbox' | 'sent' = 'inbox';
   private openId: string | null = null;
-  private composing: { to: string; subject: string; body: string; replyTo?: string } | null = null;
+  private composing: Draft | null = null;
+  /** The letter on the screen was kept from before (a reload, a closed window): said in the window, so it is not mistaken for sent. */
+  private restored = false;
 
   constructor(
     private readonly strip: TabStrip,
@@ -38,15 +43,25 @@ export class MailPanel {
     strip.onMail = () => this.open();
     mailbox.onChange(() => {
       this.paintStrip();
-      if (this.dialog.open) this.render();
+      // A letter that arrives while one is being written must not rebuild the form under the person's hands.
+      if (this.dialog.open && !this.composing) this.render();
     });
     mailbox.onDelivery((letter) => {
       if (letter.to.some((t) => covers(t, ME)) && letter.from !== ME) this.say(`✉ New mail from ${letter.from}: ${letter.subject}`);
     });
     this.paintStrip();
+    // Written but not sent is the easiest thing to forget: say so when the page starts.
+    if (loadDraft(store)) this.say('📝 You have a mail you wrote but did not send. Open ✉ to finish it, then press ➤ Send.');
   }
 
   open(): void {
+    if (!this.composing) {
+      const kept = loadDraft(store);
+      if (kept) {
+        this.composing = kept;
+        this.restored = true;
+      }
+    }
     this.render();
     if (!this.dialog.open) this.dialog.showModal();
   }
@@ -69,7 +84,12 @@ export class MailPanel {
       { className: 'mail-bar' },
       this.tab('inbox', `Inbox${mailbox.unread(ME) ? ` (${mailbox.unread(ME)})` : ''}`),
       this.tab('sent', 'Sent'),
-      el('button', { className: 'mail-new', textContent: '✎ Write', onclick: () => this.compose({ to: 'ai-chat', subject: '', body: '' }) }),
+      el('button', { className: 'mail-new', textContent: '✎ Write', onclick: () => {
+          const kept = loadDraft(store);
+          this.restored = !!kept;
+          this.compose(kept ?? { to: 'ai-chat', subject: '', body: '' });
+        },
+      }),
     );
     const list = el('div', { className: 'mail-list' });
     if (!letters.length) list.append(el('p', { className: 'mail-empty', textContent: this.view === 'inbox' ? 'No letters yet. The helper, AI chats outside the page and cells can write to you with the mail tools.' : 'You have not written anything yet.' }));
@@ -142,17 +162,48 @@ export class MailPanel {
     return el('div', {}, box, actions);
   }
 
-  private compose(c: { to: string; subject: string; body: string; replyTo?: string }): void {
+  private compose(c: Draft): void {
     this.composing = c;
     this.render();
     this.dialog.querySelector<HTMLTextAreaElement>('.mail-form textarea')?.focus();
   }
 
-  private form(c: { to: string; subject: string; body: string; replyTo?: string }): HTMLElement {
+  private form(c: Draft): HTMLElement {
     const to = el('input', { className: 'mail-to', value: c.to, placeholder: 'ai-chat, outside-ai, lab:A16 …' });
     const subject = el('input', { className: 'mail-sub', value: c.subject, placeholder: 'Subject' });
     const body = el('textarea', { className: 'mail-write', value: c.body, rows: 6, placeholder: 'Write here…' });
-    const note = el('div', { className: 'mail-hint', textContent: 'To: you, ai-chat (the helper), outside-ai (AI chats outside the page), or a cell like lab:A16.' });
+    const note = el('div', { className: 'mail-hint', textContent: `${this.restored ? '📝 Kept from before: ' : ''}To: you, ai-chat (the helper), outside-ai (AI chats outside the page), or a cell like lab:A16. Nothing is sent until you press ➤ Send (or Ctrl+Enter).` });
+    // What is typed goes into the draft at once, and into the browser's storage, so nothing typed can be lost.
+    const keep = (): void => {
+      Object.assign(c, { to: to.value, subject: subject.value, body: body.value });
+      saveDraft(store, c);
+    };
+    for (const field of [to, subject, body]) field.addEventListener('input', keep);
+    const send = (): void => {
+      const text = body.value.trim();
+      if (!text || !normalizeAddress(to.value)) {
+        note.textContent = 'Say who it is for and write something.';
+        return;
+      }
+      // An answer stays an answer only while the address is still the one of the letter it answers (the draft's own address changes as the person types).
+      const parent = c.replyTo ? mailbox.get(c.replyTo) : undefined;
+      const reply = !!parent && to.value.trim() === (parent.from === ME ? parent.to.join(', ') : parent.from);
+      const args = reply ? { id: c.replyTo, body: text } : { to: to.value, subject: subject.value, body: text };
+      this.composing = null;
+      this.restored = false;
+      clearDraft(store);
+      this.view = 'sent';
+      void mailTool(reply ? 'reply' : 'send', args).then((result) => {
+        // A letter to a name nobody has would wait for ever: say so now, while there is something to do about it.
+        if (result?.unreachable?.length) this.say(`⚠ ${result.next}`);
+      });
+    };
+    body.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        send();
+      }
+    });
     return el(
       'div',
       { className: 'mail-form' },
@@ -163,24 +214,13 @@ export class MailPanel {
       el(
         'div',
         { className: 'mail-actions' },
-        el('button', {
-          className: 'mail-send',
-          textContent: '➤ Send',
-          onclick: () => {
-            const text = body.value.trim();
-            if (!text || !normalizeAddress(to.value)) {
-              note.textContent = 'Say who it is for and write something.';
-              return;
-            }
-            this.composing = null;
-            this.view = 'sent';
-            void mailTool(c.replyTo && to.value.trim() === c.to ? 'reply' : 'send', c.replyTo && to.value.trim() === c.to ? { id: c.replyTo, body: text } : { to: to.value, subject: subject.value, body: text });
-          },
-        }),
+        el('button', { className: 'mail-send', textContent: '➤ Send', onclick: send }),
         el('button', {
           textContent: 'Cancel',
           onclick: () => {
             this.composing = null;
+            this.restored = false;
+            clearDraft(store);
             this.render();
           },
         }),

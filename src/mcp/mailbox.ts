@@ -64,6 +64,16 @@ export function covers(to: string, who: string): boolean {
   return who.startsWith(to) && [':', '@'].includes(who[to.length] ?? '');
 }
 
+/**
+ * Can a letter to `to` ever be read? The person, the helper and any cell can (a cell is written lab:A16); a group like `outside-ai` reaches
+ * every outside AI that comes; anything else must be (the start of) somebody who has been seen: `known` holds who called in or wrote.
+ * A letter to a name nobody has just sits there, and whoever wrote it waits for an answer that cannot come.
+ */
+export function isReachable(to: string, known: string[]): boolean {
+  if (['you', 'ai-chat', 'outside-ai'].includes(to) || /^[a-z0-9-]+:[A-Za-z]{1,2}\d{1,3}$/.test(to)) return true;
+  return known.some((k) => covers(to, k));
+}
+
 /** Turns "you, helper" or ["you", "lab:A3"] into addresses (each once). */
 export function parseRecipients(value: unknown): string[] {
   const list = Array.isArray(value) ? value.map(String) : typeof value === 'string' ? value.split(/[,;]+|\s+and\s+/i) : [];
@@ -190,6 +200,11 @@ export class Mailbox {
     if (!l.hiddenBy.includes(who)) l.hiddenBy.push(who);
     this.save();
     return true;
+  }
+
+  /** Everybody who has written a letter (somebody who writes is somebody who is there). */
+  senders(): string[] {
+    return [...new Set(this.letters.map((l) => l.from))];
   }
 
   /** Everybody who has sent or been written to, with how much is waiting for them. */

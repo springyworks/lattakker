@@ -116,11 +116,16 @@ export function installAiChat(deps: { surface: Surface; strip: TabStrip; say: (t
       const result = (await surface.writeCodeLive(path, code)) as { ok: boolean; error?: string };
       return result.ok ? { ok: true } : { ok: false, error: result.error };
     },
-    clearCell: (path, code) => {
+    clearCell: (path, code, before) => {
       const hit = workspace.resolve(path);
       if ('error' in hit) return { ok: false, error: hit.error };
       // Only the helper's own code is taken back: if the person changed the cell since, it is left alone.
       if (hit.tab.sheet.dataAt(hit.address)?.code.trim() !== code.trim()) return { ok: false, error: `${path} was changed after the helper wrote it, so it is left as it is.` };
+      // Code the helper added to is given back as it was before, not emptied.
+      if (before != null) {
+        hit.tab.sheet.setCode(hit.address, before);
+        return { ok: true };
+      }
       const result = surface.clearCell(path) as { ok: boolean; error?: string };
       return result.ok ? { ok: true } : { ok: false, error: result.error };
     },

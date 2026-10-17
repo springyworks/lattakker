@@ -14,7 +14,8 @@ import { workspace } from '../workspace';
 import { resolveSmart } from './cellPaths';
 import { ammo } from './ammo';
 import { RULES, readDocs } from './docs';
-import { getSettings } from './config';
+import { canWrite, getSettings } from './config';
+import { checkCode, type CodeProblem } from '../editor/monaco';
 import type { ToolDecl } from './providers';
 
 /** The name the helper uses on the in-page MCP router, so its traffic shows up (and can be watched) like any client's. */
@@ -46,14 +47,20 @@ export interface RunReport {
 export class WriteLedger {
   count = 0;
   readonly uids = new Set<string>();
+  /** What a cell held before the helper first added to it (by identity), so undo can give it back. */
+  readonly originals = new Map<string, string>();
+  /** What is still wrong with the helper's latest code (the editor's mistakes, or the error it ran into); null when it is clean. */
+  pending: string | null = null;
   reset(): void {
     this.count = 0;
     this.uids.clear();
+    this.originals.clear();
+    this.pending = null;
   }
 }
 
-/** Most times the helper may write code by itself in one conversation. */
-export const MAX_WRITES = 6;
+/** Most times the helper may write code by itself in one conversation: more when it works on its own, so it can keep fixing. */
+export const maxWrites = (): number => (getSettings().autonomous ? 12 : 6);
 const MAX_WRITE_CHARS = 8000;
 /** Size of the empty spot the helper gets for code it writes: wide and tall enough to show a picture or a few lines. */
 const FREE_COLS = 6;
@@ -71,7 +78,7 @@ export interface ToolHost {
   /** Types code into a cell where the person can watch, keeps it and runs it. */
   write(path: string, code: string): Promise<RunReport>;
   /** Tells the chat that the helper wrote code on its own, so the person gets a card with an undo button. */
-  wrote(path: string, code: string, report: RunReport): void;
+  wrote(path: string, code: string, report: RunReport, before: string | null, mistakes: string[]): void;
   readonly ledger: WriteLedger;
   /** The text in the open editor of that cell (saved or not), or null when no editor is open on it. */
   liveText(tab: string, address: string): string | null;
@@ -200,6 +207,11 @@ export const TOOL_DECLS: ToolDecl[] = [
     parameters: { type: 'object', properties: { path: cellPath }, required: ['path'] },
   },
   {
+    name: 'check_cell',
+    description: 'Ask the code editor what it underlines in a cell: the mistakes (red) and warnings (yellow) of syntax and types, with line numbers and the text of the line. It is the same list the person sees. Give code to check a draft before you write it; without code the cell as it is now is checked. "no mistakes" means the editor is happy; the cell can still fail when it runs, so run it too.',
+    parameters: { type: 'object', properties: { path: cellPath, code: { type: 'string', description: 'Optional: a draft to check instead of the cell as it is now.' } }, required: ['path'] },
+  },
+  {
     name: 'find_free_cell',
     description: `Find an empty spot (${FREE_COLS} columns wide, ${FREE_ROWS} rows tall) where new code can go without touching anybody's work. Answers with the cell path.`,
     parameters: { type: 'object', properties: { tab: { type: 'string', description: 'Tab id: "board" or "lab". Default: the tab the person is in.' } } },
@@ -207,12 +219,13 @@ export const TOOL_DECLS: ToolDecl[] = [
   {
     name: 'write_code',
     description:
-      'Write code into an EMPTY cell yourself and run it, so the person can watch it being typed. Without a path it picks an empty spot (find_free_cell). You may only use a cell that is empty or that you wrote earlier; for any other cell use suggest_code. The answer tells what the cell printed or its error: fix the error with write_code on the same path. Start the code with span(6, 4) so it has room.',
+      'Write code into a cell yourself and run it, so the person can watch it being typed. Without a path it picks an empty spot (find_free_cell). mode "replace" (the default) needs a cell that is empty or that you wrote earlier. mode "append" adds your code at the end of a cell that already has code (the old code stays, and the person can undo). The answer lists what the code editor underlines (problems, with line numbers) and what the cell printed or its error: fix every problem with write_code on the same path (the COMPLETE code of the cell) and keep going until there are no problems and the output is what the person wanted. Start new code with span(6, 4) so it has room.',
     parameters: {
       type: 'object',
       properties: {
         path: { type: 'string', description: 'An empty cell, or one you wrote earlier. Leave it out to get an empty spot.' },
         code: { type: 'string', description: 'The complete TypeScript for the cell (a top-level script, see read_guide).' },
+        mode: { type: 'string', enum: ['replace', 'append'], description: 'replace (default): the code is the whole cell. append: the code is added below what the cell already has.' },
         note: { type: 'string', description: 'One short sentence: what this code does.' },
       },
       required: ['code'],
@@ -235,7 +248,7 @@ export const TOOL_DECLS: ToolDecl[] = [
 ];
 
 /** What a small model is offered: the tools for looking, going there, trying and suggesting. More tools make small models fumble. */
-const SMALL_MODEL_TOOLS = new Set(['check_mail', 'send_mail', 'look_around', 'list_cells', 'read_cell', 'goto_cell', 'flash_cell', 'run_cell', 'find_free_cell', 'write_code', 'suggest_code', 'read_docs']);
+const SMALL_MODEL_TOOLS = new Set(['check_mail', 'send_mail', 'look_around', 'list_cells', 'read_cell', 'goto_cell', 'flash_cell', 'run_cell', 'check_cell', 'find_free_cell', 'write_code', 'suggest_code', 'read_docs']);
 
 /** The shortest list that still lets a model look, go there, try and suggest: for a model whose memory is tiny. */
 const TIGHT_TOOLS = new Set(['look_around', 'read_cell', 'goto_cell', 'run_cell', 'write_code', 'suggest_code']);
@@ -243,7 +256,7 @@ const TIGHT_TOOLS = new Set(['look_around', 'read_cell', 'goto_cell', 'run_cell'
 /** The tools for one question: all of them, or the short list for a small model (the shortest when memory is tiny); write_code only when the person allowed it. */
 export function toolsFor(options: { small: boolean; second: boolean; tight?: boolean }): ToolDecl[] {
   const all = options.second ? [...TOOL_DECLS, ...LOCAL_DECLS] : TOOL_DECLS;
-  return all.filter((t) => (t.name !== 'write_code' || getSettings().allowWrite) && (!options.small || SMALL_MODEL_TOOLS.has(t.name)) && (!options.tight || TIGHT_TOOLS.has(t.name)));
+  return all.filter((t) => (t.name !== 'write_code' || canWrite()) && (!options.small || SMALL_MODEL_TOOLS.has(t.name)) && (!options.tight || TIGHT_TOOLS.has(t.name)));
 }
 
 /** The little database, for the local librarian. */
@@ -403,14 +416,47 @@ function freeSpot(tabId: string): { path: string } | { error: string } {
   return address ? { path: workspace.pathOf(tabId, address) } : { error: `The ${tabId} tab has no empty ${FREE_COLS}x${FREE_ROWS} spot left. Try the other tab.` };
 }
 
+/** The editor's problems as a model can use them: where, what, and the line itself. */
+function problemList(found: CodeProblem[]): Array<Record<string, unknown>> {
+  return found.map((p) => ({ line: p.line, column: p.column, kind: p.severity, message: p.message, lineText: p.lineText }));
+}
+
+/** What the editor underlines in this code; a worker that does not answer must not stop the helper, so that is "unknown", not "fine". */
+async function problemsIn(code: string, scope: string): Promise<{ found: CodeProblem[]; asked: boolean }> {
+  try {
+    return { found: await checkCode(code, scope), asked: true };
+  } catch {
+    return { found: [], asked: false };
+  }
+}
+
+async function checkCell(host: ToolHost, args: Args): Promise<string> {
+  const hit = resolveSmart(String(args.path ?? ''), host.context().tab);
+  if ('error' in hit) return asText({ error: hit.error });
+  const full = workspace.pathOf(hit.tab.id, hit.address);
+  const data = hit.tab.sheet.dataAt(hit.address);
+  const draft = typeof args.code === 'string' && args.code.trim() ? cleanCode(args.code) : null;
+  const code = draft ?? host.liveText(hit.tab.id, hit.address) ?? data?.code ?? '';
+  if (!code.trim()) return asText({ error: `${full} has no code to check.`, note: hit.note });
+  const { found, asked } = await problemsIn(code, hit.tab.sheet.id);
+  if (!asked) return asText({ path: full, error: 'The code editor did not answer in time. Run the cell with run_cell to see if it works.' });
+  const errors = found.filter((p) => p.severity === 'error').length;
+  return asText({
+    path: full,
+    checked: draft ? 'your draft' : 'the cell as it is now',
+    mistakes: errors,
+    problems: problemList(found),
+    next: errors ? 'Fix every mistake with write_code (the complete code), then check again.' : 'The editor has no mistakes. Run the cell (run_cell) and look at what it printed.',
+  });
+}
+
 async function writeCode(host: ToolHost, args: Args): Promise<string> {
-  if (!getSettings().allowWrite) {
-    return asText({ error: 'The person has not allowed you to write code yourself. Offer the code with suggest_code, and say that a grown-up can switch on "Let the helper write code in empty cells" in the settings (⚙).' });
+  if (!canWrite()) {
+    return asText({ error: 'The person has not allowed you to write code yourself. Offer the code with suggest_code, and say that a grown-up can switch on "Let the helper work on its own" in the settings (⚙).' });
   }
   const code = typeof args.code === 'string' ? cleanCode(args.code) : '';
   if (!code.trim()) return asText({ error: 'code must be the TypeScript text for the cell' });
-  if (code.length > MAX_WRITE_CHARS) return asText({ error: `The code is too long (${code.length} characters, at most ${MAX_WRITE_CHARS}). Write something shorter.` });
-  if (host.ledger.count >= MAX_WRITES) return asText({ error: `You have already written code ${MAX_WRITES} times in this conversation. Offer further code with suggest_code.` });
+  if (host.ledger.count >= maxWrites()) return asText({ error: `You have already written code ${maxWrites()} times in this conversation. Offer further code with suggest_code.` });
 
   let path = typeof args.path === 'string' ? args.path.trim() : '';
   if (!path) {
@@ -425,30 +471,47 @@ async function writeCode(host: ToolHost, args: Args): Promise<string> {
   if (tab.id !== 'board' && tab.id !== 'lab') return asText({ error: `You may only write in the board and lab tabs, not in ${tab.id}.` });
   const data = tab.sheet.dataAt(address)!;
   const own = !!data.uid && host.ledger.uids.has(data.uid);
-  if (data.code.trim() && !own) return asText({ error: `${workspace.pathOf(tab.id, address)} already has someone else's code. Use find_free_cell for an empty one, or suggest_code to propose a change.` });
+  const append = args.mode === 'append';
+  const existing = host.liveText(tab.id, address) ?? data.code;
+  if (existing.trim() && !own && !(append && getSettings().autonomous)) {
+    return asText({ error: `${workspace.pathOf(tab.id, address)} already has someone else's code. Use find_free_cell for an empty one, ${getSettings().autonomous ? 'write_code with mode "append" to add below it, ' : ''}or suggest_code to propose a change.` });
+  }
+  // Appending keeps what is there; the first time the helper touches somebody's code, that code is kept for the undo button.
+  const whole = append && existing.trim() ? `${existing.replace(/\s+$/, '')}\n\n${code}` : code;
+  if (whole.length > MAX_WRITE_CHARS) return asText({ error: `The cell would be too long (${whole.length} characters, at most ${MAX_WRITE_CHARS}). Write something shorter.` });
+  if (data.uid && existing.trim() && !own && !host.ledger.originals.has(data.uid)) host.ledger.originals.set(data.uid, data.code);
 
   const full = workspace.pathOf(tab.id, address);
   host.ledger.count++;
-  const typed = await host.write(full, code);
+  const typed = await host.write(full, whole);
   const uid = typed.uid ?? tab.sheet.dataAt(address)?.uid ?? null;
   if (uid) host.ledger.uids.add(uid);
-  host.wrote(full, code, typed);
+
+  // What the editor underlines in what is now in the cell: asked of the same engine, so it is what the person would see.
+  const { found, asked } = await problemsIn(whole, tab.sheet.id);
+  const mistakes = found.filter((p) => p.severity === 'error');
+  host.wrote(full, whole, typed, uid ? (host.ledger.originals.get(uid) ?? null) : null, mistakes.map((p) => `line ${p.line}: ${p.message}`));
   const failedLine = !typed.ok ? Number(/line (\d+)/i.exec(typed.error ?? '')?.[1]) : NaN;
+  const empty = typed.ok && !typed.output?.trim() && !typed.text?.trim();
+  host.ledger.pending = !typed.ok ? `${full} fails when it runs: ${typed.error ?? 'it did not finish'}` : mistakes.length ? `${full} still has ${mistakes.length} mistake${mistakes.length === 1 ? '' : 's'} the editor underlines` : null;
+  const left = maxWrites() - host.ledger.count;
   return asText({
     ...reportText(full, typed),
-    errorLineText: Number.isInteger(failedLine) ? (code.split('\n')[failedLine - 1] ?? null) : undefined,
-    wroteLines: code.split('\n').length,
-    writesLeft: MAX_WRITES - host.ledger.count,
-    next: !typed.ok
-      ? `Fix the error and call write_code again with the same path. This is TypeScript (not Python): write real line breaks, never the two characters \\n, and call plot/print the way read_guide shows.${/Invalid character/i.test(typed.error ?? '') ? ' "Invalid character" usually means a stray backslash or non-TypeScript syntax.' : ''}`
-      : !typed.output?.trim() && !typed.text?.trim()
-        ? 'It ran but printed and showed nothing. If the person expects to see something, check that the code calls print(...) and fix it with write_code on the same path.'
-        : 'It works. Tell the person what you made and what it does, in simple words.',
+    errorLineText: Number.isInteger(failedLine) ? (whole.split('\n')[failedLine - 1] ?? null) : undefined,
+    editor: asked ? (mistakes.length ? `${mistakes.length} mistake${mistakes.length === 1 ? '' : 's'}` : found.length ? 'no mistakes, only warnings' : 'no mistakes') : 'did not answer',
+    problems: found.length ? problemList(found) : undefined,
+    wroteLines: whole.split('\n').length,
+    writesLeft: left,
+    next: !typed.ok || mistakes.length
+      ? `Not working yet. ${mistakes.length ? 'Fix every mistake in "problems" (the line text tells where). ' : ''}${!typed.ok ? 'Fix the error it ran into. ' : ''}Then call write_code again with the same path and the COMPLETE code of the cell${append ? ' (call read_cell first to see all of it)' : ''}. This is TypeScript (not Python): write real line breaks, never the two characters \\n, and call plot/print the way read_guide shows.${/Invalid character/i.test(typed.error ?? '') ? ' "Invalid character" usually means a stray backslash or non-TypeScript syntax.' : ''} ${left <= 1 ? 'You have almost no writes left: after the last one, say honestly what still fails.' : 'Keep going until it works.'}`
+      : empty
+        ? 'The editor has no mistakes and it ran, but it printed and showed nothing. If the person expects to see something, make the code print(...) or draw it, and write it again.'
+        : 'It works: no mistakes in the editor and it ran. Check that the output is what the person asked for; if it is, tell them what you made and what it does, in simple words.',
   });
 }
 
 /** Tools that read the page directly instead of asking an MCP server: the router would never see them, so they are announced to it. */
-const DIRECT_TOOLS = new Set(['look_around', 'list_tabs', 'read_cell', 'game_state', 'board_text', 'read_guide', 'read_docs', 'run_cell', 'find_free_cell', 'write_code', 'suggest_code']);
+const DIRECT_TOOLS = new Set(['look_around', 'list_tabs', 'read_cell', 'game_state', 'board_text', 'read_guide', 'read_docs', 'run_cell', 'check_cell', 'find_free_cell', 'write_code', 'suggest_code']);
 
 function announceDirect(host: ToolHost, name: string, args: Args, client: string): void {
   if (!DIRECT_TOOLS.has(name)) return;
@@ -576,7 +639,7 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
           method = String(params.name);
           params = {};
         }
-        if (server === 'tabs' && method === 'tools/call' && String(params.name ?? '') !== 'list' && String(params.name ?? '') !== 'select' && !getSettings().allowWrite) {
+        if (server === 'tabs' && method === 'tools/call' && String(params.name ?? '') !== 'list' && String(params.name ?? '') !== 'select' && !canWrite()) {
           return asText({ error: 'Making, renaming and closing tabs is switched off for you (a grown-up can allow it in the helper settings, "Let the helper write code"). You can list tabs and select one; ask the person to use the ＋ in the tab strip.' });
         }
         if (method === 'tools/call' && String(params.name ?? '') === 'set_code') return asText({ error: 'set_code is not allowed for you. Use suggest_code: the person looks at the code and decides.' });
@@ -620,6 +683,8 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
         if (!hit.tab.sheet.dataAt(hit.address)?.code.trim()) return asText({ error: `${full} has no code to run.`, note: hit.note });
         return asText({ ...reportText(full, await host.run(full)), note: hit.note });
       }
+      case 'check_cell':
+        return await checkCell(host, args);
       case 'find_free_cell': {
         const tabId = tabForNewCode(host, args.tab);
         return asText({ ...freeSpot(tabId), tab: tabId, size: `${FREE_COLS}x${FREE_ROWS}`, next: 'Use write_code (or suggest_code) with this path.' });

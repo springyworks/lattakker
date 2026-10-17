@@ -32,11 +32,17 @@ export interface CallerRecord extends Caller {
   /** Milliseconds since the page started. */
   first: number;
   last: number;
+  /** What the latest call was (the tool's name), when the way in says. */
+  doing?: string;
 }
 
 let channel: { name: string; caller: Caller } | null = null;
 const seen = new Map<string, CallerRecord>();
 const MAX_CALLERS = 50;
+const watchers: Array<() => void> = [];
+
+/** Called whenever an outside AI makes a call (for the sign of life on the screen). */
+export const onCallers = (listener: () => void): void => void watchers.push(listener);
 
 const clean = (v: unknown, max: number): string | undefined => {
   if (typeof v !== 'string') return undefined;
@@ -53,23 +59,30 @@ export function originOf(c: Caller): string {
 }
 
 /** Runs `fn` (synchronously up to its first await) as a call that came in through `name`, from `caller`. */
-export function throughChannel<T>(name: string, caller: Caller | undefined, fn: () => T): T {
+export function throughChannel<T>(name: string, caller: Caller | undefined, fn: () => T, doing?: string): T {
   const before = channel;
   const c: Caller = { client: clean(caller?.client, 40), version: clean(caller?.version, 30), model: clean(caller?.model, 40), agent: clean(caller?.agent, 80), protocol: clean(caller?.protocol, 20), key: clean(caller?.key, 80), note: clean(caller?.note, 120), startedAt: typeof caller?.startedAt === 'number' && Number.isFinite(caller.startedAt) ? caller.startedAt : undefined };
   channel = { name, caller: c };
   const origin = originOf(c);
   const now = Math.round(performance.now());
   const known = seen.get(origin);
-  if (known) Object.assign(known, { ...c, origin, via: name, calls: known.calls + 1, last: now });
+  const what = clean(doing, 40);
+  if (known) Object.assign(known, { ...c, origin, via: name, calls: known.calls + 1, last: now, doing: what ?? known.doing });
   else {
     if (seen.size >= MAX_CALLERS) seen.delete(seen.keys().next().value as string);
-    seen.set(origin, { ...c, origin, via: name, calls: 1, first: now, last: now });
+    seen.set(origin, { ...c, origin, via: name, calls: 1, first: now, last: now, doing: what });
   }
+  watchers.forEach((w) => w());
   try {
     return fn();
   } finally {
     channel = before;
   }
+}
+
+/** Forgets one caller (a test that made one up cleans after itself). */
+export function forgetCaller(origin: string): void {
+  if (seen.delete(origin)) watchers.forEach((w) => w());
 }
 
 /** Everyone who has called in from outside, newest first. */

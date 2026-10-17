@@ -1,5 +1,6 @@
 import { ERR, McpError, router, type Json, type McpServer, type Trace } from '../mcp/router';
-import { covers, mailbox, normalizeAddress, parseRecipients, type Letter, type Mailbox } from '../mcp/mailbox';
+import { covers, isReachable, mailbox, normalizeAddress, parseRecipients, type Letter, type Mailbox } from '../mcp/mailbox';
+import { callers } from '../ai/entry';
 
 /**
  * The MCP server `mail`: letters between everybody that talks over the router. It is made to be easy for a small AI:
@@ -164,7 +165,19 @@ export class MailServer implements McpServer {
         if (!body) return fail('the letter is empty: give a body', '{"to":"you","body":"Hello!"}');
         const letter = this.box.send({ from: who, to, subject: str(args.subject), body, replyTo, via: trace?.id });
         for (const t of to) router.notify('mail', t, 'notifications/mail/new', { id: letter.id, from: who, subject: letter.subject }, trace);
-        return reply({ ok: true, sent: letter.id, to, subject: letter.subject, next: 'It is in their mailbox. They see it with check, inbox and read; you will see an answer in your inbox.' });
+        // Who is known: those who called in from outside and those who wrote a letter. A name outside that is a letter nobody will read.
+        const known = [...callers().map((c) => c.origin), ...this.box.senders()];
+        const nobody = to.filter((t) => !isReachable(t, known));
+        return reply({
+          ok: true,
+          sent: letter.id,
+          to,
+          subject: letter.subject,
+          ...(nobody.length ? { unreachable: nobody } : {}),
+          next: nobody.length
+            ? `It is in the mailbox, but nobody called ${nobody.map((n) => `“${n}”`).join(', ')} has ever called in or written, so nobody will read it. Write to "outside-ai" to reach every AI outside the page, "ai-chat" for the helper, or "you" for the person.`
+            : 'It is in their mailbox. They see it with check, inbox and read; you will see an answer in your inbox.',
+        });
       }
       case 'sent':
         return reply({ ok: true, letters: this.box.sent(who).slice(0, limitOf(10)).map((l) => brief(l, who, this.box)) });

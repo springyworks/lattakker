@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import type { Plugin } from 'vite';
+import { parseDirectives, renderDirectives } from '../src/ai/directives';
 
 /**
  * Documents for AI helpers, published next to the page as ordinary files (and served by the dev server):
@@ -67,7 +68,9 @@ export function buildDocs(root: string, site: string): AiDoc[] {
   const examples = evalConst(join(root, 'src/examples.ts'), 'EXAMPLES') as Array<[string, string]>;
   const demos = evalConst(join(root, 'src/labDemos.ts'), 'LAB_DEMOS') as Array<[string, string]>;
   const monitor = evalConst(join(root, 'src/monitorDemos.ts'), 'MONITOR_DEMOS') as Array<[string, string]>;
-  const rules = fill(read('ai-docs/rules.md'));
+  // The standing directives are part of the rules every AI reads first. The end dates stay in the text, so a copy that is read late can still be judged.
+  const directives = renderDirectives(parseDirectives(JSON.parse(read('ai-docs/directives.json'))));
+  const rules = fill(read('ai-docs/rules.md')) + (directives ? `\n\n## Standing directives\n\n${directives}\n` : '');
   const readme = read('README.md');
 
   const apiFile = `// Lattakker Sheet: everything a cell's TypeScript can use, as declarations. Generated from src/sheet/apiTypes.ts.\n// Cells are top-level scripts (no return, top-level await works). See rules.md.\n${api}\n`;

@@ -1,4 +1,6 @@
 import rulesRaw from '../../ai-docs/rules.md?raw';
+import directivesRaw from '../../ai-docs/directives.json?raw';
+import { parseDirectives, renderDirectives } from '../ai/directives';
 import { CELL_API_DTS } from '../sheet/apiTypes';
 import { EXAMPLES } from '../examples';
 import { LAB_DEMOS } from '../labDemos';
@@ -57,13 +59,26 @@ function sections(markdown: string): Record<string, string> {
 
 const parts = sections(rulesRaw);
 
+/** The owner's standing directives that count today (a directive ends after its last day), or '' when there are none. Read each time, so a page left open for days still lets them end. */
+export function standingDirectives(): string {
+  try {
+    return renderDirectives(parseDirectives(JSON.parse(directivesRaw)));
+  } catch {
+    return '';
+  }
+}
+
 /** The rules the built-in helper is given (the same file is published for outside AIs). */
 export const RULES = {
   first: (parts['first contact'] ?? '').replaceAll('{{GITHUB_README_RAW}}', `${GITHUB_RAW}README.md`).replaceAll('{{GITHUB_README}}', `${GITHUB}README.md`),
   behave: parts['how to behave'] ?? '',
   coder: parts['work like a coder'] ?? '',
   cell: parts['cell code rules'] ?? '',
-  all: rulesRaw.replaceAll('{{SITE}}ai/', `${site()}ai/`).replaceAll('{{GITHUB_README_RAW}}', `${GITHUB_RAW}README.md`).replaceAll('{{GITHUB_README}}', `${GITHUB}README.md`),
+  get all(): string {
+    const text = rulesRaw.replaceAll('{{SITE}}ai/', `${site()}ai/`).replaceAll('{{GITHUB_README_RAW}}', `${GITHUB_RAW}README.md`).replaceAll('{{GITHUB_README}}', `${GITHUB}README.md`);
+    const directives = standingDirectives();
+    return directives ? `${text}\n\n## Standing directives\n\n${directives}\n` : text;
+  },
 };
 
 // ---------------------------------------------------------------- chunks

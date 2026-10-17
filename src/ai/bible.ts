@@ -1,4 +1,4 @@
-import { RULES } from '../aichat/docs';
+import { RULES, standingDirectives } from '../aichat/docs';
 import { FIRST_CONTACT, README_URL, fetchReadme } from './orientation';
 
 /**
@@ -51,15 +51,17 @@ export interface Bible {
   source: string;
 }
 
-const cache = new Map<number, Bible>();
+const cache = new Map<string, Bible>();
 
 /** The rules and as much of the README as fits in `share` of a window of `windowTokens`. */
 export async function bibleFor(windowTokens: number, share = 0.4): Promise<Bible> {
-  const key = Math.round(windowTokens * share);
+  const directives = standingDirectives();
+  // The directives are part of the key: when one ends or changes, the next question gets a new Bible.
+  const key = `${Math.round(windowTokens * share)}|${directives}`;
   const hit = cache.get(key);
   if (hit) return hit;
   const budget = Math.floor(windowTokens * share * CHARS_PER_TOKEN);
-  const rules = `${FIRST_CONTACT}\n\n${RULES.cell}`.trim();
+  const rules = `${FIRST_CONTACT}\n\n${RULES.cell}${directives ? `\n\nStanding directives:\n${directives}` : ''}`.trim();
   const head = `THE LATTAKKER BIBLE. The README of this project, on GitHub (${README_URL}), is the place of truth: it wins over what you remember or guess about Lattakker. Lattakker is a board game and a spreadsheet of TypeScript cells in one page. Rules for every AI here:\n${rules}`;
   let bible: Bible;
   try {

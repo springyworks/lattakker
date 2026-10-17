@@ -12,6 +12,7 @@ import { allNotes, exportJson, forget, importJson, isKeptSafe, keepSafe, memoryI
 import { describeModel } from './modelInfo';
 import { ammo, gaugeText } from './ammo';
 import { diagnose } from './diagnose';
+import { getLive, onLiveChange } from './ollamaLoad';
 import { memoryFileState } from './memorySync';
 import { GeminiProvider, OpenAiCompatProvider, friendly, type ModelProvider } from './providers';
 import type { AiContext } from './tools';
@@ -32,7 +33,7 @@ export interface UiHost {
   /** Types code into a cell where the person can watch (the "Type it into the cell" button). */
   typeIn(path: string, code: string, afterLine: number | null): Promise<{ ok: boolean; error?: string }>;
   /** Empties a cell the helper wrote in, if it still holds exactly that code (the undo button). */
-  clearCell(path: string, code: string): { ok: boolean; error?: string };
+  clearCell(path: string, code: string, before?: string | null): { ok: boolean; error?: string };
   /** Takes the person to a cell. */
   goTo(path: string): boolean;
   /** Where the person is pointing right now. */
@@ -80,6 +81,24 @@ function modelLine(): HTMLElement {
   return line;
 }
 
+/** The tiny line about the local model's doings: what is known (measured, in green) apart from what is only a reading of it (maybe, in amber). */
+function liveLine(): HTMLElement {
+  const line = el('div', { className: 'ai-live' });
+  line.dataset.role = 'live';
+  return line;
+}
+
+function paintLive(into: HTMLElement): void {
+  const { note, now } = getLive();
+  into.textContent = '';
+  into.hidden = !note.known.length && !note.maybe.length;
+  if (into.hidden) return;
+  const tag = now ? '' : 'last answer · ';
+  into.append(el('span', { className: 'ai-live-known', textContent: `✔ ${tag}${note.known.join(' · ')}` }));
+  if (note.maybe.length) into.append(el('span', { className: 'ai-live-maybe', textContent: ` ≈ maybe: ${note.maybe.join('; ')}` }));
+  into.title = '✔ = a fact: measured by Ollama or by this page (a clock, a ping, Ollama\'s own list of models in memory). ≈ maybe = our reading of those facts; Ollama\'s own log is not readable from a web page, so the reason for a delay is never certain.';
+}
+
 export class AiChatUi {
   private readonly side = el('aside', { className: 'ai-side', hidden: true });
   private readonly sideLog = el('div', { className: 'ai-log' });
@@ -118,6 +137,7 @@ export class AiChatUi {
     convo.onChange(() => this.render());
     onJobsChange(() => this.convo.busy && this.render());
     onLocalChange(() => this.render());
+    onLiveChange(() => this.render());
     ammo.onChange(() => this.render());
     onMemoryChange(() => this.settingsOpen && this.render());
     void isKeptSafe().then((v) => (this.kept = v));
@@ -163,7 +183,7 @@ export class AiChatUi {
     sent.dataset.role = 'sent';
     const form = el('div', { className: 'ai-form' }, this.sideInput, send);
     this.sideBody.append(this.sideLog);
-    this.side.append(this.makeGrip(), head, modelLine(), this.sideBody, sent, form);
+    this.side.append(this.makeGrip(), head, modelLine(), liveLine(), this.sideBody, sent, form);
     this.applyWidth(loadWidth());
   }
 
@@ -281,7 +301,7 @@ export class AiChatUi {
     send.onclick = () => this.submit(this.miniInput, () => this.miniCtx);
     const sent = el('div', { className: 'ai-sent' });
     sent.dataset.role = 'sent';
-    this.mini.append(head, modelLine(), this.miniLog, sent, el('div', { className: 'ai-form' }, this.miniInput, send));
+    this.mini.append(head, modelLine(), liveLine(), this.miniLog, sent, el('div', { className: 'ai-form' }, this.miniInput, send));
   }
 
   /** The little chat can be moved: press on its header (not on a button) and drag. It stays inside the window. */
@@ -357,6 +377,8 @@ export class AiChatUi {
     for (const node of [this.side, this.mini]) {
       const line = node.querySelector<HTMLElement>('[data-role=sent]');
       if (line) line.textContent = configured ? sent : '';
+      const live = node.querySelector<HTMLElement>('[data-role=live]');
+      if (live) paintLive(live);
       const model = node.querySelector<HTMLElement>('[data-role=model]');
       if (model) {
         const warning = localWarning();
@@ -408,6 +430,11 @@ export class AiChatUi {
         status.append(el('div', { className: `ai-why ${why.level}`, textContent: `${why.level === 'stuck' ? '⚠' : '⏳'} ${why.line}` }));
         if (why.hint) status.append(el('div', { className: 'ai-why-hint', textContent: `💡 ${why.hint}` }));
         status.append(el('div', { className: 'ai-why-chain', textContent: `Where: ${why.chain}` }));
+      }
+      const { note, now } = getLive();
+      if (now) {
+        status.append(el('div', { className: 'ai-live-known', textContent: `✔ Known: ${note.known.join(' · ')}` }));
+        if (note.maybe.length) status.append(el('div', { className: 'ai-live-maybe', textContent: `≈ Maybe (a reading, not a fact): ${note.maybe.join('; ')}` }));
       }
       status.append(tree);
       log.append(status);
@@ -481,7 +508,10 @@ export class AiChatUi {
   /** The card for code the helper wrote by itself: where, how it ran, and a way to look at it or take it back. */
   private wroteNode(entry: Extract<Entry, { kind: 'wrote' }>): HTMLElement {
     const undone = entry.state === 'undone';
-    const card = el('div', { className: 'ai-proposal ai-wrote' }, el('div', { className: 'ai-who' }, entry.ok ? '🧪 The helper wrote code in ' : '⚠ The helper wrote code in ', cellLink(entry.path), entry.ok ? ' and ran it ✓' : ' but it stopped with a problem'));
+    const marked = entry.mistakes ?? [];
+    const good = entry.ok && !marked.length;
+    const card = el('div', { className: 'ai-proposal ai-wrote' }, el('div', { className: 'ai-who' }, good ? '🧪 The helper wrote code in ' : '⚠ The helper wrote code in ', cellLink(entry.path), good ? ' and ran it ✓' : entry.ok ? ` and ran it, but the editor marks ${marked.length} mistake${marked.length === 1 ? '' : 's'}` : ' but it stopped with a problem'));
+    if (marked.length) card.append(el('div', { className: 'ai-note', textContent: `Editor: ${marked.slice(0, 3).join(' · ')}${marked.length > 3 ? ' …' : ''}` }));
     if (entry.error) {
       const problem = el('div', { className: 'ai-note' });
       linkify(problem, entry.error);
@@ -489,16 +519,16 @@ export class AiChatUi {
     } else if (entry.printed) card.append(el('div', { className: 'ai-note', textContent: `It printed: ${entry.printed}` }));
     card.append(el('details', { className: 'ai-help' }, el('summary', { textContent: 'The code' }), el('pre', {}, el('code', { textContent: entry.code }))));
     if (undone) {
-      card.append(el('div', { className: 'ai-note', textContent: 'Undone: the cell is empty again.' }));
+      card.append(el('div', { className: 'ai-note', textContent: entry.before != null ? 'Undone: the cell is as it was before.' : 'Undone: the cell is empty again.' }));
       return card;
     }
     const show = el('button', { className: 'ai-send', textContent: '👀 Show me' });
     show.title = 'Fly to the cell and make it blink';
     show.onclick = () => this.host.goTo(entry.path);
     const undo = el('button', { className: 'ai-stop', textContent: '↶ Undo' });
-    undo.title = 'Empty the cell again. Only the helper’s own code is removed.';
+    undo.title = entry.before != null ? 'Give the cell back as it was before the helper added to it.' : 'Empty the cell again. Only the helper’s own code is removed.';
     undo.onclick = () => {
-      const r = this.host.clearCell(entry.path, entry.code);
+      const r = this.host.clearCell(entry.path, entry.code, entry.before);
       if (r.ok) entry.state = 'undone';
       else this.convo.note(`Could not undo: ${r.error ?? 'unknown problem'}`);
       this.render();
@@ -587,10 +617,13 @@ export class AiChatUi {
     weatherBox.onchange = () => updateSettings((x) => (x.allowWeather = weatherBox.checked));
     const writeBox = el('input', { type: 'checkbox', checked: s.allowWrite });
     writeBox.onchange = () => updateSettings((x) => (x.allowWrite = writeBox.checked));
+    const autoBox = el('input', { type: 'checkbox', checked: s.autonomous });
+    autoBox.onchange = () => updateSettings((x) => (x.autonomous = autoBox.checked));
     root.append(this.knowsPanel(), this.memorySettings());
     root.append(
       el('h3', { textContent: 'Other' }),
-      el('label', { className: 'ai-row' }, writeBox, ' Let the helper write code in empty cells by itself (“Let the helper write code in empty cells”). You watch it being typed, it runs, and every card has an undo button. It never changes a cell that already has code, and it may do this at most 6 times per conversation. Off by default.'),
+      el('label', { className: 'ai-row' }, autoBox, ' Let the helper work on its own (on by default): it writes or adds code, lets the code editor check it for mistakes, runs it, reads what came out and keeps fixing until it works (up to 12 writes per conversation). It also adds code below a cell that already has code, and every card has an undo button that gives the cell back as it was. It never replaces code that is not its own.'),
+      el('label', { className: 'ai-row' }, writeBox, ' Only let the helper write code in empty cells (it does not carry on by itself, at most 6 writes). This matters only when the option above is off.'),
       el('label', { className: 'ai-row' }, weatherBox, ' Let cells and the helper look up the weather (weather.now(...), the MCP server “weather”). A lookup sends the place name to open-meteo.com, nothing else.'),
       el('label', { className: 'ai-row' }, outside, ' Let an outside AI (one connected over MCP, see the README) put questions to this helper. It then uses your helper, so with Gemini it uses your key and quota. Off by default.'),
       el('label', { className: 'ai-row' }, remember, ' Remember the key on this computer (otherwise it is forgotten when the page closes). Code in a cell could read a remembered key, so only do this on your own computer.'),

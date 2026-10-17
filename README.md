@@ -123,7 +123,15 @@ Other commands:
 npm run build       # type-check, then produce a production build in dist/
 npm run preview      # serve the production build locally
 npm run typecheck    # type-check only, no build output
+npm test             # unit tests (vitest) of the plain logic in tests/: directives, Ollama status
 ```
+
+Tests: `npm test` needs nothing running. With `npm run dev` going and the page open at `/?mcp`,
+`node scripts/mcp-smoke.mjs` plays an outside AI over `/mcp` (read-only traffic, mail, the scratch-tab
+flow, the served rules), and `scripts/page-selftest.js` checks the helper inside the page: the editor check, the
+write/append/undo rules, the whole write-check-run-fix loop driven by a scripted fake model, and the problem report
+(paste it into the page's console, or load it from `/scripts/page-selftest.js?raw` and `eval` it). It writes
+into no cell and restores the settings.
 
 ### 3.1 The live demo (nothing to install)
 
@@ -1305,7 +1313,18 @@ much of the model is on the GPU, its window, how long it stays). Ollama does **n
 come (`/api/ps` lists a model only once it is loaded), so while it loads the helper shows a percentage that is
 an estimate from how long the last load of that model took (remembered in this browser) and marks it as one. A
 model that is only partly on the GPU (for example 18%) runs the rest on the CPU, which is far slower: choose a
-smaller memory size or model. A reasoning
+smaller memory size or model.
+
+**What the tiny live line says (under the model line in the sidebar and the pop-up, and in the chat while
+it waits).** A web page cannot read Ollama's own log (`OLLAMA_DEBUG` output goes to the server's journal or
+console; there is no HTTP door for it), so the page works from what it can see itself, and keeps facts and
+readings apart: **✔ green = a fact**: the seconds since the question was sent, that no word came, whether the
+server answers a ping (and how fast), what `/api/ps` lists as in memory (size, GPU share, window), and, after
+each answer, the numbers Ollama measured itself (load, reading and writing time and tokens, tokens/s).
+**≈ amber italic = maybe**: a reading of those facts, for example "probably loading" when the model is not
+in `/api/ps` yet. For the developer who wants the server side as well: `journalctl -fu ollama` with
+`OLLAMA_DEBUG=1` shows when `llama-server` starts and "loading model"; `OLLAMA_DEBUG=2` adds a line for every
+token and is only for hunting bugs. A reasoning
 model such as `qwen3.6` answers over `/v1` with its thinking in a separate `reasoning` field, so
 give it a generous `max_tokens`. LM Studio and other servers with the OpenAI-style door work
 for `ask` and `chat`; `status` then says it is not Ollama itself. Over MCP: the
@@ -2338,17 +2357,26 @@ cell.
 `qwen3.5:4b`) get a shorter list of ten tools and shorter instructions, because a
 long list makes them fumble. Bigger models and Gemini get everything.
 
-**Writing by itself** is off by default. A grown-up can switch on *Let the helper
-write code in empty cells by itself* in the helper settings (⚙, "Other"). The
-helper then uses `write_code`: it picks (or is given) an **empty** cell, the code
-is typed where you watch, it is kept and run, and the helper sees what it printed
-or its error and may fix it. Every such write gets a card with *👀 Show me* and
-*↶ Undo* (undo only removes the code if nobody changed the cell since). It never
-touches a cell that already has code, only writes in the board and Lab tabs, and
-does so at most six times per conversation. No single tool call keeps the chat
-waiting longer than 40 seconds, and Stop ends it at once.
+**Working on its own** is **on by default** (*Let the helper work on its own* in the helper
+settings, ⚙, "Other"). The helper then loops like a careful programmer: `write_code`
+puts code in a cell where you watch it being typed (a new **empty** cell, a cell it wrote
+earlier, or `mode: "append"` to add below a cell that already has code), it is kept and
+run, and the answer holds two things: the **editor's problems** (what Monaco's TypeScript
+engine underlines, the same red squiggles you see, with line numbers; also asked
+on its own with `check_cell`, for a draft or an existing cell) and what the cell **printed
+or its error**. With mistakes, an error or output that is not what was asked, it fixes the
+code and writes again, and goes on until the editor has no mistakes and the output is right. If the
+model stops while its code still has a problem, the chat tells it to carry on (at most four
+times). It may go round up to 16 times and write up to 12 times per conversation (6 and 6 when
+the option is off). Every write gets a card with *👀 Show me*, the editor's verdict and
+*↶ Undo* (undo only acts if nobody changed the cell since: it empties a cell the helper
+wrote, and gives back the old code of a cell it appended to). It never replaces code that is
+not its own (it may only append to it), only writes in the board and Lab tabs, and no single tool call
+keeps the chat waiting longer than 40 seconds; Stop ends it at once. Turn the option off and
+only *Only let the helper write code in empty cells* remains (no carrying on by itself, 6 writes), or
+neither, and the helper only offers code with `suggest_code`.
 
-It cannot: change a cell that already has code (`set_code` is refused for it),
+It cannot: replace a cell that already has code (`set_code` is refused for it),
 move pieces, or start or end games. Text inside cells is treated as data, never
 as orders, and what the model writes is shown as plain text (no markup is ever
 executed). The code is in `src/aichat/` (providers, tools, the agent loop,
@@ -2550,6 +2578,65 @@ On GitHub the sources are
   finds a topic. Answers are cut to fit the model's memory (🔋). The helper is told never
   to invent a function or a cell path; a path that a tool returned can be opened with
   `goto_cell`. The code is in `src/aichat/docs.ts`.
+
+#### 11.4.9 Standing directives: direction by default for every AI
+
+The owner can give direction to **every** AI that works here (the built-in helper, a model on this
+computer, outside AIs). The directives live in `ai-docs/directives.json` (in git, so the file also has a real
+history; each directive keeps its own earlier versions too) and are managed with a small script:
+
+```sh
+node scripts/directives.mjs add --strength 70 --end 2030-12-31 "The rule text"   # --end none = no end of life
+node scripts/directives.mjs update 3 --strength 50 --end 2031-06-01
+node scripts/directives.mjs retire 3        # ends it yesterday; it stays in the file
+node scripts/directives.mjs list
+```
+
+A directive has a **number**, the date it was **created**, the date of its **last update**, a **strength**, an
+**end of life** and its **text**. The strength is a percentage: **100 % = “you should always”** (the script only takes it with
+`--yes`, because it steers every AI hard), 70 % a strong preference, 50 % indifferent (take it or leave it), 0 % present but
+absolutely not relevant. When two directives disagree the stronger wins; they never override the rules about
+children's safety, and the person's own question wins over anything below 100 %. After its **end-of-life day** a directive is
+no longer given to any AI (the page checks the date each time it asks the model; the published copy keeps the end
+date in the text, so a copy read late can still be judged).
+
+They reach the AIs in three ways: in the built-in helper's instructions (also for small models), in the
+“Bible” a model on this computer starts with, and as a “Standing directives” section at the end of the published
+`ai/rules.md` (so also in `ai/everything.md`) that outside AIs read first. The code is in `src/ai/directives.ts`.
+
+#### 11.4.9b Is the AI outside hanging? A sign of life, and mail that cannot be delivered
+
+A page cannot look inside an AI that drives it over MCP, so it shows what it has **seen itself**: at the bottom centre, one
+line per outside AI (the three latest, for 30 minutes): who it is, **when it last called** and what that call was, how many calls so far, and
+the note it gave about itself (`introduce` with a `note`, so an AI can say what it is doing). Those are the facts (✔). After 20 seconds without a call the line adds a
+**reading** (≈, in amber italics): “probably thinking, or waiting for a tool of its own”; after 3 minutes: “it may be finished, stuck or
+gone: ask it, or leave it a letter (✉)”. Quiet is not the same as hanging, and the page cannot tell them apart: it only labels the guess.
+The same list is in the problem report. The code is in `src/ui/outsidePresence.ts`.
+
+Mail has the same trap: a letter to a name nobody has (a typo, a model name that is not an address) is stored but never read. The mail
+server now answers such a send with `unreachable` and says whom to write to instead (`outside-ai` for every AI outside the page, `ai-chat`
+for the helper, `you` for the person), and the ✉ panel shows that warning at once.
+
+A letter you are writing but have not sent is kept in the browser's own storage while you type, so a reload, a closed window or a
+letter that arrives meanwhile cannot take it away. It is offered again when you open ✉ (“Kept from before”), and the page tells you at
+the start that there is one. Nothing is sent until you press ➤ Send or Ctrl+Enter; ✕ keeps the draft, Cancel throws it away.
+
+#### 11.4.10 The GUI deep drill: one key for GUI trouble
+
+**We have no secrets and no privacy, period.** The **GUI deep-drill key** is an ordinary, documented key, and nothing about it is hidden.
+When something looks wrong (or lovely) and it is hard to put into words for an AI, press **Ctrl+Alt+Shift+G**
+anywhere on the page (also inside an editor; the same keys or Esc close the window again). The page freezes what is
+on the screen as a **text tree** and puts it on the **clipboard at once**, with a free text box on top where you say, in your own
+words, what is wrong or what you like: everything you type is added to the same clipboard text a moment later. Then paste it into any AI
+(a big one, ChatGPT, Claude, Copilot, ...). It happens entirely in the page: no dev server is needed and nothing is sent anywhere. The
+window shows exactly what was copied.
+
+The text holds: your words; the version, the window size and the browser; the tabs and what is open; the helper's jobs; the latest
+errors and warnings of the page; the latest MCP traffic; the **pointer**: where it was, the elements stacked at that spot from the top down (the
+answer to "what is covering what") and the latest presses with their element paths; and the **GUI tree**: every element with its
+selector, place and size in pixels, and what is special (focus, hidden, transparent, fixed with its z-index, scrolled ...). The
+sheet's drawing is summarised (how many parts, and the pieces with words that are on the screen, each at the real place of its text), and the text of cells' code and what is typed into boxes
+are never included (only the length); other text is cut to 60 characters. The code is in `src/ui/problemReport.ts`.
 
 ## 12 Rows
 

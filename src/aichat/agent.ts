@@ -9,11 +9,15 @@ import { describeModel, isSmallModel } from './modelInfo';
 import { memoryInfo } from './memory';
 import { addressHints } from './cellPaths';
 import { ammo, fit, kilo } from './ammo';
-import { RULES, docUrls } from './docs';
+import { RULES, docUrls, standingDirectives } from './docs';
 import { bibleFor } from '../ai/bible';
 import { markOriented } from '../ai/orientation';
 
 const MAX_ROUNDS = 6;
+/** When the helper works on its own it may go round more often: write, check, run, read, fix, again. */
+const MAX_ROUNDS_AUTONOMOUS = 16;
+/** How often a helper that stops while its code still has problems is told to carry on. */
+const MAX_NUDGES = 4;
 const MAX_MESSAGES = 24;
 /** No single tool may keep a child waiting longer than this (the longest honest job is typing code, then running it). */
 const TOOL_TIMEOUT_MS = 40_000;
@@ -22,7 +26,8 @@ const BASE_PROMPT = `You are the helper inside "Lattakker Sheet", a spreadsheet 
 
 You ARE connected to the app and you have tools to use it (look at the list your tools come with). Use them instead of guessing, and never say you cannot reach the app or must ask the person to run code for you.`;
 
-const CHANGE_RULE_ASK = `The only thing you cannot do yourself is change a cell: you offer code with suggest_code and the person presses the button. If the person asks you to write and run code on your own, offer it with suggest_code and say that a grown-up can switch on "Let the helper write code in empty cells" in the settings (the ⚙ button).`;
+const CHANGE_RULE_ASK = `The only thing you cannot do yourself is change a cell: you offer code with suggest_code and the person presses the button. If the person asks you to write and run code on your own, offer it with suggest_code and say that a grown-up can switch on "Let the helper work on its own" in the settings (the ⚙ button).`;
+const CHANGE_RULE_AUTONOMOUS = `You work on your own, like a careful programmer, and the person watches. To make or change code: look up the names in read_docs (doc "api"), find a similar cell in read_docs (doc "examples", a few words as query), look at the cell with read_cell when it already has code, then write it with write_code (find_free_cell gives an empty spot; mode "append" adds below code that is already there, and the person has an undo button). Every write_code answer tells you two things: "problems" (what the code editor underlines, with line numbers: the same list the person sees) and what the cell printed or its error when it ran. Then repeat until it works: (1) if there are problems, fix them all and write the COMPLETE code again on the same path; (2) if there are none, look at what it printed or showed and compare it with what the person asked; (3) if it is wrong or empty, change the code and write it again. check_cell asks the editor about a draft or an existing cell without writing, run_cell runs a cell again. Do not stop at the first try and do not hand the work back: keep going until the editor has no mistakes and the output is right, or until your writes run out, and then say honestly what still fails. Never change somebody else's code except by adding below it (mode "append"); suggest_code is for changes to it.`;
 const CHANGE_RULE_WRITE = `You may write code yourself, but only in an EMPTY cell: look up the names in read_docs (doc "api"), find a similar cell in read_docs (doc "examples", a few words as query), then find_free_cell and write_code (the person watches it being typed, and has an undo button). You see what it printed or its error: if there is an error, fix it with write_code on the same path (at most twice), then tell the person what happened. A cell that already has code is never changed by you: use suggest_code for it.`;
 
 /** What only the built-in helper's tools make possible; the general rules come from ai-docs/rules.md, the same file outside AIs read. */
@@ -51,9 +56,15 @@ const MEMORY_RULES = `
 const SMALL_RULES = `
 - Your list of tools is short on purpose. Use one tool at a time, and only the names on your list. Do the shortest thing that answers the question.`;
 
+/** The owner's standing directives (with their strengths), for every model: a small one gets them too. */
+function directives(): string {
+  const text = standingDirectives();
+  return text ? `\n\nStanding directives:\n${text}` : '';
+}
+
 /** The fixed instructions, shaped for this model: the shared rules (ai-docs/rules.md), how to use the tools, and where the documents are. A small model gets no memory tools. */
 export function buildPrompt(options: { small: boolean; write: boolean }): string {
-  return `${BASE_PROMPT} ${options.write ? CHANGE_RULE_WRITE : CHANGE_RULE_ASK}\n\nFirst contact (your very first tool call: read_docs with doc "readme"):\n${RULES.first}\n\nRules (the same for every AI that helps here):\n${RULES.behave}\n\nHow to work:\n${RULES.coder}\n\nCell code:\n${RULES.cell}\n${TOOL_HINTS}${options.small ? SMALL_RULES : MEMORY_RULES}${pointers()}`;
+  return `${BASE_PROMPT} ${options.write ? (getSettings().autonomous ? CHANGE_RULE_AUTONOMOUS : CHANGE_RULE_WRITE) : CHANGE_RULE_ASK}\n\nFirst contact (your very first tool call: read_docs with doc "readme"):\n${RULES.first}\n\nRules (the same for every AI that helps here):\n${RULES.behave}\n\nHow to work:\n${RULES.coder}${directives()}\n\nCell code:\n${RULES.cell}\n${TOOL_HINTS}${options.small ? SMALL_RULES : MEMORY_RULES}${pointers()}`;
 }
 
 const LOCAL_PROMPT = `
@@ -65,7 +76,7 @@ export type Entry =
   | { kind: 'note'; text: string }
   | { kind: 'error'; text: string }
   | { kind: 'proposal'; path: string; code: string; note: string; afterLine: number | null; state: 'open' | 'typed' | 'dismissed' }
-  | { kind: 'wrote'; path: string; code: string; ok: boolean; error?: string; printed?: string; state: 'kept' | 'undone' };
+  | { kind: 'wrote'; path: string; code: string; ok: boolean; error?: string; printed?: string; /** What the cell held before (somebody else's code the helper added to), or null when undo empties it. */ before?: string | null; /** What the code editor underlined in it ("line 2: ..."). */ mistakes?: string[]; state: 'kept' | 'undone' };
 
 export interface AskResult {
   ok: boolean;
@@ -156,9 +167,9 @@ export class Conversation {
         proposed = true;
         this.entries.push({ kind: 'proposal', path, code, note, afterLine, state: 'open' });
       },
-      wrote: (path, code, report) => {
+      wrote: (path, code, report, before, mistakes) => {
         proposed = true;
-        this.entries.push({ kind: 'wrote', path, code, ok: report.ok, error: report.error, printed: report.output?.slice(0, 300), state: 'kept' });
+        this.entries.push({ kind: 'wrote', path, code, ok: report.ok, error: report.error, printed: report.output?.slice(0, 300), before, mistakes, state: 'kept' });
         this.changed();
       },
     };
@@ -183,11 +194,14 @@ export class Conversation {
     let fitNoted = false;
     let tightNoted = false;
     try {
-      for (let round = 0; round <= MAX_ROUNDS; round++) {
+      const rounds = getSettings().autonomous ? MAX_ROUNDS_AUTONOMOUS : MAX_ROUNDS;
+      let nudges = 0;
+      this.ledger.pending = null;
+      for (let round = 0; round <= rounds; round++) {
         // On the last round the model gets no tools, so it has to answer with what it has learned.
         chat.say(round === 0 ? `asking ${info.company} (${info.model}) with ${this.messages.length} message${this.messages.length === 1 ? '' : 's'}` : `asking ${info.company} again with what the tools returned (round ${round + 1})`, false);
         const small = isSmallModel();
-        let tools = round < MAX_ROUNDS ? toolsFor({ small, second, tight: false }) : [];
+        let tools = round < rounds ? toolsFor({ small, second, tight: false }) : [];
         const write = tools.some((t) => t.name === 'write_code');
         // A model on this computer has no way to open the README itself: it is given the Bible (the rules and the README chapters that fit) up front.
         const local = getSettings().provider === 'local';
@@ -218,7 +232,16 @@ export class Conversation {
         setTurnTrace(link);
         this.messages.push({ role: 'assistant', text: reply.text, toolCalls: reply.toolCalls, raw: reply.raw });
         if (reply.text.trim()) answer = reply.text.trim();
-        if (!reply.toolCalls.length) break;
+        if (!reply.toolCalls.length) {
+          // It stopped, but its own code still has problems and it still has turns: carry on, the way a person would.
+          if (this.ledger.pending && getSettings().autonomous && write && nudges < MAX_NUDGES && round < rounds - 1) {
+            nudges++;
+            chat.say(`the code still has a problem (${this.ledger.pending}); asking the helper to carry on (${nudges} of ${MAX_NUDGES})`, true);
+            this.messages.push({ role: 'user', text: `[Automatic message, not from the person] Not finished: ${this.ledger.pending}. Fix it with write_code (the complete code of the cell), then check the problems and the output again. Only answer when it works, or when you have to tell the person honestly why it does not.` });
+            continue;
+          }
+          break;
+        }
         for (const call of reply.toolCalls) {
           chat.say(`running the tool ${call.name}`, false);
           const tool = jobs.start('tool', call.name, { stallAfterSeconds: 3600 });
@@ -242,7 +265,8 @@ export class Conversation {
       // If the helper's own code still does not run, say it in calm words: the person should not be left guessing.
       const mine = this.entries.slice(turnStart).filter((e): e is Extract<Entry, { kind: 'wrote' }> => e.kind === 'wrote');
       const last = mine[mine.length - 1];
-      if (last && !last.ok) this.entries.push({ kind: 'note', text: `The code the helper wrote in ${last.path} still has a problem, so it does not work yet. You can press ↶ Undo, ask again in other words, or ask a grown-up to pick a bigger model in ⚙.` });
+      const pending = this.ledger.pending as string | null;
+      if (last && (!last.ok || pending)) this.entries.push({ kind: 'note', text: `The code the helper wrote in ${last.path} still has a problem${pending ? ` (${pending.replace(`${last.path} `, '')})` : ''}, so it does not work yet. You can press ↶ Undo, ask again in other words, or ask a grown-up to pick a bigger model in ⚙.` });
       // Some models write the code into the answer instead of calling suggest_code: still give the person a button.
       if (!proposed) {
         const rescued = rescueCode(answer, question, ctx);

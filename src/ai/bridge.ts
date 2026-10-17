@@ -20,21 +20,39 @@ export function installMcpBridge(tools: BridgeTool[]): void {
   if (!hot || !new URLSearchParams(location.search).has('mcp')) return;
 
   const catalogue = tools.map(({ name, description, inputSchema, readOnly }) => ({ name, description, inputSchema, readOnly }));
+  // Vite's send() does not throw while its socket is closed: it writes an error to the console, and a heartbeat would do that every
+  // 2 seconds (a hidden page, a restarting server). So the page only announces itself while Vite says the socket is open.
+  let open = false;
+  let told = false;
   const announce = (): void => {
+    if (!open) return;
     try {
       hot.send('mms:hello', { tools: catalogue });
     } catch {
-      // The socket is not open yet; the next heartbeat retries.
+      // The socket closed in this very moment; the next heartbeat retries.
     }
   };
-  announce();
+  hot.on('vite:ws:connect', () => {
+    open = true;
+    told = true;
+    announce();
+  });
+  hot.on('vite:ws:disconnect', () => {
+    open = false;
+    told = true;
+  });
+  // The socket may have opened before this code ran, and then no event comes: assume it is open unless Vite has said anything.
+  window.setTimeout(() => {
+    if (!told) open = true;
+    announce();
+  }, 1500);
   window.setInterval(announce, HEARTBEAT_MS);
 
   hot.on('mms:call', async (msg: { id: string; name: string; args?: Record<string, unknown>; caller?: Caller }) => {
     const tool = tools.find((t) => t.name === msg.name);
     let result: unknown;
     try {
-      result = tool ? await throughChannel('mcp-bridge', msg.caller, () => tool.run(msg.args ?? {})) : { ok: false, error: `No tool named ${msg.name}` };
+      result = tool ? await throughChannel('mcp-bridge', msg.caller, () => tool.run(msg.args ?? {}), msg.name) : { ok: false, error: `No tool named ${msg.name}` };
     } catch (err) {
       result = { ok: false, error: err instanceof Error ? err.message : String(err) };
     }

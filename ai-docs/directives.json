@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "next": 2,
+  "directives": [
+    {
+      "number": 1,
+      "created": "2026-10-17T12:01:48",
+      "updated": "2026-10-17T12:01:48",
+      "strength": 70,
+      "endOfLife": null,
+      "text": "When you play with or demonstrate code, do it in a scratch tab: use the tab named \"scratch\" and create it if it is not there, then put your demonstration in it. It is the place for trying out new things, so nobody's own work is touched. Alternative, mostly for lazy people who just want to see a new code example: use the Lab tab for the demonstration.",
+      "history": []
+    }
+  ]
+}

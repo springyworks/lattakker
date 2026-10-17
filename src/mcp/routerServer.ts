@@ -167,6 +167,7 @@ const SAFE: Record<string, Array<{ method: string; params?: Record<string, unkno
   status: [{ method: 'ping' }, { method: 'tools/list' }],
   memory: [{ method: 'ping' }, { method: 'tools/list' }],
   helper: [{ method: 'ping' }, { method: 'tools/list' }],
+  mail: [{ method: 'ping' }, { method: 'tools/list' }],
   'local-ai': [{ method: 'ping' }, { method: 'tools/list' }],
 };
 const SAFE_FOR_A_TAB: Array<{ method: string; params?: Record<string, unknown> }> = [{ method: 'ping' }, { method: 'tools/list' }, { method: 'resources/list' }];

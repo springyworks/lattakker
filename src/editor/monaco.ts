@@ -420,6 +420,55 @@ async function transpileUncached(address: string, source: string, scope: string)
   return { js, errors };
 }
 
+/** One thing the editor underlines in a cell: the same list the person sees as red and yellow squiggles. */
+export interface CodeProblem {
+  line: number;
+  column: number;
+  severity: 'error' | 'warning';
+  message: string;
+  code: number;
+  /** The text of that line, so the problem can be found without counting. */
+  lineText: string;
+}
+
+const flatten = (text: string | { messageText: string; next?: unknown[] }): string => {
+  if (typeof text === 'string') return text;
+  const parts = [text.messageText];
+  let next = text.next as Array<{ messageText: string; next?: unknown[] }> | undefined;
+  while (next?.length && parts.length < 4) {
+    parts.push(next[0].messageText);
+    next = next[0].next as typeof next;
+  }
+  return parts.join(' ');
+};
+
+/**
+ * What the editor would underline in this code (mistakes of syntax and of types, as strict as the cells themselves), asked of the
+ * TypeScript worker on a scratch copy, so an open editor is never touched. Errors first, at most `limit` of them.
+ */
+let scratchCount = 0;
+
+export async function checkCode(source: string, scope = '', limit = 8): Promise<CodeProblem[]> {
+  // A new name every time: the worker keeps the text it last saw under a name, and would answer for the old text.
+  const uri = monaco.Uri.parse(`file:///cells/${scope ? scope + '/' : ''}Z${++scratchCount}.ts`);
+  const model = monaco.editor.createModel(source, 'typescript', uri);
+  try {
+    const getWorker = await answered(typescriptWorker());
+    const client = await answered(getWorker(uri));
+    const [syntax, semantic] = await answered(Promise.all([client.getSyntacticDiagnostics(uri.toString()), client.getSemanticDiagnostics(uri.toString())]));
+    const found: CodeProblem[] = [];
+    for (const d of [...syntax, ...semantic]) {
+      // Categories: 0 warning, 1 error, 2 suggestion, 3 message. Suggestions and the "implicit any" family are not shown to anybody.
+      if (d.category > 1 || IMPLICIT_ANY_MESSAGES.includes(d.code)) continue;
+      const pos = model.getPositionAt(d.start ?? 0);
+      found.push({ line: pos.lineNumber, column: pos.column, severity: d.category === 1 ? 'error' : 'warning', message: flatten(d.messageText as never), code: d.code, lineText: model.getLineContent(pos.lineNumber).trim().slice(0, 160) });
+    }
+    return found.sort((a, b) => Number(a.severity === 'warning') - Number(b.severity === 'warning') || a.line - b.line).slice(0, limit);
+  } finally {
+    model.dispose();
+  }
+}
+
 export function createEditor(host: HTMLElement, model: monaco.editor.ITextModel): monaco.editor.IStandaloneCodeEditor {
   return monaco.editor.create(host, {
     ...KID_FRIENDLY,
