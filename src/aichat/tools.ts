@@ -99,6 +99,12 @@ export interface ToolHost {
   help(): string;
   state(): unknown;
   boardText(): string;
+  /** The Red moves ('red' for all, or one square like 'B7'). */
+  legalMoves(fromOrColor: string): unknown;
+  /** Moves a Red piece and waits for Blue's answer. */
+  move(from: string, to: string): Promise<unknown>;
+  /** Ends the setup and starts the battle. */
+  startBattle(): unknown;
 }
 
 type Args = Record<string, unknown>;
@@ -134,6 +140,21 @@ export const TOOL_DECLS: ToolDecl[] = [
   {
     name: 'board_text',
     description: 'The Lattakker board as text (Red pieces are known; Blue pieces are hidden).',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'legal_moves',
+    description: "The moves Red may make now: 'red' for every Red move, or one Red square like 'B7' for that piece. Only once the battle has started.",
+    parameters: { type: 'object', properties: { from_or_color: { type: 'string', description: "'red' or a Red square like 'B7'" } }, required: ['from_or_color'] },
+  },
+  {
+    name: 'make_move',
+    description: "Play a move for Red (the person's army) on the game board, for example from B7 to B6. It is shown on the board, and the answer comes after Blue (the computer) has replied. If the move is not allowed you get the reason: say it in simple words and try another. Use it when the person asks you to play, or to play for them.",
+    parameters: { type: 'object', properties: { from: { type: 'string', description: 'Square to move from, e.g. B7' }, to: { type: 'string', description: 'Square to move to, e.g. B6' } }, required: ['from', 'to'] },
+  },
+  {
+    name: 'start_battle',
+    description: 'Finish arranging the armies and start the battle (Red moves first). Only works before the battle has started.',
     parameters: { type: 'object', properties: {} },
   },
   {
@@ -282,10 +303,10 @@ export const TOOL_DECLS: ToolDecl[] = [
 ];
 
 /** What a small model is offered: the tools for looking, going there, trying and suggesting. More tools make small models fumble. */
-const SMALL_MODEL_TOOLS = new Set(['check_mail', 'send_mail', 'look_around', 'list_cells', 'read_cell', 'goto_cell', 'flash_cell', 'run_cell', 'check_cell', 'find_free_cell', 'write_code', 'suggest_code', 'click_fix_button', 'put_in_input', 'read_docs', 'ask_rules', 'find_tools', 'mcp_call']);
+const SMALL_MODEL_TOOLS = new Set(['check_mail', 'send_mail', 'look_around', 'list_cells', 'read_cell', 'game_state', 'board_text', 'legal_moves', 'make_move', 'start_battle', 'goto_cell', 'flash_cell', 'run_cell', 'check_cell', 'find_free_cell', 'write_code', 'suggest_code', 'click_fix_button', 'put_in_input', 'read_docs', 'ask_rules', 'find_tools', 'mcp_call']);
 
 /** The shortest list that still lets a model look, go there, try and suggest: for a model whose memory is tiny. */
-const TIGHT_TOOLS = new Set(['look_around', 'read_cell', 'goto_cell', 'run_cell', 'write_code', 'suggest_code', 'click_fix_button', 'put_in_input']);
+const TIGHT_TOOLS = new Set(['look_around', 'read_cell', 'game_state', 'legal_moves', 'make_move', 'start_battle', 'goto_cell', 'run_cell', 'write_code', 'suggest_code', 'click_fix_button', 'put_in_input']);
 
 /** The tools for one question: all of them, or the short list for a small model (the shortest when memory is tiny); write_code only when the person allowed it. */
 export function toolsFor(options: { small: boolean; second: boolean; tight?: boolean }): ToolDecl[] {
@@ -551,7 +572,7 @@ async function writeCode(host: ToolHost, args: Args): Promise<string> {
 }
 
 /** Tools that read the page directly instead of asking an MCP server: the router would never see them, so they are announced to it. */
-const DIRECT_TOOLS = new Set(['look_around', 'list_tabs', 'read_cell', 'game_state', 'board_text', 'read_guide', 'read_docs', 'ask_rules', 'run_cell', 'check_cell', 'find_free_cell', 'write_code', 'suggest_code']);
+const DIRECT_TOOLS = new Set(['look_around', 'list_tabs', 'read_cell', 'game_state', 'board_text', 'legal_moves', 'make_move', 'start_battle', 'read_guide', 'read_docs', 'ask_rules', 'run_cell', 'check_cell', 'find_free_cell', 'write_code', 'suggest_code']);
 
 function announceDirect(host: ToolHost, name: string, args: Args, client: string): void {
   if (!DIRECT_TOOLS.has(name)) return;
@@ -592,6 +613,12 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
         return limit(asText(host.state()));
       case 'board_text':
         return limit(host.boardText());
+      case 'legal_moves':
+        return limit(asText(host.legalMoves(String(args.from_or_color ?? 'red'))));
+      case 'make_move':
+        return limit(asText(await host.move(String(args.from ?? ''), String(args.to ?? ''))));
+      case 'start_battle':
+        return limit(asText(host.startBattle()));
       case 'read_guide':
         return limit(await cellGuide(), 9500);
       case 'read_docs': {

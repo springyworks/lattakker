@@ -82,6 +82,9 @@ export function installAiChat(deps: { surface: Surface; strip: TabStrip; say: (t
     help: () => surface.help(),
     state: () => surface.state(),
     boardText: () => String((surface.board() as { text?: string }).text ?? ''),
+    legalMoves: (x) => surface.legalMoves(x),
+    move: (from, to) => surface.move(from, to),
+    startBattle: () => surface.start(),
     liveText: (tab, address) => {
       const editor = workspace.get(tab)?.editor;
       return editor?.isOpen && editor.address === address ? editor.valueText : null;
