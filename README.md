@@ -467,7 +467,7 @@ diagram), alive. MCP is ask-and-answer, and the drawing shows both halves as a
 - its **answer** is a **green ring** that starts when the answer really comes and runs back the same way
   (a failed answer is a **red ring**);
 - a **notification** (a signal nobody answers, such as "this cell changed") is a **purple dot** that runs one way;
-- the heartbeat (a `ping` to `status` every 3 seconds, so something always happens) is a **light blue dot**.
+- the heartbeat (a `ping` to `status` every 10 seconds, so the drawing shows the router is alive) is a **light blue dot**.
 
 Inside the router block is its **switchboard**: every box has a jack where its line meets the router
 (and the gateway itself has one in the middle). When a message reaches the router, the gateway plugs a

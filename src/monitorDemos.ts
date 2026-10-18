@@ -54,7 +54,7 @@ function boxOf(name: string): string {
 const busy: Record<string, number> = {}
 let dots = 0
 // Orange dot: a question (a request). Green ring: its answer, running back. Purple: a signal nobody has to answer. Red ring: the answer went wrong.
-// Light blue: the heartbeat below (a ping every 3 seconds, to show the router is alive). The legend in the drawing says the same.
+// Light blue: the heartbeat below (one ping every 10 seconds, to show the router is alive). The legend in the drawing says the same.
 const colors = { request: '#f97316', response: '#16a34a', notification: '#8b5cf6', error: '#ef4444', heartbeat: '#38bdf8' }
 
 // A box grows a little and shrinks back (a busy box does not flicker).
@@ -279,8 +279,9 @@ mcp.tap((m) => {
   if ((asked[key]?.length ?? 0) > 40) asked[key].shift()
 })
 
-// A little heartbeat, so something happens even when nobody does anything.
-every('3s', () => mcp.call('status', 'ping'))
+// A quiet heartbeat: one ping every 10 seconds, so the drawing shows the router is alive without nagging. This is the ONLY regular
+// traffic of this cell: change '10s' to slow it down or speed it up.
+every('10s', () => mcp.call('status', 'ping'))
 
 // The numbers at the bottom of the drawing.
 const label = pic.write(40, 858, '', { fill: '#475569', 'font-size': 12, 'font-family': 'monospace' })

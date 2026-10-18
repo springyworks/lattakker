@@ -230,7 +230,7 @@
     <circle cx="58" cy="640" r="5" fill="#ffffff" stroke="#ef4444" stroke-width="3" />
     <text x="74" y="644">error: an answer that went wrong</text>
     <circle cx="58" cy="655" r="6" fill="#38bdf8" stroke="#ffffff" stroke-width="2" />
-    <text x="74" y="659">heartbeat: a ping every 3 seconds</text>
+    <text x="74" y="659">heartbeat: a ping every 10 seconds</text>
     <rect x="52" y="665" width="12" height="9" fill="none" stroke="#000000" stroke-width="1.2" stroke-dasharray="3,2" />
     <text x="74" y="674">dashed box: a client or channel, not a server</text>
   </g>
