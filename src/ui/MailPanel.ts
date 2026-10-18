@@ -26,7 +26,7 @@ async function mailTool(name: string, args: Record<string, unknown>): Promise<{ 
 
 export class MailPanel {
   private readonly dialog = el('dialog', { className: 'mail-dialog' });
-  private view: 'inbox' | 'sent' = 'inbox';
+  private view: 'inbox' | 'sent' | 'all' = 'inbox';
   private openId: string | null = null;
   private composing: Draft | null = null;
   /** The letter on the screen was kept from before (a reload, a closed window): said in the window, so it is not mistaken for sent. */
@@ -71,7 +71,7 @@ export class MailPanel {
   }
 
   private render(): void {
-    const letters = this.view === 'inbox' ? mailbox.inbox(ME) : mailbox.sent(ME);
+    const letters = this.view === 'inbox' ? mailbox.inbox(ME) : this.view === 'sent' ? mailbox.sent(ME) : mailbox.all();
     const open = this.openId ? mailbox.get(this.openId) : undefined;
     const head = el(
       'div',
@@ -84,6 +84,7 @@ export class MailPanel {
       { className: 'mail-bar' },
       this.tab('inbox', `Inbox${mailbox.unread(ME) ? ` (${mailbox.unread(ME)})` : ''}`),
       this.tab('sent', 'Sent'),
+      this.tab('all', `All mail (${mailbox.all().length})`),
       el('button', { className: 'mail-new', textContent: '✎ Write', onclick: () => {
           const kept = loadDraft(store);
           this.restored = !!kept;
@@ -92,13 +93,13 @@ export class MailPanel {
       }),
     );
     const list = el('div', { className: 'mail-list' });
-    if (!letters.length) list.append(el('p', { className: 'mail-empty', textContent: this.view === 'inbox' ? 'No letters yet. The helper, AI chats outside the page and cells can write to you with the mail tools.' : 'You have not written anything yet.' }));
+    if (!letters.length) list.append(el('p', { className: 'mail-empty', textContent: this.view === 'inbox' ? 'No letters yet. The helper, AI chats outside the page and cells can write to you with the mail tools.' : this.view === 'sent' ? 'You have not written anything yet.' : 'There is no mail at all yet.' }));
     for (const l of letters) {
       const unread = this.view === 'inbox' && mailbox.isUnread(l, ME);
       const row = el(
         'button',
         { className: `mail-row${unread ? ' unread' : ''}${l.id === this.openId ? ' open' : ''}`, onclick: () => this.show(l.id) },
-        el('span', { className: 'mail-from', textContent: this.view === 'inbox' ? l.from : `to ${l.to.join(', ')}` }),
+        el('span', { className: 'mail-from', textContent: this.view === 'inbox' ? l.from : this.view === 'sent' ? `to ${l.to.join(', ')}` : `${l.from} → ${l.to.join(', ')}` }),
         el('span', { className: 'mail-subject', textContent: l.subject }),
         el('span', { className: 'mail-when', textContent: when(l.sentAt) }),
       );
@@ -112,7 +113,7 @@ export class MailPanel {
     this.dialog.replaceChildren(head, tabs, el('div', { className: 'mail-body' }, list, pane));
   }
 
-  private tab(view: 'inbox' | 'sent', text: string): HTMLButtonElement {
+  private tab(view: 'inbox' | 'sent' | 'all', text: string): HTMLButtonElement {
     return el('button', {
       className: `mail-tab${this.view === view ? ' on' : ''}`,
       textContent: text,
@@ -126,7 +127,9 @@ export class MailPanel {
   private show(id: string): void {
     this.openId = id;
     this.composing = null;
-    if (mailbox.get(id) && mailbox.isUnread(mailbox.get(id)!, ME)) void mailTool('read', { id });
+    const letter = mailbox.get(id);
+    const mine = !!letter && letter.from !== ME && letter.to.some((t) => covers(t, ME));
+    if (letter && mine && mailbox.isUnread(letter, ME)) void mailTool('read', { id });
     else this.render();
   }
 
@@ -151,13 +154,15 @@ export class MailPanel {
         textContent: '↩ Reply',
         onclick: () => this.compose({ to: l.from === ME ? l.to.join(', ') : l.from, subject: l.subject.startsWith('Re: ') ? l.subject : `Re: ${l.subject}`, body: '', replyTo: l.id }),
       }),
-      el('button', {
-        textContent: '🗑 Delete',
-        onclick: () => {
-          this.openId = null;
-          void mailTool('delete', { id: l.id });
-        },
-      }),
+      this.view === 'all'
+        ? el('span', { className: 'mail-hint', textContent: `Read only here: ${l.readBy.length ? `read by ${l.readBy.join(', ')}` : 'not read yet'}.` })
+        : el('button', {
+            textContent: '🗑 Delete',
+            onclick: () => {
+              this.openId = null;
+              void mailTool('delete', { id: l.id });
+            },
+          }),
     );
     return el('div', {}, box, actions);
   }

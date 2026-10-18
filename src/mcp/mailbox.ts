@@ -174,6 +174,11 @@ export class Mailbox {
     return this.letters.filter((l) => l.from === who && !l.hiddenBy.includes(who)).sort((a, b) => b.sentAt - a.sentAt);
   }
 
+  /** Every letter in the store, newest first, whoever it is for (the person may look at all of the mail). */
+  all(): Letter[] {
+    return [...this.letters].sort((a, b) => b.sentAt - a.sentAt || b.id.localeCompare(a.id, undefined, { numeric: true }));
+  }
+
   isUnread(letter: Letter, who: string): boolean {
     return !letter.readBy.includes(who);
   }
