@@ -26,6 +26,8 @@ export interface AiChatApi {
   isSideOpen(): boolean;
   /** Open the side chat (without putting the cursor in it). */
   openSide(): void;
+  /** Adds text to the side chat's question box (opening the chat) without sending it. */
+  insertText(text: string): void;
 }
 
 let api: AiChatApi | null = null;
@@ -60,5 +62,8 @@ export const aiBridge = {
   },
   openSide(): void {
     api?.openSide();
+  },
+  insertText(text: string): void {
+    api?.insertText(text);
   },
 };

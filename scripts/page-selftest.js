@@ -22,7 +22,8 @@
     t('autonomous is on by default (a fresh DEFAULT_SETTINGS)', config.DEFAULT_SETTINGS.autonomous === true);
     t('autonomous gives write_code and check_cell', names({ small: false, second: false }).includes('write_code') && names({ small: false, second: false }).includes('check_cell'));
     t('a small model also gets check_cell', names({ small: true, second: false }).includes('check_cell'));
-    t('the tight list keeps write_code but not check_cell', names({ small: true, second: false, tight: true }).includes('write_code') && !names({ small: true, second: false, tight: true }).includes('check_cell'));
+    t('the tight list keeps write_code and check_cell', names({ small: true, second: false, tight: true }).includes('write_code') && names({ small: true, second: false, tight: true }).includes('check_cell'));
+    t('check_cell is the second tool of every list, right after look_around', names({ small: false, second: false })[1] === 'check_cell' && names({ small: true, second: false, tight: true }).slice(0, 2).join() === 'look_around,check_cell');
     config.updateSettings((s) => Object.assign(s, { autonomous: false, allowWrite: false }));
     t('with both options off there is no write_code', !names({ small: false, second: false }).includes('write_code'));
     config.updateSettings((s) => Object.assign(s, { autonomous: false, allowWrite: true }));
@@ -70,6 +71,8 @@
     t('checkCode gives the line text', bad[0].lineText === "const n: number = 'x'");
     t('checkCode is quiet about good code (also "const rows = []")', (await monaco.checkCode("span(6, 4)\nconst rows = []\nrows.push(1)\nprint(rows)\n", '')).length === 0);
     t('two checks in a row do not answer for each other (fresh name each time)', (await monaco.checkCode('const a: number = 1\n', '')).length === 0 && (await monaco.checkCode("const a: number = 'q'\n", '')).length === 1);
+    const typo = await monaco.checkCode('prnt(2)\n', '');
+    t("checkCode carries the light bulb's fix for a misspelling", typo.length === 1 && Array.isArray(typo[0].fixes) && /print/.test(typo[0].fixes.join(' ')), JSON.stringify(typo[0]?.fixes ?? typo).slice(0, 160));
 
     // ---- the tools, with a stand-in for the page (no model, no typing)
     // The helper may only write in the board and Lab tabs: use a Lab cell that has code (somebody else's) and a free spot. The stand-in never really writes.
@@ -101,6 +104,12 @@
     t('check_cell on a good draft: no mistakes, then run it', r.mistakes === 0 && /run_cell/.test(r.next));
     r = await call(h, 'check_cell', { path: FREE });
     t('check_cell on an empty cell says so', /no code/.test(r.error ?? ''));
+    r = await call(h, 'check_cell', { path: OLD, code: 'prnt(2)' });
+    t('check_cell passes the light bulb on as editorSuggests', r.mistakes === 1 && /print/.test((r.problems[0].editorSuggests ?? []).join(' ')), JSON.stringify(r.problems?.[0]).slice(0, 160));
+    {
+      const viaMcp = (await router.request('selftest-cell', 'code', 'tools/call', { name: 'check', arguments: { path: OLD, code: 'prnt(2)' } })).structuredContent;
+      t('code.check over MCP: the same mistakes and fixes for any AI', viaMcp.problems.length === 1 && /print/.test(JSON.stringify(viaMcp.problems[0].fixes ?? '')), JSON.stringify(viaMcp).slice(0, 160));
+    }
 
     r = await call(h, 'write_code', { path: OLD, code: 'print(2)' });
     t('replace on somebody else\'s code is refused, and points to append', /someone else's code/.test(r.error ?? '') && /append/.test(r.error ?? ''));

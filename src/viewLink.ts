@@ -1,6 +1,7 @@
 import { aiBridge } from './aichat/bridge';
 import { nav } from './nav';
 import { workspace } from './workspace';
+import { focusPoints } from './editor/focusPoints';
 import { asksForMore, type ViewLink } from './deeplink';
 
 /**
@@ -19,7 +20,12 @@ export function currentViewLink(): ViewLink {
     if (sheet.mode === 'view') link.mode = 'view';
   }
   const focus = workspace.focus;
-  if (focus && focus.tab === tab) link.cell = `/${focus.tab}/${focus.address}`;
+  if (focus && focus.tab === tab) {
+    link.cell = `/${focus.tab}/${focus.address}`;
+    // A place the person marked with 📌 in that cell travels with the link.
+    const marked = focusPoints.list({ path: link.cell, by: 'person' }).find((p) => p.state !== 'gone');
+    if (marked) link.lines = { from: marked.startLine, to: marked.endLine };
+  }
   if (aiBridge.sideOpen) link.ai = true;
   return link;
 }
@@ -45,6 +51,10 @@ export function applyViewLink(link: ViewLink, env: { showMode(mode: 'run' | 'vie
       // With a place given the view stays where it was asked; without one it flies to the cell.
       if (link.view) hit.tab.sheet.flash(hit.address, undefined, 900);
       else nav.goTo(link.cell);
+      if (link.lines) {
+        const { from, to } = link.lines;
+        focusPoints.reveal(`${link.cell}#L${from}${to > from ? `-${to}` : ''}`);
+      }
     }
   }
   return missed;

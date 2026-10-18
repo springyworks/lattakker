@@ -15,6 +15,8 @@ import {
   type CodeCell,
 } from '../mcp/codeBlob';
 import { workspace, parsePath } from '../workspace';
+import { checkCode } from '../editor/monaco';
+import { focusTool } from '../editor/focusPoints';
 
 /**
  * The MCP server `code`: all the TypeScript of the page, as text that even a small AI with a small memory can take in.
@@ -95,6 +97,36 @@ const TOOLS = [
     description: 'One line per cell that has code: number, path, id, size, first line. To choose what to read. Comes in pages: use from to get the next page.',
     inputSchema: { type: 'object', properties: { tab: TAB_PROP, from: { type: 'integer', description: 'Start at this entry (default 0).' }, ...BUDGET_PROPS } },
   },
+  {
+    name: 'check',
+    description:
+      'Ask the code editor about one cell: the mistakes (red) and warnings (yellow) it underlines, with line numbers and the text of each line — the same squiggles a person sees. A mistake comes with the light bulb\'s suggested fixes, often the corrected line ready to copy. ' +
+      'Give code to check a draft instead of what the cell holds now (do that before writing code). "Underlines nothing" still does not promise the cell runs well.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: "'/lab/J24' or 'c-1a2b3c4d'. A bare 'J24' means the board tab." },
+        code: { type: 'string', description: 'Optional: a draft to check instead of the code the cell holds now.' },
+      },
+      required: ['path'],
+    },
+  },
+  {
+    name: 'focus',
+    description:
+      'The places in cell code the person marked with 📌 in the editor (their selection): where YOU are asked to look first. action "list" (default) gives each place as a reference like /lab/J24#L3-5 with its lines and words, and what is selected right now. ' +
+      'action "add" points at lines of a cell yourself (path, from_line, to_line, note): the person sees them highlighted. action "clear" removes your pointers. A reference written in a chat message is a link that shows those lines.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list', 'add', 'clear'] },
+        path: { type: 'string', description: "'/lab/J24'. For add; with list it limits the answer to that cell." },
+        from_line: { type: 'integer' },
+        to_line: { type: 'integer' },
+        note: { type: 'string', description: 'For add: why you point there.' },
+      },
+    },
+  },
 ];
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -121,7 +153,7 @@ const asInt = (v: unknown, fallback: number): number => (typeof v === 'number' &
 
 export class CodeServer implements McpServer {
   readonly name = 'code';
-  readonly description = 'All the TypeScript of the page as text for an AI with a small memory: overview, dump in parts that fit a budget, search like an editor, read one cell, list. Read only.';
+  readonly description = 'All the TypeScript of the page as text for an AI with a small memory: overview, dump in parts that fit a budget, search like an editor, read one cell, list, check one cell for the editor\'s mistakes and its suggested fixes, focus (the places the person marked). Reads, and can point at lines; it never changes code.';
 
   async handle(method: string, params: Record<string, unknown>): Promise<Json> {
     switch (method) {
@@ -130,7 +162,7 @@ export class CodeServer implements McpServer {
           protocolVersion: '2025-06-18',
           capabilities: { tools: {} },
           serverInfo: { name: 'lattakker-code', title: 'The code of the page', version: '1' },
-          instructions: 'Call overview first. Then dump (follow NEXT until END) or search, then read. Say how big your memory is with context_tokens.',
+          instructions: 'Call overview first. Then dump (follow NEXT until END) or search, then read; check tells you what the editor underlines in one cell, with its suggested fixes; focus lists the places the person marked with 📌 (look there first). Say how big your memory is with context_tokens.',
         };
       case 'ping':
         return {};
@@ -143,7 +175,7 @@ export class CodeServer implements McpServer {
     }
   }
 
-  private call(name: string, args: Record<string, unknown>): Json {
+  private async call(name: string, args: Record<string, unknown>): Promise<Json> {
     const reply = (text: string, extra: Record<string, unknown> = {}) => ({ content: [{ type: 'text', text }], structuredContent: { chars: text.length, approxTokens: approxTokens(text.length), ...extra } });
     const fail = (text: string) => ({ content: [{ type: 'text', text }], isError: true });
     const tabs = tabsOf(args);
@@ -165,6 +197,8 @@ export class CodeServer implements McpServer {
             '  2. code.read {path:"/lab/J24"}: read one cell.\n' +
             '  3. code.list: one line per cell, to choose.\n' +
             '  4. code.dump: ALL the code, in parts that fit your memory. Add context_tokens (how big your memory is) and follow the cursor at the end of every part until it says END.\n' +
+            '  5. code.check {path:"/lab/J24"}: what the editor underlines in that cell (mistakes with the light bulb\'s suggested fixes); add code:"…" to check a draft before writing it.\n' +
+            '  6. code.focus: the places in the code the person marked with 📌 (look there first); it can also point at lines for the person.\n' +
             'Every reply says how many characters and tokens it has. You decide the size with budget_chars, budget_tokens or context_tokens.';
           return reply(text, { cells: cells.length, tabs: totals, snapshot: snapshotOf(cells), failing: failing.length });
         }
@@ -209,8 +243,34 @@ export class CodeServer implements McpServer {
           const page = renderList(cells, budget, Math.max(0, asInt(args.from, 0)));
           return reply(page.text, { total: page.total, next: page.next });
         }
+        case 'check': {
+          const path = typeof args.path === 'string' ? args.path.trim() : '';
+          if (!path) return fail('path is empty. Give a cell path like /lab/J24 (see code.list).');
+          const parts = parsePath(path);
+          if ('error' in parts) return fail(parts.error);
+          const cell = parts.byUid ? gatherCells().find((c) => c.uid === parts.cell) : gatherCells([parts.tab ?? 'board']).find((c) => c.address === parts.cell);
+          const draft = typeof args.code === 'string' && args.code.trim() ? args.code : null;
+          if (!cell && !draft) return fail(`No cell with code at "${path}". Use code.list to see the paths, or give code to check a draft for that spot.`);
+          const scope = workspace.get(cell?.tab ?? parts.tab ?? 'board')?.sheet.id ?? '';
+          const checked = draft ? `a draft for ${cell?.path ?? path}` : (cell!.path as string);
+          let found;
+          try {
+            found = await checkCode(draft ?? cell!.code, scope);
+          } catch {
+            return fail('The code editor did not answer in time. Try again, or run the cell to see if it works.');
+          }
+          const text = found.length
+            ? `The editor underlines ${found.length} thing${found.length === 1 ? '' : 's'} in ${checked} (💡 = its light bulb's suggested fix):\n` +
+              found.map((p) => `  line ${p.line} [${p.severity}] ${p.message}\n    > ${p.lineText}${(p.fixes ?? []).map((f) => `\n    💡 ${f}`).join('')}`).join('\n')
+            : `The editor underlines nothing in ${checked}. It can still fail when it runs.`;
+          return reply(text, { path: cell?.path ?? path, checked: draft ? 'draft' : 'cell', problems: found.map((p) => ({ line: p.line, kind: p.severity, message: p.message, fixes: p.fixes })) });
+        }
+        case 'focus': {
+          const answer = focusTool(args, workspace.current);
+          return reply(JSON.stringify(answer, null, 2), { focus: answer });
+        }
         default:
-          throw new McpError(ERR.methodNotFound, `code has no tool "${name}". Tools: overview, dump, search, read, list`);
+          throw new McpError(ERR.methodNotFound, `code has no tool "${name}". Tools: overview, dump, search, read, list, check, focus`);
       }
     } catch (err) {
       if (err instanceof SearchError) return fail(err.message);

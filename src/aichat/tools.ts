@@ -16,6 +16,7 @@ import { ammo } from './ammo';
 import { RULES, askRules, readDocs } from './docs';
 import { canWrite, getSettings } from './config';
 import { checkCode, type CodeProblem } from '../editor/monaco';
+import { focusPoints, focusTool, pointText } from '../editor/focusPoints';
 import type { ToolDecl } from './providers';
 
 /** The name the helper uses on the in-page MCP router, so its traffic shows up (and can be watched) like any client's. */
@@ -114,8 +115,27 @@ const cellPath = { type: 'string', description: 'A cell path: "A12" (in the tab 
 export const TOOL_DECLS: ToolDecl[] = [
   {
     name: 'look_around',
-    description: 'Where the person is right now: which tab, which cell and which line of its code they are asking from, and that cell (code with line numbers, output, error). Call this first when the question is about "this cell" or "here".',
+    description: 'Where the person is right now: which tab, which cell and which line of its code they are asking from, and that cell (code with line numbers, output, error, and "editorUnderlines": the red and yellow mistakes the code editor shows there, each with the light bulb\'s suggested fix). Call this first when the question is about "this cell" or "here".',
     parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'check_cell',
+    description: 'Ask the code editor what it underlines in a cell: the mistakes (red) and warnings (yellow) of syntax and types, with line numbers and the text of the line. It is the same list the person sees, and a mistake comes with "editorSuggests": what the editor\'s light bulb would fix, often with the corrected line ready to copy. Give code to check a draft before you write it; without code the cell as it is now is checked. "no mistakes" means the editor is happy; the cell can still fail when it runs, so run it too.',
+    parameters: { type: 'object', properties: { path: cellPath, code: { type: 'string', description: 'Optional: a draft to check instead of the cell as it is now.' } }, required: ['path'] },
+  },
+  {
+    name: 'focus_points',
+    description: 'The places in cell code that the person marked with 📌 (a selection in the editor): look there first. They also arrive with the question. action "list" (default) shows the marked places, each with its reference (like /lab/J24#L3-5), its lines and its words. action "add" lets YOU point at lines of a cell (path, from_line, to_line, a short note): the person sees them highlighted in the editor. action "clear" removes your own pointers. Write a reference in your answer as `/lab/J24#L3-5`: it becomes a link that shows those lines.',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list', 'add', 'clear'], description: 'list (default), add or clear.' },
+        path: { ...cellPath, description: 'For add (and to limit list): the cell, like /lab/J24.' },
+        from_line: { type: 'integer', description: 'For add: the first line (1-based).' },
+        to_line: { type: 'integer', description: 'For add: the last line (default: the first).' },
+        note: { type: 'string', description: 'For add: a few words that say why you point there.' },
+      },
+    },
   },
   {
     name: 'list_tabs',
@@ -129,7 +149,7 @@ export const TOOL_DECLS: ToolDecl[] = [
   },
   {
     name: 'read_cell',
-    description: 'One cell in full: its code, what it shows, its output lines and its error if it has one.',
+    description: 'One cell in full: its code, what it shows, its output lines, its error if it has one, and "editorUnderlines": what the code editor underlines in it, with the light bulb\'s suggested fixes.',
     parameters: { type: 'object', properties: { path: cellPath }, required: ['path'] },
   },
   {
@@ -252,11 +272,6 @@ export const TOOL_DECLS: ToolDecl[] = [
     parameters: { type: 'object', properties: { path: cellPath }, required: ['path'] },
   },
   {
-    name: 'check_cell',
-    description: 'Ask the code editor what it underlines in a cell: the mistakes (red) and warnings (yellow) of syntax and types, with line numbers and the text of the line. It is the same list the person sees. Give code to check a draft before you write it; without code the cell as it is now is checked. "no mistakes" means the editor is happy; the cell can still fail when it runs, so run it too.',
-    parameters: { type: 'object', properties: { path: cellPath, code: { type: 'string', description: 'Optional: a draft to check instead of the cell as it is now.' } }, required: ['path'] },
-  },
-  {
     name: 'find_free_cell',
     description: `Find an empty spot (${FREE_COLS} columns wide, ${FREE_ROWS} rows tall) where new code can go without touching anybody's work. Answers with the cell path.`,
     parameters: { type: 'object', properties: { tab: { type: 'string', description: 'Tab id: "board", "lab" or a tab the person made. Default: the tab the person is in.' } } },
@@ -303,10 +318,10 @@ export const TOOL_DECLS: ToolDecl[] = [
 ];
 
 /** What a small model is offered: the tools for looking, going there, trying and suggesting. More tools make small models fumble. */
-const SMALL_MODEL_TOOLS = new Set(['check_mail', 'send_mail', 'look_around', 'list_cells', 'read_cell', 'game_state', 'board_text', 'legal_moves', 'make_move', 'start_battle', 'goto_cell', 'flash_cell', 'run_cell', 'check_cell', 'find_free_cell', 'write_code', 'suggest_code', 'click_fix_button', 'put_in_input', 'read_docs', 'ask_rules', 'find_tools', 'mcp_call']);
+const SMALL_MODEL_TOOLS = new Set(['check_mail', 'send_mail', 'look_around', 'check_cell', 'focus_points', 'list_cells', 'read_cell', 'game_state', 'board_text', 'legal_moves', 'make_move', 'start_battle', 'goto_cell', 'flash_cell', 'run_cell', 'check_cell', 'find_free_cell', 'write_code', 'suggest_code', 'click_fix_button', 'put_in_input', 'read_docs', 'ask_rules', 'find_tools', 'mcp_call']);
 
 /** The shortest list that still lets a model look, go there, try and suggest: for a model whose memory is tiny. */
-const TIGHT_TOOLS = new Set(['look_around', 'read_cell', 'game_state', 'legal_moves', 'make_move', 'start_battle', 'goto_cell', 'run_cell', 'write_code', 'suggest_code', 'click_fix_button', 'put_in_input']);
+const TIGHT_TOOLS = new Set(['look_around', 'check_cell', 'read_cell', 'game_state', 'legal_moves', 'make_move', 'start_battle', 'goto_cell', 'run_cell', 'write_code', 'suggest_code', 'click_fix_button', 'put_in_input']);
 
 /** The tools for one question: all of them, or the short list for a small model (the shortest when memory is tiny); write_code only when the person allowed it. */
 export function toolsFor(options: { small: boolean; second: boolean; tight?: boolean }): ToolDecl[] {
@@ -410,7 +425,16 @@ async function readCell(host: ToolHost, path: string): Promise<unknown> {
   const cell = value as { code?: string };
   const live = host.liveText(hit.tab.id, hit.address);
   const code = live ?? cell.code ?? '';
-  return { ...cell, code: undefined, note: hit.note, codeWithLineNumbers: code.split('\n').map((l, i) => `${i + 1}: ${l}`).join('\n'), editorOpenWithUnsavedText: live !== null && live !== cell.code };
+  // What the editor underlines right now, with the light bulb's fixes: a small model should not have to know to ask.
+  const { found, asked } = code.trim() ? await problemsIn(code, hit.tab.sheet.id) : { found: [], asked: true };
+  const editor = !asked ? 'did not answer' : found.length ? problemList(found) : 'no mistakes';
+  return { ...cell, code: undefined, note: hit.note, codeWithLineNumbers: code.split('\n').map((l, i) => `${i + 1}: ${l}`).join('\n'), editorOpenWithUnsavedText: live !== null && live !== cell.code, editorUnderlines: editor, ...marked(workspace.pathOf(hit.tab.id, hit.address)) };
+}
+
+/** The person's (and the AI's) marked places in one cell, shown with the cell so nobody has to ask for them. */
+function marked(path: string): { focusPoints?: unknown } {
+  const points = focusPoints.list({ path });
+  return points.length ? { focusPoints: points.map(pointText) } : {};
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -477,9 +501,9 @@ function freeSpot(tabId: string): { path: string } | { error: string } {
   return address ? { path: workspace.pathOf(tabId, address) } : { error: `The ${tabId} tab has no empty ${FREE_COLS}x${FREE_ROWS} spot left. Try the other tab.` };
 }
 
-/** The editor's problems as a model can use them: where, what, and the line itself. */
+/** The editor's problems as a model can use them: where, what, the line itself, and what the light bulb would do about it. */
 function problemList(found: CodeProblem[]): Array<Record<string, unknown>> {
-  return found.map((p) => ({ line: p.line, column: p.column, kind: p.severity, message: p.message, lineText: p.lineText }));
+  return found.map((p) => ({ line: p.line, column: p.column, kind: p.severity, message: p.message, lineText: p.lineText, ...(p.fixes?.length ? { editorSuggests: p.fixes } : {}) }));
 }
 
 /** What the editor underlines in this code; a worker that does not answer must not stop the helper, so that is "unknown", not "fine". */
@@ -507,7 +531,7 @@ async function checkCell(host: ToolHost, args: Args): Promise<string> {
     checked: draft ? 'your draft' : 'the cell as it is now',
     mistakes: errors,
     problems: problemList(found),
-    next: errors ? 'Fix every mistake with write_code (the complete code), then check again.' : 'The editor has no mistakes. Run the cell (run_cell) and look at what it printed.',
+    next: errors ? 'Fix every mistake with write_code (the complete code); where a problem has "editorSuggests", use that corrected line. Then check again.' : 'The editor has no mistakes. Run the cell (run_cell) and look at what it printed.',
   });
 }
 
@@ -564,7 +588,7 @@ async function writeCode(host: ToolHost, args: Args): Promise<string> {
     wroteLines: whole.split('\n').length,
     writesLeft: left,
     next: !typed.ok || mistakes.length
-      ? `Not working yet. ${mistakes.length ? 'Fix every mistake in "problems" (the line text tells where). ' : ''}${!typed.ok ? 'Fix the error it ran into. ' : ''}Then call write_code again with the same path and the COMPLETE code of the cell${append ? ' (call read_cell first to see all of it)' : ''}. This is TypeScript (not Python): write real line breaks, never the two characters \\n, and call plot/print the way read_guide shows.${/Invalid character/i.test(typed.error ?? '') ? ' "Invalid character" usually means a stray backslash or non-TypeScript syntax.' : ''} ${left <= 1 ? 'You have almost no writes left: after the last one, say honestly what still fails.' : 'Keep going until it works.'}`
+      ? `Not working yet. ${mistakes.length ? 'Fix every mistake in "problems" (the line text tells where, and "editorSuggests" gives the corrected line when the editor knows it). ' : ''}${!typed.ok ? 'Fix the error it ran into. ' : ''}Then call write_code again with the same path and the COMPLETE code of the cell${append ? ' (call read_cell first to see all of it)' : ''}. This is TypeScript (not Python): write real line breaks, never the two characters \\n, and call plot/print the way read_guide shows.${/Invalid character/i.test(typed.error ?? '') ? ' "Invalid character" usually means a stray backslash or non-TypeScript syntax.' : ''} ${left <= 1 ? 'You have almost no writes left: after the last one, say honestly what still fails.' : 'Keep going until it works.'}`
       : empty
         ? 'The editor has no mistakes and it ran, but it printed and showed nothing. If the person expects to see something, make the code print(...) or draw it, and write it again.'
         : 'It works: no mistakes in the editor and it ran. Check that the output is what the person asked for; if it is, tell them what you made and what it does, in simple words.',
@@ -600,7 +624,7 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
       case 'look_around': {
         const here = host.context();
         const cell = here.address ? await readCell(host, workspace.pathOf(here.tab, here.address)) : null;
-        return limit(asText({ tab: here.tab, cell: here.address ? workspace.pathOf(here.tab, here.address) : null, line: here.line ?? null, theCell: cell, tabs: workspace.list().map((t) => ({ id: t.id, title: t.title })), unread_mail: mailbox.unread(client) }));
+        return limit(asText({ tab: here.tab, cell: here.address ? workspace.pathOf(here.tab, here.address) : null, line: here.line ?? null, theCell: cell, marked: focusPoints.list({ by: 'person' }).slice(0, 3).map(pointText), selectedNow: focusPoints.selection()?.ref ?? null, tabs: workspace.list().map((t) => ({ id: t.id, title: t.title })), unread_mail: mailbox.unread(client) }));
       }
       case 'list_tabs':
         return asText(workspace.list().map((t) => ({ id: t.id, title: t.title, codeCells: t.sheet.codeCells().length })));
@@ -772,6 +796,8 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
       }
       case 'check_cell':
         return await checkCell(host, args);
+      case 'focus_points':
+        return asText(focusTool(args, host.context().tab));
       case 'find_free_cell': {
         const tabId = tabForNewCode(host, args.tab);
         return asText({ ...freeSpot(tabId), tab: tabId, size: `${FREE_COLS}x${FREE_ROWS}`, next: 'Use write_code (or suggest_code) with this path.' });

@@ -273,6 +273,16 @@ export class AiChatUi {
     if (focusInput && !this.settingsOpen) this.sideInput.focus();
   }
 
+  /** Adds text (a reference to code) at the end of the side chat's question box and puts the cursor behind it. */
+  insertText(text: string): void {
+    this.openSide(false);
+    const box = this.sideInput;
+    const sep = box.value && !/\s$/.test(box.value) ? ' ' : '';
+    box.value = `${box.value}${sep}${text} `;
+    box.focus();
+    box.setSelectionRange(box.value.length, box.value.length);
+  }
+
   closeSide(): void {
     this.side.hidden = true;
     document.body.classList.remove('ai-open');

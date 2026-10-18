@@ -8,6 +8,7 @@ import { jobs } from './jobs';
 import { describeModel, isSmallModel } from './modelInfo';
 import { memoryInfo } from './memory';
 import { addressHints } from './cellPaths';
+import { focusPoints } from '../editor/focusPoints';
 import { ammo, fit, kilo } from './ammo';
 import { RULES, docUrls, standingDirectives } from './docs';
 import { bibleFor } from '../ai/bible';
@@ -219,8 +220,11 @@ export class Conversation {
     const where = this.where(ctx);
     const turnStart = this.entries.length;
     const hints = addressHints(question, ctx.tab).map((h) => `\n[Note: ${h}]`).join('');
+    // The places the person marked with 📌 (and what is selected right now), so the question comes with its focus.
+    const focus = focusPoints.note();
+    const picked = ctx.selection && !focus.includes(ctx.selection.slice(0, 120)) ? `\n[The person selected this text in the cell]\n${ctx.selection.slice(0, 800)}` : '';
     this.entries.push({ kind: 'user', text: question, where: from ? `${from} (outside AI) · ${where}` : where, path: ctx.address ? workspace.pathOf(ctx.tab, ctx.address) : null });
-    this.messages.push({ role: 'user', text: `[Asked from ${ctx.address ? `${workspace.pathOf(ctx.tab, ctx.address)}${ctx.line ? `, line ${ctx.line} of its code` : ''}` : `the ${ctx.tab} tab`}]${hints}\n${question}${ctx.selection ? `\n[The person selected this text in the cell]\n${ctx.selection.slice(0, 800)}` : ''}` });
+    this.messages.push({ role: 'user', text: `[Asked from ${ctx.address ? `${workspace.pathOf(ctx.tab, ctx.address)}${ctx.line ? `, line ${ctx.line} of its code` : ''}` : `the ${ctx.tab} tab`}]${hints}\n${question}${focus ? `\n${focus}` : ''}${picked}` });
     this.trim();
     this.busy = true;
     this.abort = new AbortController();

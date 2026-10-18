@@ -627,6 +627,31 @@ body.hdr-pull * {
   font-size: 0.9em;
 }
 
+/* Focus points: lines the person (amber) or the AI (blue) points at in a cell's code. */
+.focus-person {
+  background: rgba(224, 161, 0, 0.2);
+}
+.focus-ai {
+  background: rgba(59, 130, 196, 0.2);
+}
+.focus-bar-person {
+  border-left: 4px solid #e0a100;
+  margin-left: 3px;
+}
+.focus-bar-ai {
+  border-left: 4px solid #3b82c4;
+  margin-left: 3px;
+}
+.focus-flash {
+  background: rgba(224, 161, 0, 0.45);
+  animation: focus-flash-fade 1.6s ease-out forwards;
+}
+@keyframes focus-flash-fade {
+  to {
+    background: rgba(224, 161, 0, 0);
+  }
+}
+
 /* Hover-driven reference popups: everything is maxGraph SVG except the live Monaco preview,
    hosted through the same foreignObject node-label mechanism as the cell editors above. */
 .ctx-preview-host {

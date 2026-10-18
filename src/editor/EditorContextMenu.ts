@@ -4,6 +4,7 @@ import { aiBridge } from '../aichat/bridge';
 import { showHelp } from '../ui/help';
 import type { AiContext } from '../aichat/tools';
 import { parseCellUri } from './monaco';
+import { focusPoints } from './focusPoints';
 
 /**
  * Right-click inside any Monaco editor (or any other part of an editor window, via installPopupMenu)
@@ -103,8 +104,28 @@ function cursorPoint(editor: monaco.editor.ICodeEditor): { x: number; y: number 
   return at && box ? { x: box.left + at.left, y: box.top + at.top + at.height } : undefined;
 }
 
+/** Marks the selection (or the cursor's line) as a focus point for the AI and puts its reference in the chat's question box. */
+function markFocus(editor: monaco.editor.ICodeEditor): void {
+  const point = focusPoints.markFromEditor(editor);
+  if (!point) {
+    showNote('Select some code (or put the cursor on a line with code) first.');
+    return;
+  }
+  aiBridge.insertText(point.ref);
+}
+
+function focusItems(editor: monaco.editor.ICodeEditor): MenuItem[] {
+  const owner = editor.getModel() ? parseCellUri(editor.getModel()!.uri) : null;
+  const here = owner ? focusPoints.list({ path: `/${owner.scope || 'board'}/${owner.address}` }) : [];
+  const items: MenuItem[] = [{ label: '📌 Focus point for the AI', hint: 'Alt+M', title: 'Mark the selected code (or this line): the AI is told to look there first, and its reference goes into the chat', onSelect: () => markFocus(editor) }];
+  if (here.length) items.push({ label: `✖ Clear the focus points here (${here.length})`, onSelect: () => here.forEach((p) => focusPoints.remove(p.id)) });
+  return items;
+}
+
 function editorItems(editor: monaco.editor.ICodeEditor): MenuItem[] {
   return [
+    ...focusItems(editor),
+    { separator: true },
     clipboard(editor, 'editor.action.clipboardCutAction', 'cut', 'Cut', 'Ctrl+X'),
     clipboard(editor, 'editor.action.clipboardCopyAction', 'copy', 'Copy', 'Ctrl+C'),
     paste(editor),
@@ -173,6 +194,13 @@ export function installEditorContextMenu(): void {
   monaco.editor.onDidCreateEditor((editor) => {
     // The editor's own DOM node does not exist yet when this event fires; its container does.
     installPopupMenu(editor.getContainerDomNode(), () => editorItems(editor), () => editor.focus(), () => editorAsk(editor));
+    // Alt+M: mark the selection as a focus point for the AI.
+    editor.onKeyDown((e) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.keyCode !== monaco.KeyCode.KeyM) return;
+      e.preventDefault();
+      e.stopPropagation();
+      markFocus(editor);
+    });
     // Ctrl+I, as in VS Code: the helper, right at the cursor (replaces Monaco's own Ctrl+I, which only opens suggestions).
     editor.onKeyDown((e) => {
       if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.keyCode !== monaco.KeyCode.KeyI) return;

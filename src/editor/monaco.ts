@@ -429,6 +429,35 @@ export interface CodeProblem {
   code: number;
   /** The text of that line, so the problem can be found without counting. */
   lineText: string;
+  /** The editor's light bulb for this mistake: what each quick fix does, with the line as it would read after it when the fix stays on one line. */
+  fixes?: string[];
+}
+
+/** The shape of the TypeScript worker's quick-fix answer (its typing is `any`). */
+interface WorkerTextChange {
+  span: { start: number; length: number };
+  newText: string;
+}
+interface WorkerCodeFix {
+  description: string;
+  changes: Array<{ textChanges: WorkerTextChange[] }>;
+}
+
+/** The light bulb's fixes, said so a model can copy them: what the fix does, and the fixed line when the fix stays on one line. */
+function bulbText(source: string, fixes: readonly WorkerCodeFix[], max = 2): string[] {
+  const out: string[] = [];
+  for (const fix of fixes.slice(0, max)) {
+    const changes = (fix.changes ?? []).flatMap((c) => c.textChanges ?? []).sort((a, b) => a.span.start - b.span.start);
+    let line: string | null = null;
+    if (changes.length && !changes.some((c) => c.newText.includes('\n'))) {
+      let text = source;
+      for (const c of [...changes].reverse()) text = text.slice(0, c.span.start) + c.newText + text.slice(c.span.start + c.span.length);
+      // Nothing before the first change moved, so the line it is on can be counted in the original offsets.
+      line = text.split('\n')[source.slice(0, changes[0].span.start).split('\n').length - 1]?.trim().slice(0, 160) ?? null;
+    }
+    out.push(line ? `${fix.description} → the line would read: ${line}` : fix.description);
+  }
+  return out;
 }
 
 const flatten = (text: string | { messageText: string; next?: unknown[] }): string => {
@@ -457,13 +486,29 @@ export async function checkCode(source: string, scope = '', limit = 8): Promise<
     const client = await answered(getWorker(uri));
     const [syntax, semantic] = await answered(Promise.all([client.getSyntacticDiagnostics(uri.toString()), client.getSemanticDiagnostics(uri.toString())]));
     const found: CodeProblem[] = [];
+    const spans = new Map<CodeProblem, { start: number; length: number }>();
     for (const d of [...syntax, ...semantic]) {
       // Categories: 0 warning, 1 error, 2 suggestion, 3 message. Suggestions and the "implicit any" family are not shown to anybody.
       if (d.category > 1 || IMPLICIT_ANY_MESSAGES.includes(d.code)) continue;
       const pos = model.getPositionAt(d.start ?? 0);
-      found.push({ line: pos.lineNumber, column: pos.column, severity: d.category === 1 ? 'error' : 'warning', message: flatten(d.messageText as never), code: d.code, lineText: model.getLineContent(pos.lineNumber).trim().slice(0, 160) });
+      const problem: CodeProblem = { line: pos.lineNumber, column: pos.column, severity: d.category === 1 ? 'error' : 'warning', message: flatten(d.messageText as never), code: d.code, lineText: model.getLineContent(pos.lineNumber).trim().slice(0, 160) };
+      found.push(problem);
+      spans.set(problem, { start: d.start ?? 0, length: d.length ?? 0 });
     }
-    return found.sort((a, b) => Number(a.severity === 'warning') - Number(b.severity === 'warning') || a.line - b.line).slice(0, limit);
+    const kept = found.sort((a, b) => Number(a.severity === 'warning') - Number(b.severity === 'warning') || a.line - b.line).slice(0, limit);
+    // The editor's light bulb for each mistake that is shown: the same quick fixes a person gets. A bulb that
+    // does not answer only means less help, so it is never an error; a few mistakes is enough to keep it quick.
+    for (const problem of kept.filter((p) => p.severity === 'error').slice(0, 4)) {
+      const span = spans.get(problem)!;
+      try {
+        const fixes = (await answered(client.getCodeFixesAtPosition(uri.toString(), span.start, span.start + span.length, [problem.code], {}))) as readonly WorkerCodeFix[];
+        const said = bulbText(source, fixes);
+        if (said.length) problem.fixes = said;
+      } catch {
+        // no bulb for this one
+      }
+    }
+    return kept;
   } finally {
     model.dispose();
   }

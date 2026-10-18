@@ -2,6 +2,7 @@ import * as monaco from 'monaco-editor';
 import type { installAiSurface } from '../ai/surface';
 import type { TabStrip } from '../ui/TabStrip';
 import { parseCellUri } from '../editor/monaco';
+import { focusPoints } from '../editor/focusPoints';
 import { workspace } from '../workspace';
 import { nav } from '../nav';
 import { Conversation } from './agent';
@@ -76,6 +77,7 @@ function toReport(result: unknown): RunReport {
  */
 export function installAiChat(deps: { surface: Surface; strip: TabStrip; say: (text: string) => void }): void {
   loadSettings();
+  focusPoints.install();
   const { surface, strip } = deps;
 
   const convo = new Conversation({
@@ -159,6 +161,10 @@ export function installAiChat(deps: { surface: Surface; strip: TabStrip; say: (t
     isSideOpen: () => ui.sideOpen,
     openSide: () => {
       ui.openSide(false);
+      void convo.warmUp();
+    },
+    insertText: (text) => {
+      ui.insertText(text);
       void convo.warmUp();
     },
   });
