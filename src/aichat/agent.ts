@@ -11,6 +11,7 @@ import { addressHints } from './cellPaths';
 import { ammo, fit, kilo } from './ammo';
 import { RULES, docUrls, standingDirectives } from './docs';
 import { bibleFor } from '../ai/bible';
+import { goalPrompt, MAX_PLAY_NUDGES, MAX_PLAY_ROUNDS, playGoalFrom, type PlayGoal } from './playGoal';
 import { markOriented } from '../ai/orientation';
 
 const MAX_ROUNDS = 6;
@@ -114,6 +115,23 @@ export class Conversation {
     return { ...this.host, context: () => this.active, suggest: () => {}, wrote: () => {}, ledger: this.ledger, fillInput: (text) => this.fillInput?.(text) ?? { ok: false, error: 'There is no question box to fill.' }, clickFix: (text) => this.clickFix?.(text) ?? Promise.resolve({ ok: false, error: 'There is no question box.' }) };
   }
 
+  /** Counts the moves made for the standing task, and drops the task when the router held the helper back. */
+  private tally(tool: string, result: string): void {
+    const goal = this.playGoal;
+    if (!goal) return;
+    if (result.includes('was running away')) this.playGoal = null;
+    else if (tool === 'make_move' && !result.includes('"ok":false') && !result.includes('"error"')) goal.done++;
+  }
+
+  /** True while the standing task is not finished: the game is not over (nobody has won), and the number of moves asked for is not reached. */
+  private stillToPlay(): boolean {
+    const goal = this.playGoal;
+    if (!goal) return false;
+    if (goal.target !== null && goal.done >= goal.target) return false;
+    const s = this.host.state() as { phase?: string; winner?: unknown } | undefined;
+    return !!s && s.phase !== 'over' && !s.winner;
+  }
+
   /** A note in the conversation that the model never sees (for example "the answer was written into A12"). */
   note(text: string): void {
     this.entries.push({ kind: 'note', text });
@@ -136,11 +154,12 @@ export class Conversation {
   /** The model's fixed instructions: a model on this computer also gets the Bible (the rules and the README chapters that fit) up front, because it cannot open the README itself. */
   private async systemFor(small: boolean, write: boolean, second: boolean): Promise<{ system: string; hasReadme: boolean }> {
     const bible = getSettings().provider === 'local' ? await bibleFor(localWindow(), 0.35) : null;
-    const system = `${bible ? `${bible.text}\n\n` : ''}${buildPrompt({ small, write })}${second && !small ? LOCAL_PROMPT() : ''}\n${small ? '' : `(Your memory holds ${memoryInfo().count} notes.)`}`;
+    const system = `${bible ? `${bible.text}\n\n` : ''}${buildPrompt({ small, write })}${second && !small ? LOCAL_PROMPT() : ''}${goalPrompt(this.playGoal)}\n${small ? '' : `(Your memory holds ${memoryInfo().count} notes.)`}`;
     return { system, hasReadme: !!bible?.hasReadme };
   }
 
   private warmedAt = 0;
+  private playGoal: PlayGoal | null = null;
 
   /**
    * Has Ollama read the fixed start of every conversation (the rules, the README, the tools) before the first question,
@@ -176,6 +195,7 @@ export class Conversation {
     if (this.busy) return { ok: false, text: 'The helper is still busy with the last question.' };
 
     this.active = ctx;
+    this.playGoal = playGoalFrom(question, this.playGoal);
     // Is the second brain (a local model) there? Looked up at most every 15 s.
     await probeLocal();
     const second = localAssistantReady();
@@ -217,8 +237,9 @@ export class Conversation {
     let fitNoted = false;
     let tightNoted = false;
     try {
-      const rounds = getSettings().autonomous ? MAX_ROUNDS_AUTONOMOUS : MAX_ROUNDS;
+      const rounds = this.playGoal ? MAX_PLAY_ROUNDS : getSettings().autonomous ? MAX_ROUNDS_AUTONOMOUS : MAX_ROUNDS;
       let nudges = 0;
+      let playNudges = 0;
       this.ledger.pending = null;
       for (let round = 0; round <= rounds; round++) {
         // On the last round the model gets no tools, so it has to answer with what it has learned.
@@ -261,6 +282,13 @@ export class Conversation {
             this.messages.push({ role: 'user', text: `[Automatic message, not from the person] Not finished: ${this.ledger.pending}. Fix it with write_code (the complete code of the cell), then check the problems and the output again. Only answer when it works, or when you have to tell the person honestly why it does not.` });
             continue;
           }
+          // The person asked for a game to be played on, and the model only talked about it: it is still Red's turn, so say so and carry on.
+          if (this.playGoal && playNudges < MAX_PLAY_NUDGES && round < rounds - 1 && this.stillToPlay()) {
+            playNudges++;
+            chat.say(`the standing task is not finished (${this.playGoal.done}${this.playGoal.target === null ? '' : ` of ${this.playGoal.target}`} moves); asking the helper to carry on (${playNudges})`, true);
+            this.messages.push({ role: 'user', text: `[Automatic message, not from the person] The task is not finished and the game is not over. Do not answer or ask a question: call make_move now (start_battle first if the battle has not started; legal_moves if you need to choose).` });
+            continue;
+          }
           break;
         }
         for (const call of reply.toolCalls) {
@@ -279,8 +307,10 @@ export class Conversation {
             tool.fail(message);
           }
           this.messages.push({ role: 'tool', toolCallId: call.id, toolName: call.name, text: result });
+          if (this.playGoal) this.tally(call.name, result);
         }
       }
+      if (this.playGoal && !this.stillToPlay()) this.playGoal = null;
       if (!answer) answer = 'I do not have an answer for that one. Could you ask it in another way?';
       this.entries.push({ kind: 'ai', text: answer, via: info.short });
       // If the helper's own code still does not run, say it in calm words: the person should not be left guessing.
