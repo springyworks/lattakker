@@ -130,7 +130,10 @@
       if (u.endsWith('/api/version')) return Response.json({ version: '0.0.0-fake' });
       if (u.endsWith('/api/ps')) return Response.json({ models: [{ name: 'fake:1b', size: 1e9, size_vram: 1e9, context_length: 8192, expires_at: '2319-01-01T00:00:00Z' }] });
       if (u.endsWith('/api/chat')) {
-        chats.push(JSON.parse(init.body));
+        const body = JSON.parse(init.body);
+        // The app's warm-up (one word, not streamed) is no part of the conversation the script plays.
+        if (body.stream === false) return Response.json({ message: { role: 'assistant', content: '' }, done: true });
+        chats.push(body);
         const step = script[chats.length - 1] ?? { text: 'out of script' };
         const done = { done: true, done_reason: 'stop', total_duration: 2e9, load_duration: 5e8, prompt_eval_count: 20, prompt_eval_duration: 1e8, eval_count: 5, eval_duration: 2e8 };
         return ndjson(step.tool ? [{ message: { role: 'assistant', content: '', tool_calls: [{ function: step.tool }] }, done: false }, done] : [{ message: { role: 'assistant', content: step.text }, done: false }, done]);
