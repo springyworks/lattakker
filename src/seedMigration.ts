@@ -4,7 +4,7 @@
  *
  * This brings the new version in, carefully: a shipped cell is replaced only when it still holds, letter for letter, a version that WAS shipped
  * (one the page itself seeded, or one listed as an older version). Anything a person changed, even a comment, is never touched. A cell the person
- * emptied stays empty. The fingerprints (FNV-1a of the exact code) are kept in this browser: which version each cell was seeded with.
+ * emptied stays empty. The fingerprints (FNV-1a of the exact code) are kept in this browser: which version each cell was seeded with. A copy moved to another address is brought up to date too, when it is a listed older version.
  */
 
 import type { Sheet } from './sheet/Sheet';
@@ -61,6 +61,19 @@ export function refreshSeeded(sheet: Sheet, tab: string, seed: ReadonlyArray<rea
       seeds[address] = shipped;
       updated++;
     }
+  }
+  // A block moved by hand lives at another address but is still, letter for letter, an old shipped version: bring it up to date where it stands.
+  const seedAddresses = new Set(seed.map(([address]) => address));
+  const newest = new Map<string, string>();
+  for (const [address, code] of seed) {
+    for (const print of olderVersions[address] ?? []) newest.set(print, code);
+  }
+  for (const data of sheet.codeCells()) {
+    if (seedAddresses.has(data.address)) continue;
+    const code = newest.get(fingerprint(data.code));
+    if (code === undefined) continue;
+    sheet.setCode(data.address, code);
+    updated++;
   }
   save(tab, seeds);
   return updated;
