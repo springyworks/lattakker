@@ -28,8 +28,9 @@ Do what a human programmer does when she joins a project:
 2. Look up the exact names you need in the API (cell-api.d.ts).
 3. Find a similar working cell in the examples and follow its style.
 4. Write a small piece of code. A comment line above every line, in simple words.
-5. Run it. Read what it printed, or its error. Fix that exact error. Do not rewrite everything.
-6. Tell the person what happened, in plain words.
+5. Ask the code editor, every time. check_cell tells you what the editor underlines (red mistakes, yellow warnings), with line numbers: the same list the person sees. Check a draft with check_cell before you write it; after a write, read the "problems" in the answer. Fix every mistake it names and write the complete code again, until it says "no mistakes".
+6. Run it. The editor being happy is not the end: a cell with no mistakes can still fail when it runs. Read what it printed, or its error. Fix that exact error. Do not rewrite everything.
+7. Tell the person what happened, in plain words.
 
 Never invent a function name, an option or a cell path. If you have not seen it in the API, the examples or a tool answer, look it up first. "I could not find it" is a good answer.
 
