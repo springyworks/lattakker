@@ -285,19 +285,21 @@ every('10s', () => mcp.call('status', 'ping').catch(() => mcp.call('router', 'pi
 
 // The numbers at the bottom of the drawing.
 const label = pic.write(40, 858, '', { fill: '#475569', 'font-size': 12, 'font-family': 'monospace' })
-every('1s', () => {
+function numbers() {
   const s = mcp.stats()
   label.text(s.messages + ' messages so far, ' + s.ratePerSecond + ' per second, ' + s.serverCount + ' servers, ' + s.errors + ' errors')
-})
+}
+numbers()
+every('10s', numbers)
 `,
   ],
   [
     'N1',
-    String.raw`// CPU AND GRAPHICS CARD LOAD, in percent, the last minute.
+    String.raw`// CPU AND GRAPHICS CARD LOAD, in percent: one reading every 10 seconds, the last 10 minutes.
 // system.read() asks how this computer is doing. system.series('cpu') is the list of the last readings.
 // (The real numbers come from the dev server: npm run dev. On the published page a browser may not look.)
 span(7, 4)
-every('1s', async () => {
+async function draw() {
   const s = await system.read()
   clear()
   if (s.cpu.load === null) {
@@ -307,14 +309,16 @@ every('1s', async () => {
     return
   }
   plot({ 'CPU %': system.series('cpu', 60), 'GPU %': system.series('gpu', 60) }, { title: 'Load: CPU ' + s.cpu.load + '%' + (s.gpu ? ', GPU ' + s.gpu.load + '%' : ''), yMin: 0, yMax: 100 })
-})
+}
+draw()
+every('10s', draw)
 `,
   ],
   [
     'N5',
     String.raw`// TEMPERATURES in degrees Celsius: the processor and the graphics card.
 span(7, 4)
-every('1s', async () => {
+async function draw() {
   const s = await system.read()
   clear()
   if (s.cpu.temp === null) {
@@ -322,31 +326,37 @@ every('1s', async () => {
     return
   }
   plot({ 'CPU °C': system.series('cpuTemp', 60), 'GPU °C': system.series('gpuTemp', 60) }, { title: 'Temperature: CPU ' + s.cpu.temp + '°C' + (s.gpu?.temp != null ? ', GPU ' + s.gpu.temp + '°C' : ''), yMin: 20, yMax: 100 })
-})
+}
+draw()
+every('10s', draw)
 `,
   ],
   [
     'N9',
     String.raw`// MEMORY in percent, and how fast this page draws (frames per second).
 span(7, 4)
-every('1s', async () => {
+async function draw() {
   const s = await system.read()
   clear()
   const series: Record<string, number[]> = { 'frames per second': system.series('fps', 60) }
   const memory = system.series('memory', 60)
   if (memory.length) series['memory %'] = memory
   plot(series, { title: (s.memory?.usedMb != null && s.memory.totalMb ? 'Memory ' + Math.round((s.memory.usedMb / s.memory.totalMb) * 100) + '%, ' : '') + (s.browser.fps ?? '?') + ' fps', yMin: 0 })
-})
+}
+draw()
+every('10s', draw)
 `,
   ],
   [
     'A10',
-    String.raw`// ROUTER MESSAGES PER SECOND, the last minute. Click around in the other tabs and watch it move.
+    String.raw`// ROUTER MESSAGES PER SECOND, the last minute, redrawn every 10 seconds. Click around in the other tabs and watch it move.
 // mcp.stats().perSecond is a list of 60 numbers: just give it to plot().
 span(6, 4)
-every('1s', () => {
+function draw() {
   plot(mcp.stats().perSecond, { title: 'Router messages per second', color: '#2563eb', yMin: 0 })
-})
+}
+draw()
+every('10s', draw)
 `,
   ],
   [
@@ -374,13 +384,15 @@ every('10m', show)
     'A14',
     String.raw`// THIS COMPUTER IN WORDS, and the tabs of this page.
 span(12, 3)
-every('2s', async () => {
+async function draw() {
   const s = await system.read()
   clear()
   print('🖥 ' + (s.cpu.model || 'this computer') + ', ' + s.cpu.cores + ' cores' + (s.uptimeSeconds ? ', up ' + Math.round(s.uptimeSeconds / 3600) + ' hours' : ''))
   print(await system.text())
   print('Numbers measured by: ' + s.source + '   |   tabs: ' + tabs.list().map((t) => t.icon + ' ' + t.title).join(', '))
-})
+}
+draw()
+every('10s', draw)
 `,
   ],
 ];
