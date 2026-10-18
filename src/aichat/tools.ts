@@ -13,7 +13,7 @@ import { nav } from '../nav';
 import { workspace } from '../workspace';
 import { resolveSmart } from './cellPaths';
 import { ammo } from './ammo';
-import { RULES, readDocs } from './docs';
+import { RULES, askRules, readDocs } from './docs';
 import { canWrite, getSettings } from './config';
 import { checkCode, type CodeProblem } from '../editor/monaco';
 import type { ToolDecl } from './providers';
@@ -156,6 +156,11 @@ export const TOOL_DECLS: ToolDecl[] = [
     },
   },
   {
+    name: 'ask_rules',
+    description: 'Ask the rules (the same loket outside AIs use): a few words about what you wonder, e.g. "editor mistakes" or "may I change a cell", give the rule sections that answer it, plus the owner\'s standing directives with their strengths. No query gives all the rules. Use it whenever you are unsure what you may or must do.',
+    parameters: { type: 'object', properties: { query: { type: 'string', description: 'A few words about what you wonder.' } } },
+  },
+  {
     name: 'recall',
     description: 'Look in your memory (notes kept in this browser, they survive a reload) for what you learned earlier about this person, their project or the app. Do this before answering questions about "last time", their goals or their preferences.',
     parameters: { type: 'object', properties: { query: { type: 'string', description: 'Some words or the question.' } }, required: ['query'] },
@@ -272,7 +277,7 @@ export const TOOL_DECLS: ToolDecl[] = [
 ];
 
 /** What a small model is offered: the tools for looking, going there, trying and suggesting. More tools make small models fumble. */
-const SMALL_MODEL_TOOLS = new Set(['check_mail', 'send_mail', 'look_around', 'list_cells', 'read_cell', 'goto_cell', 'flash_cell', 'run_cell', 'check_cell', 'find_free_cell', 'write_code', 'suggest_code', 'click_fix_button', 'put_in_input', 'read_docs']);
+const SMALL_MODEL_TOOLS = new Set(['check_mail', 'send_mail', 'look_around', 'list_cells', 'read_cell', 'goto_cell', 'flash_cell', 'run_cell', 'check_cell', 'find_free_cell', 'write_code', 'suggest_code', 'click_fix_button', 'put_in_input', 'read_docs', 'ask_rules']);
 
 /** The shortest list that still lets a model look, go there, try and suggest: for a model whose memory is tiny. */
 const TIGHT_TOOLS = new Set(['look_around', 'read_cell', 'goto_cell', 'run_cell', 'write_code', 'suggest_code', 'click_fix_button', 'put_in_input']);
@@ -541,11 +546,11 @@ async function writeCode(host: ToolHost, args: Args): Promise<string> {
 }
 
 /** Tools that read the page directly instead of asking an MCP server: the router would never see them, so they are announced to it. */
-const DIRECT_TOOLS = new Set(['look_around', 'list_tabs', 'read_cell', 'game_state', 'board_text', 'read_guide', 'read_docs', 'run_cell', 'check_cell', 'find_free_cell', 'write_code', 'suggest_code']);
+const DIRECT_TOOLS = new Set(['look_around', 'list_tabs', 'read_cell', 'game_state', 'board_text', 'read_guide', 'read_docs', 'ask_rules', 'run_cell', 'check_cell', 'find_free_cell', 'write_code', 'suggest_code']);
 
 function announceDirect(host: ToolHost, name: string, args: Args, client: string): void {
   if (!DIRECT_TOOLS.has(name)) return;
-  const guide = name === 'read_guide' || name === 'read_docs';
+  const guide = name === 'read_guide' || name === 'read_docs' || name === 'ask_rules';
   const path = typeof args.path === 'string' ? args.path : '';
   const hit = path && !guide ? workspace.resolve(path, host.context().tab) : null;
   const tab = hit && !('error' in hit) ? hit.tab.id : host.context().tab;
@@ -556,7 +561,7 @@ function announceDirect(host: ToolHost, name: string, args: Args, client: string
 export async function runTool(host: ToolHost, name: string, args: Args, client: string = CLIENT): Promise<string> {
   try {
     // First contact: the helper reads the README (the place of truth, on GitHub) before its first tool does anything.
-    const readsReadme = name === 'read_docs' && (args.doc === 'readme' || args.doc === 'rules');
+    const readsReadme = (name === 'read_docs' && (args.doc === 'readme' || args.doc === 'rules')) || name === 'ask_rules';
     // Only the main helper is sent to the README; the second brain (local-ai) is given it in its instructions (see ai/bible.ts).
     if (client === CLIENT && !isOriented(HELPER) && !readsReadme) {
       return asText({ ...orientation('helper', name), how: 'Call read_docs with doc "readme" now (no query gives the list of its headings; a few words as query give the parts that answer them). Then repeat your call.' });
@@ -590,6 +595,8 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
         if (args.doc === 'readme' && !text.startsWith('{"error"')) markOriented(HELPER);
         return text;
       }
+      case 'ask_rules':
+        return askRules(typeof args.query === 'string' ? args.query : '', ammo.resultChars(6000));
       case 'recall':
       case 'remember':
       case 'tidy_memory': {

@@ -29,6 +29,16 @@
     t('the old option alone still allows write_code', names({ small: false, second: false }).includes('write_code'));
     config.updateSettings((s) => Object.assign(s, { autonomous: true, allowWrite: false }));
 
+    // ---- the rules counter: the helper asks the same loket as outside AIs
+    {
+      t('the helper has the tool ask_rules (also a small model)', names({ small: false, second: false }).includes('ask_rules') && names({ small: true, second: false }).includes('ask_rules'));
+      const answer = await toolsMod.runTool({ context: () => ({ tab: 'board' }) }, 'ask_rules', { query: 'editor mistakes check syntax' });
+      const viaMcp = await router.request('selftest-cell', 'docs', 'tools/call', { name: 'ask_rules', arguments: { query: 'editor mistakes' } });
+      t('the same counter is an MCP server (docs): any party can ask it', /no mistakes/.test(JSON.stringify(viaMcp)), JSON.stringify(viaMcp).slice(0, 80));
+      t('ask_rules gives the coder loop (check_cell, until no mistakes)', /check_cell/.test(answer) && /no mistakes/.test(answer), answer.split('\n').find((l) => l.startsWith('##')) ?? answer.slice(0, 80));
+      t('ask_rules without a query gives the whole rules', /## First contact/i.test(await toolsMod.runTool({ context: () => ({ tab: 'board' }) }, 'ask_rules', {})));
+    }
+
     // ---- hidden information: what is hidden on the board stays hidden in what AIs and cells can read
     {
       const game = window.game;

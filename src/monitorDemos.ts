@@ -45,7 +45,7 @@ function boxOf(name: string): string {
   if (first === 'ai-chat') return 'sidebar_chat' // the chat in the sidebar of this page
   if (first === 'you') return 'user' // the person typing in it
   if (first === 'system') return 'devserver' // the readings come from the dev server
-  if (first === 'tabs' || first === 'code' || first === 'mail' || first === '*') return 'router' // services of the router itself
+  if (first === 'tabs' || first === 'code' || first === 'mail' || first === 'docs' || first === '*') return 'router' // services of the router itself
   if (nodes.includes('other_tabs') && isTab(first)) return 'other_tabs'
   if (first.startsWith('ai')) return 'helper'
   return 'cells'

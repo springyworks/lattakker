@@ -1035,6 +1035,7 @@ one, and they all sit on the same router:
 | `router` | the router itself | `stats`, `catalog`, `servers`, `recent`, `packets`, `analyze`, `ask`, `callers`, `reset_stats`, `trace`, `history`, `change`, `endpoints`, `self_check` |
 | `code` | all the TypeScript of the page as text for a small AI ([8.11.3](#8113-the-code-of-the-page-for-a-small-ai)) | `overview`, `dump`, `search`, `read`, `list` |
 | `mail` | letters between the person, the helper, outside AI chats and cells ([8.19](#819-mail-letters-between-the-person-ais-and-cells)) | `check`, `inbox`, `read`, `send`, `reply`, `sent`, `delete`, `boxes` |
+| `docs` | the rules and the project documents: the one counter every party asks (helper, outside AI, cell code via `mcp`) | `ask_rules`, `read_docs` |
 | `weather` | the weather ([8.12](#812-the-weather)) | `now`, `forecast`, `find` |
 | `ollama` | the model on this computer ([8.13](#813-the-model-on-this-computer-ollama)) | `status`, `ping`, `warm`, `models`, `ask` |
 | `memory` | the helper's notes and little database | `remember`, `recall`, `db_put` ... |
