@@ -69,6 +69,16 @@ const FREE_ROWS = 4;
 const BOARD_FIRST_FREE_ROW = 11;
 
 /** What the tools need from the rest of the app. */
+/** What pressing the question box's "✏ fix" button came to. */
+export interface FixResult {
+  ok: boolean;
+  before?: string;
+  after?: string;
+  changed?: boolean;
+  stopped?: boolean;
+  error?: string;
+}
+
 export interface ToolHost {
   context(): AiContext;
   /** Shows the person some code the helper suggests; nothing is written until they say so. */
@@ -80,6 +90,10 @@ export interface ToolHost {
   /** Tells the chat that the helper wrote code on its own, so the person gets a card with an undo button. */
   wrote(path: string, code: string, report: RunReport, before: string | null, mistakes: string[]): void;
   readonly ledger: WriteLedger;
+  /** Puts text into the question box the person is typing in (never sends it). Fails when the box has new text in it. */
+  fillInput(text: string): { ok: boolean; error?: string };
+  /** Presses the "✏ fix" button of the question box: the text in it (or `text`, put in first) is spell-corrected in place. */
+  clickFix(text?: string): Promise<FixResult>;
   /** The text in the open editor of that cell (saved or not), or null when no editor is open on it. */
   liveText(tab: string, address: string): string | null;
   help(): string;
@@ -245,13 +259,23 @@ export const TOOL_DECLS: ToolDecl[] = [
       required: ['path', 'code'],
     },
   },
+  {
+    name: 'click_fix_button',
+    description: 'Press the "✏ fix" button of the question box, as the person would: the spelling of the text in the box is corrected in place by the model on this computer (or the helper), and the person sees it change. Give `text` to have that text put in the empty box first, then corrected (use it for "correct this: ..."). Without text it corrects whatever the person has typed. Returns the text before and after. It does not write code and does not send anything.',
+    parameters: { type: 'object', properties: { text: { type: 'string', description: 'Optional: the text to put in the box and correct. Leave out to correct what is already typed there.' } } },
+  },
+  {
+    name: 'put_in_input',
+    description: 'Put text into the question box the person types in, so they can read it, edit it and send it themselves. Use it when they ask you to correct the spelling of, rewrite or translate their own text, and they want the result "back in the box" (or "here"). Give only the finished text, nothing else. It does not write code and it does not send anything.',
+    parameters: { type: 'object', properties: { text: { type: 'string', description: 'The complete text that should stand in the box.' } }, required: ['text'] },
+  },
 ];
 
 /** What a small model is offered: the tools for looking, going there, trying and suggesting. More tools make small models fumble. */
-const SMALL_MODEL_TOOLS = new Set(['check_mail', 'send_mail', 'look_around', 'list_cells', 'read_cell', 'goto_cell', 'flash_cell', 'run_cell', 'check_cell', 'find_free_cell', 'write_code', 'suggest_code', 'read_docs']);
+const SMALL_MODEL_TOOLS = new Set(['check_mail', 'send_mail', 'look_around', 'list_cells', 'read_cell', 'goto_cell', 'flash_cell', 'run_cell', 'check_cell', 'find_free_cell', 'write_code', 'suggest_code', 'click_fix_button', 'put_in_input', 'read_docs']);
 
 /** The shortest list that still lets a model look, go there, try and suggest: for a model whose memory is tiny. */
-const TIGHT_TOOLS = new Set(['look_around', 'read_cell', 'goto_cell', 'run_cell', 'write_code', 'suggest_code']);
+const TIGHT_TOOLS = new Set(['look_around', 'read_cell', 'goto_cell', 'run_cell', 'write_code', 'suggest_code', 'click_fix_button', 'put_in_input']);
 
 /** The tools for one question: all of them, or the short list for a small model (the shortest when memory is tiny); write_code only when the person allowed it. */
 export function toolsFor(options: { small: boolean; second: boolean; tight?: boolean }): ToolDecl[] {
@@ -664,6 +688,17 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
               : ['send', { to: args.to, subject: args.subject, body: args.body }];
         const r = inner(await router.request(client, 'mail', 'tools/call', { name: tool, arguments: a }, turnTrace));
         return limit(asText(r.ok ? r.value : { error: r.value }));
+      }
+      case 'click_fix_button': {
+        const given = typeof args.text === 'string' && args.text.trim() ? args.text.trim() : undefined;
+        const r = await host.clickFix(given);
+        return asText(r.ok ? { ok: true, before: r.before, after: r.after, changed: r.changed, note: 'The corrected text now stands in the question box. Say in one short line what you changed.' } : { error: r.error ?? 'The fix button did not work.' });
+      }
+      case 'put_in_input': {
+        const text = typeof args.text === 'string' ? args.text.trim() : '';
+        if (!text) return asText({ error: 'text must be the finished text to put in the box.' });
+        const r = host.fillInput(text);
+        return asText(r.ok ? { ok: true, note: 'The text is in the question box; the person reads it and sends it. Say in one short line that it is there.' } : { error: r.error ?? 'Could not put the text in the box.' });
       }
       case 'flash_cell': {
         const hit = resolveSmart(String(args.path ?? ''), host.context().tab);

@@ -10,11 +10,15 @@ import type { AiContext } from './tools';
  *
  *   tools/call status        who the helper is, and whether outside AIs may ask it
  *   tools/call ask {question, tab?, address?}    ask the helper, wait for its answer
+ *   tools/call click_fix_button {text?}          press the "✏ fix" button of the question box (spelling corrected in place)
  *
  * `ask` spends the person's own helper (their Gemini key, or their computer's model), so it is refused
  * until the person ticks "Let an outside AI ask the helper" in the helper's settings. The question shows up
  * in the chat, labelled with who sent it.
  */
+
+/** The built-in chat's own name on the router (it may always call). */
+const INSIDER = 'ai-chat';
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
@@ -24,6 +28,11 @@ const TOOLS = [
     name: 'ask',
     description: "Ask the page's built-in helper a question and wait for its answer. It can read the cells and keeps a memory (see the `memory` server). Refused unless the person allowed outside questions.",
     inputSchema: { type: 'object', properties: { question: { type: 'string' }, tab: { type: 'string' }, address: { type: 'string' } }, required: ['question'] },
+  },
+  {
+    name: 'click_fix_button',
+    description: 'Press the \"✏ fix\" button of the chat\'s question box: the text in it is spell-corrected in place by the local model (or the helper), and the person sees it change. With `text` the empty box is filled first. Returns the text before and after. Refused unless the person allowed outside AIs.',
+    inputSchema: { type: 'object', properties: { text: { type: 'string', description: 'Optional: text to put in the empty box and correct. Leave out to correct what is typed there.' } } },
   },
 ];
 
@@ -56,7 +65,14 @@ export class HelperServer implements McpServer {
     const failure = (message: string) => ({ content: [{ type: 'text', text: message }], isError: true });
     const settings = getSettings();
     if (name === 'status') return reply({ configured: isConfigured(), allowOutsideQuestions: settings.allowOutside, busy: this.convo.busy, model: isConfigured() ? describeModel().line : null });
-    if (name !== 'ask') throw new McpError(ERR.methodNotFound, `helper has no tool "${name}". Tools: status, ask`);
+    if (name === 'click_fix_button') {
+      if (from !== INSIDER && !settings.allowOutside) return failure('The person has not allowed outside AIs to use the helper. They can tick "Let an outside AI ask the helper" in the helper settings (⚙ in the AI chat).');
+      if (!this.convo.clickFix) return failure('The chat window is not there.');
+      const given = typeof args.text === 'string' && args.text.trim() ? args.text.slice(0, 4000) : undefined;
+      const r = await this.convo.clickFix(given);
+      return r.ok ? reply({ before: r.before ?? '', after: r.after ?? '', changed: !!r.changed }) : failure(r.error ?? 'The fix button did not work.');
+    }
+    if (name !== 'ask') throw new McpError(ERR.methodNotFound, `helper has no tool "${name}". Tools: status, ask, click_fix_button`);
     if (!settings.allowOutside) return failure('The person has not allowed outside AIs to ask the helper. They can tick "Let an outside AI ask the helper" in the helper settings (⚙ in the AI chat).');
     if (!isConfigured()) return failure('The helper is not set up yet (no model chosen in its settings).');
     if (this.convo.busy) return failure('The helper is busy with another question. Try again in a moment.');

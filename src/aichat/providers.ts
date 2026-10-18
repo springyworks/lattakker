@@ -58,6 +58,10 @@ export interface ModelProvider {
   onNote?: (text: string) => void;
   complete(system: string, messages: ChatMsg[], tools: ToolDecl[], signal: AbortSignal): Promise<ModelReply>;
   listModels(signal?: AbortSignal): Promise<string[]>;
+  /** The models the server holds in memory right now (only servers that can tell, like Ollama). */
+  loadedModels?(): Promise<string[]>;
+  /** Have the server read the start of a conversation now, without answering (only Ollama; does nothing else). */
+  warm?(system: string, tools: ToolDecl[]): Promise<void>;
 }
 
 const GEMINI = 'https://generativelanguage.googleapis.com/v1beta';
@@ -227,6 +231,34 @@ export class OpenAiCompatProvider implements ModelProvider {
     }
   }
 
+  async loadedModels(): Promise<string[]> {
+    try {
+      const res = await fetch(`${this.root()}/api/ps`, { signal: AbortSignal.timeout(1500) });
+      return res.ok ? parsePs(await res.json()).map((m) => m.name) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async warm(system: string, tools: ToolDecl[]): Promise<void> {
+    if (!this.model || !(await this.isOllama())) return;
+    const { loaded, others, window } = await this.ps();
+    // Only when the model is in memory already (or nothing is): this must never make Ollama swap models.
+    if (loaded === null || (!loaded && others.length)) return;
+    if (window) noteServerWindow(window);
+    const context = this.context;
+    const body: Record<string, unknown> = {
+      model: this.model,
+      messages: [{ role: 'system', content: system }, { role: 'user', content: 'Hello' }],
+      stream: false,
+      keep_alive: -1,
+      options: { ...(context ? { num_ctx: context } : {}), temperature: 0.4, num_predict: 1 },
+    };
+    if (this.thinkingOff) body.think = false;
+    if (this.toolsOk && tools.length) body.tools = tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } }));
+    await fetch(`${this.root()}/api/chat`, { method: 'POST', headers: this.headers(), body: JSON.stringify(body), signal: AbortSignal.timeout(20 * 60000) });
+  }
+
   /** How many milliseconds Ollama needs to answer a ping (its version door), or null when it does not within 1.5 s. */
   private async alive(): Promise<number | null> {
     const start = performance.now();
@@ -244,6 +276,11 @@ export class OpenAiCompatProvider implements ModelProvider {
     if (native) {
       const inMemory = await this.ps();
       if (inMemory.window) noteServerWindow(inMemory.window);
+      if (inMemory.loaded === false && inMemory.others.length) {
+        const note = `${this.model} is not in memory; Ollama holds ${inMemory.others.join(', ')}. If it keeps one model at a time, loading ${this.model} unloads that one and can take minutes. To avoid it, choose ${inMemory.others[0]} in ⚙.`;
+        job.say(note, false);
+        this.onNote?.(note);
+      }
       if (context && inMemory.loaded && inMemory.window && inMemory.window !== context) {
         const note = `Changing Ollama context from ${inMemory.window} to ${context} tokens; the model may reload. Match other clients and the server to this size to avoid repeated reloads.`;
         job.say(note, false);
@@ -272,7 +309,7 @@ export class OpenAiCompatProvider implements ModelProvider {
     if (native) {
       // Ollama's own door: the memory (num_ctx) is ours to choose here, the OpenAI-style door always uses the server's default.
       // With no size chosen nothing is sent: a different num_ctx makes Ollama start a new instance (and drop the old one's cache).
-      body = { model: this.model, messages: wire, stream: true, options: { ...(context ? { num_ctx: context } : {}), temperature: 0.4, num_predict: MAX_OUTPUT_TOKENS } };
+      body = { model: this.model, messages: wire, stream: true, keep_alive: -1, options: { ...(context ? { num_ctx: context } : {}), temperature: 0.4, num_predict: MAX_OUTPUT_TOKENS } };
       // A child should not wait while a model thinks out loud.
       if (this.thinkingOff) body.think = false;
       if (withTools) body.tools = declared;

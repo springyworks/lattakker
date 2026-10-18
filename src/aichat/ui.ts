@@ -6,7 +6,7 @@ import { jobs, onJobsChange, type JobNode } from './jobs';
 import { installPopupMenu } from '../editor/EditorContextMenu';
 import type { Conversation, Entry } from './agent';
 import { destination, forgetAll, getKey, getSettings, isConfigured, OLLAMA_CONTEXT_OPTIONS, SERVER_CONTEXT, setKey, updateSettings } from './config';
-import { localAssistantReady, localState, localWarning, onLocalChange } from './localAi';
+import { localAssistantReady, localState, localWarning, makeLocalProvider, onLocalChange } from './localAi';
 import { renderMarkdown, linkify } from './markdown';
 import { allNotes, exportJson, forget, importJson, isKeptSafe, keepSafe, memoryInfo, onMemoryChange, wipe } from './memory';
 import { describeModel } from './modelInfo';
@@ -14,8 +14,8 @@ import { ammo, gaugeText } from './ammo';
 import { diagnose } from './diagnose';
 import { getLive, onLiveChange } from './ollamaLoad';
 import { memoryFileState } from './memorySync';
-import { GeminiProvider, OpenAiCompatProvider, friendly, type ModelProvider } from './providers';
-import type { AiContext } from './tools';
+import { GeminiProvider, OpenAiCompatProvider, friendly, makeProvider, type ModelProvider } from './providers';
+import type { AiContext, FixResult } from './tools';
 
 /**
  * The helper's two faces on one shared conversation: a side chat docked on the right (like the chat of an
@@ -72,6 +72,19 @@ function saveWidth(px: number): void {
 
 function link(href: string, text: string): HTMLAnchorElement {
   return el('a', { href, textContent: text, target: '_blank', rel: 'noopener noreferrer' });
+}
+
+const SPELL_SYSTEM = 'You correct typing mistakes for a person who types fast. Return the given text with its spelling and obvious typos fixed. Keep the language it is written in, the meaning, the wording, the line breaks and the casual tone. The text is often a question: never answer it, never add, remove or reorder anything, never comment. Reply with the corrected text only.';
+
+/** Models like to wrap their answer: a code fence, quotes, a "Corrected text:" lead-in. Unwrap it. */
+function unwrapCorrection(raw: string): string {
+  let t = raw.trim();
+  const fence = /^```[a-z]*\n?([\s\S]*?)\n?```$/.exec(t);
+  if (fence) t = fence[1].trim();
+  t = t.replace(/^(corrected( text)?|here is the corrected text)\s*:\s*/i, '');
+  t = t.replace(/^"""\n?/, '').replace(/\n?"""$/, '');
+  if (t.length > 1 && ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith('“') && t.endsWith('”')))) t = t.slice(1, -1);
+  return t.trim();
 }
 
 /** The tiny line under the header: who answers (company, model, where it runs) and a guess how well it codes. */
@@ -135,6 +148,14 @@ export class AiChatUi {
       });
     }
     convo.onChange(() => this.render());
+    convo.clickFix = (text) => this.pressFix(text);
+    for (const box of [this.sideInput, this.miniInput]) box.addEventListener('focus', () => (this.activeBox = box));
+    convo.fillInput = (text) => {
+      const box = this.activeBox;
+      if (box.value.trim()) return { ok: false, error: 'The question box already has new text in it, so it was left alone. Give the text in your answer instead.' };
+      this.replaceTyped(box, text);
+      return { ok: true };
+    };
     onJobsChange(() => this.convo.busy && this.render());
     onLocalChange(() => this.render());
     onLiveChange(() => this.render());
@@ -181,7 +202,7 @@ export class AiChatUi {
     });
     const sent = el('div', { className: 'ai-sent' });
     sent.dataset.role = 'sent';
-    const form = el('div', { className: 'ai-form' }, this.sideInput, send);
+    const form = el('div', { className: 'ai-form' }, this.sideInput, this.spellFixButton(this.sideInput), send);
     this.sideBody.append(this.sideLog);
     this.side.append(this.makeGrip(), head, modelLine(), liveLine(), this.sideBody, sent, form);
     this.applyWidth(loadWidth());
@@ -301,7 +322,7 @@ export class AiChatUi {
     send.onclick = () => this.submit(this.miniInput, () => this.miniCtx);
     const sent = el('div', { className: 'ai-sent' });
     sent.dataset.role = 'sent';
-    this.mini.append(head, modelLine(), liveLine(), this.miniLog, sent, el('div', { className: 'ai-form' }, this.miniInput, send));
+    this.mini.append(head, modelLine(), liveLine(), this.miniLog, sent, el('div', { className: 'ai-form' }, this.miniInput, this.spellFixButton(this.miniInput), send));
   }
 
   /** The little chat can be moved: press on its header (not on a button) and drag. It stays inside the window. */
@@ -355,6 +376,101 @@ export class AiChatUi {
 
   // ------------------------------------------------------------ asking
 
+  /**
+   * The "fix my spelling" button: everything typed so far goes to a model (the second brain when it answers,
+   * else the main helper) and comes back with the typos fixed. Typing may go on meanwhile: the correction is
+   * then spliced in front of the new keystrokes. Ctrl+Z brings the original back. Pressing it again while it
+   * works stops it. The same action can be started without a mouse (see pressFix, the "click_fix_button" tool).
+   */
+  private spellFixButton(input: HTMLTextAreaElement): HTMLButtonElement {
+    const btn = el('button', { className: 'ai-stop ai-fix', textContent: '✏ fix' });
+    const idle = 'Correct the spelling of everything typed so far. Your words and language stay yours; Ctrl+Z brings the original back. The text goes to the same helper a question would go to.';
+    btn.title = idle;
+    let abort: AbortController | null = null;
+    const run = async (given?: string): Promise<FixResult> => {
+      if (abort) return { ok: false, error: 'A correction is already running in this box.' };
+      if (given !== undefined) {
+        if (input.value.trim() && input.value.trim() !== given.trim()) return { ok: false, error: 'The question box already has other text in it, so it was left alone.' };
+        if (input.value !== given) this.replaceTyped(input, given);
+      }
+      const text = input.value;
+      if (!text.trim()) return { ok: false, error: 'The question box is empty: there is nothing to correct.' };
+      if (!isConfigured()) {
+        this.showSettings(true);
+        return { ok: false, error: 'No helper is set up yet.' };
+      }
+      // Prefer the model on this computer (private and cheap); the main helper only when there is no local one.
+      const provider = (localAssistantReady() ? makeLocalProvider() : null) ?? makeProvider();
+      if (!provider) {
+        this.showSettings(true);
+        return { ok: false, error: 'No model is available to do the correction.' };
+      }
+      const own = new AbortController();
+      abort = own;
+      const timer = window.setTimeout(() => own.abort(), 180000);
+      btn.textContent = '…';
+      btn.title = 'Correcting… press again to stop.';
+      try {
+        const r = await provider.complete(SPELL_SYSTEM, [{ role: 'user', text: `Correct the typing mistakes in this text and give back only the corrected text:\n"""\n${text}\n"""` }], [], own.signal);
+        const fixed = unwrapCorrection(r.text);
+        if (!fixed) return { ok: false, before: text, error: 'The model gave no text back; nothing was changed.' };
+        const now = input.value;
+        if (now === text) this.replaceTyped(input, fixed);
+        else if (now.startsWith(text)) this.replaceTyped(input, fixed + now.slice(text.length));
+        else return { ok: false, before: text, error: 'The box was changed while the model worked, so the correction was dropped.' };
+        return { ok: true, before: text, after: fixed, changed: fixed !== text };
+      } catch (err) {
+        return { ok: false, before: text, error: own.signal.aborted && !(err instanceof Error && /did not answer/.test(err.message)) ? 'Stopped.' : friendly(err), stopped: own.signal.aborted };
+      } finally {
+        window.clearTimeout(timer);
+        abort = null;
+        btn.textContent = '✏ fix';
+        btn.title = idle;
+      }
+    };
+    btn.onclick = () => {
+      if (abort) {
+        // A second press while it works means: stop.
+        abort.abort();
+        return;
+      }
+      void run().then((r) => {
+        if (!r.ok && !r.stopped && input.value.trim()) this.convo.note(`Could not correct the spelling: ${r.error}`);
+      });
+    };
+    this.fixers.set(input, run);
+    return btn;
+  }
+
+  /** The box that was used last (typed in, focused or asked from): where the helper's tools act. */
+  private activeBox: HTMLTextAreaElement = this.sideInput;
+  private readonly fixers = new Map<HTMLTextAreaElement, (given?: string) => Promise<FixResult>>();
+
+  /**
+   * Presses the fix button without a mouse, for the helper's tool and the MCP server. With `text` the box is
+   * filled first (only when it is empty); without, whatever is typed in the box is corrected.
+   */
+  pressFix(text?: string): Promise<FixResult> {
+    const run = this.fixers.get(this.activeBox);
+    return run ? run(text) : Promise.resolve({ ok: false, error: 'There is no question box.' });
+  }
+
+  /** Puts the corrected text into the box through the browser's own editing, so Ctrl+Z still knows the original. */
+  private replaceTyped(input: HTMLTextAreaElement, text: string): void {
+    input.focus();
+    input.select();
+    let ok = false;
+    try {
+      ok = document.execCommand('insertText', false, text);
+    } catch {
+      ok = false;
+    }
+    if (!ok || input.value !== text) {
+      input.value = text;
+      input.setSelectionRange(text.length, text.length);
+    }
+  }
+
   private submit(input: HTMLTextAreaElement, ctx: () => AiContext): void {
     const text = input.value.trim();
     if (!text || this.convo.busy) return;
@@ -362,6 +478,7 @@ export class AiChatUi {
       this.showSettings(true);
       return;
     }
+    this.activeBox = input;
     input.value = '';
     // Pressing the Ask button takes the cursor away from the box; give it back.
     input.focus();
@@ -745,10 +862,11 @@ export class AiChatUi {
       provider
         .listModels()
         .then(
-          (models) => {
+          async (models) => {
             st.models = models;
             st.note = models.length ? `${models.length} models. Pick one from the list.` : 'The server answered, but has no models.';
-            if (models.length && !current) set(models[0]);
+            // Without a choice, take the model the server already holds in memory: any other one makes it load (minutes) and push that one out.
+            if (models.length && !current) set((await provider.loadedModels?.())?.find((m) => models.includes(m)) ?? models[0]);
             this.render();
           },
           (err: unknown) => say(friendly(err)),

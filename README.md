@@ -2419,6 +2419,19 @@ puts a question to the built-in helper, but only after a person ticks **Let an
 outside AI ask the helper** in ⚙ (off by default, because it spends your own key
 or computer). The question appears in the chat marked as coming from an outside AI.
 
+**Fixing your typing.** Next to Send, both question boxes (side chat and pop-up) have
+a **✏** button: it asks the model to correct the typing mistakes in everything you
+have typed so far and puts the result back in the box (Ctrl+Z brings your original
+back; press ✏ again while it works to stop). It sends nothing and writes no code. It
+uses the local model when that is set up, otherwise the main helper. The same button
+can be pressed by the helper itself (tool `click_fix_button`, so “fix my spelling:
+…” in the chat works) and by an outside AI:
+`mms.mcp('helper', 'tools/call', { name: 'click_fix_button', arguments: { text: '…' } })`
+returns `{ before, after, changed }` (outside callers need the same tick as for
+`ask`). If you pass `text` and the box already holds something else, it refuses
+instead of overwriting what you typed. A second chat tool, `put_in_input`, puts a rewrite
+or translation in the box without correcting anything.
+
 **The second brain.** When the main helper is Gemini and a model on your own
 computer is also set up (⚙, "Second brain"; Ollama or LM Studio) and answering, the
 chat header says "🧠 second brain: …" and Gemini gets three more tools:

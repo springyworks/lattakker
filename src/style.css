@@ -1344,6 +1344,9 @@ body.ai-open .sheet-tab-panel {
 .ai-stop:hover {
   background: #f0f4f8;
 }
+.ai-fix {
+  padding: 6px 8px;
+}
 .ai-send:disabled {
   opacity: 0.5;
 }

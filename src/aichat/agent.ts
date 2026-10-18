@@ -2,7 +2,7 @@ import { friendly, makeProvider, type ChatMsg, type ToolCall } from './providers
 import { localAssistantReady, probeLocal } from './localAi';
 import { router } from '../mcp/router';
 import { getSettings, localWindow } from './config';
-import { CLIENT, runTool, setTurnTrace, toolsFor, WriteLedger, type AiContext, type ToolHost } from './tools';
+import { CLIENT, runTool, setTurnTrace, toolsFor, WriteLedger, type AiContext, type FixResult, type ToolHost } from './tools';
 import { workspace } from '../workspace';
 import { jobs } from './jobs';
 import { describeModel, isSmallModel } from './modelInfo';
@@ -40,7 +40,8 @@ How to use your tools:
 - Questions like "which example ...", "show me an example of ...", "how do I ..." are answered with read_docs (doc "examples", a few words as query). Only name a cell path that a tool returned: the example cells are NOT where you would guess.
 - If the person reports an error, look_around shows the cell's error: fix that exact error.
 - Mail: look_around says how many letters wait for you (unread_mail). Read them with check_mail, answer with send_mail (reply_to = the letter's id). The person reads and writes mail under the ✉ button.
-- Code for a cell always goes through suggest_code or write_code: code that is only written in your answer gets no button. Never claim you changed a cell unless write_code said so.`;
+- Code for a cell always goes through suggest_code or write_code: code that is only written in your answer gets no button. Never claim you changed a cell unless write_code said so.
+- When the person gives you a text whose spelling is to be corrected (it is about words, not about a cell), write NO code and touch no cell: call click_fix_button with that text (it presses the "✏ fix" button of their question box, and the corrected text appears there), then say in one short line what you changed. To rewrite or translate a text, call put_in_input with the finished text instead. If a tool fails, give the text in your answer.`;
 
 /** Where the documents live, for a model that can open links itself (the built-in helper reads them with read_docs). */
 function pointers(): string {
@@ -96,7 +97,13 @@ export class Conversation {
   private ticker = 0;
   private readonly ledger = new WriteLedger();
 
-  constructor(private readonly host: Omit<ToolHost, 'context' | 'suggest' | 'wrote' | 'ledger'>) {}
+  /** Set by the chat window: puts text into the box the last question came from. */
+  fillInput: ((text: string) => { ok: boolean; error?: string }) | null = null;
+
+  /** Set by the chat window: presses the "✏ fix" button of the question box. */
+  clickFix: ((text?: string) => Promise<FixResult>) | null = null;
+
+  constructor(private readonly host: Omit<ToolHost, 'context' | 'suggest' | 'wrote' | 'ledger' | 'fillInput' | 'clickFix'>) {}
 
   onChange(listener: () => void): void {
     this.listeners.push(listener);
@@ -122,7 +129,7 @@ export class Conversation {
 
   /** The tools' view of the app, for the local librarian (it works for the person who asked last). */
   toolHost(): ToolHost {
-    return { ...this.host, context: () => this.active, suggest: () => {}, wrote: () => {}, ledger: this.ledger };
+    return { ...this.host, context: () => this.active, suggest: () => {}, wrote: () => {}, ledger: this.ledger, fillInput: (text) => this.fillInput?.(text) ?? { ok: false, error: 'There is no question box to fill.' }, clickFix: (text) => this.clickFix?.(text) ?? Promise.resolve({ ok: false, error: 'There is no question box.' }) };
   }
 
   /** A note in the conversation that the model never sees (for example "the answer was written into A12"). */
@@ -141,6 +148,38 @@ export class Conversation {
       const next = this.messages.findIndex((m, i) => i > 0 && m.role === 'user');
       if (next < 0) break;
       this.messages.splice(0, next);
+    }
+  }
+
+  /** The model's fixed instructions: a model on this computer also gets the Bible (the rules and the README chapters that fit) up front, because it cannot open the README itself. */
+  private async systemFor(small: boolean, write: boolean, second: boolean): Promise<{ system: string; hasReadme: boolean }> {
+    const bible = getSettings().provider === 'local' ? await bibleFor(localWindow(), 0.35) : null;
+    const system = `${bible ? `${bible.text}\n\n` : ''}${buildPrompt({ small, write })}${second && !small ? LOCAL_PROMPT : ''}\n${small ? '' : `(Your memory holds ${memoryInfo().count} notes.)`}`;
+    return { system, hasReadme: !!bible?.hasReadme };
+  }
+
+  private warmedAt = 0;
+
+  /**
+   * Has Ollama read the fixed start of every conversation (the rules, the README, the tools) before the first question,
+   * so a new chat or a page reload does not wait for it. Costs nothing when Ollama still has it. Never throws, never
+   * loads a model that is not already in memory, never pushes another one out.
+   */
+  async warmUp(force = false): Promise<void> {
+    if (this.busy || getSettings().provider !== 'local') return;
+    if (!force && performance.now() - this.warmedAt < 5 * 60000 && this.warmedAt) return;
+    const provider = makeProvider();
+    if (!provider?.warm) return;
+    this.warmedAt = performance.now() || 1;
+    try {
+      await probeLocal();
+      const second = localAssistantReady();
+      const small = isSmallModel();
+      const tools = toolsFor({ small, second, tight: false });
+      const { system } = await this.systemFor(small, tools.some((t) => t.name === 'write_code'), second);
+      await provider.warm(system, tools);
+    } catch {
+      this.warmedAt = 0;
     }
   }
 
@@ -163,6 +202,8 @@ export class Conversation {
       ...this.host,
       context: () => this.active,
       ledger: this.ledger,
+      fillInput: (text) => this.fillInput?.(text) ?? { ok: false, error: 'There is no question box to fill.' },
+      clickFix: (text) => this.clickFix?.(text) ?? Promise.resolve({ ok: false, error: 'There is no question box.' }),
       suggest: (path, code, note, afterLine) => {
         proposed = true;
         this.entries.push({ kind: 'proposal', path, code, note, afterLine, state: 'open' });
@@ -204,11 +245,9 @@ export class Conversation {
         let tools = round < rounds ? toolsFor({ small, second, tight: false }) : [];
         const write = tools.some((t) => t.name === 'write_code');
         // A model on this computer has no way to open the README itself: it is given the Bible (the rules and the README chapters that fit) up front.
-        const local = getSettings().provider === 'local';
-        ammo.setWindow(local ? localWindow() : null);
-        const bible = local ? await bibleFor(localWindow(), 0.35) : null;
-        if (bible?.hasReadme) markOriented('helper');
-        const system = `${bible ? `${bible.text}\n\n` : ''}${buildPrompt({ small, write })}${second && !small ? LOCAL_PROMPT : ''}\n${small ? '' : `(Your memory holds ${memoryInfo().count} notes.)`}`;
+        ammo.setWindow(getSettings().provider === 'local' ? localWindow() : null);
+        const { system, hasReadme } = await this.systemFor(small, write, second);
+        if (hasReadme) markOriented('helper');
         // The model can only hold so much in mind. Make the conversation fit (shortening old, long tool answers first) and say so.
         let fitted = fit(system, tools, this.messages);
         if (fitted.tooBig && tools.length) {
@@ -363,6 +402,10 @@ function toolStatus(call: ToolCall): string {
       return 'reading the guide…';
     case 'suggest_code':
       return 'writing some code…';
+    case 'put_in_input':
+      return 'putting the text in your question box…';
+    case 'click_fix_button':
+      return 'pressing the ✏ fix button (the model corrects the spelling)…';
     case 'goto_cell':
       return `taking you to ${path}…`;
     case 'run_cell':

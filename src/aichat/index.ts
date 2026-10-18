@@ -106,7 +106,12 @@ export function installAiChat(deps: { surface: Surface; strip: TabStrip; say: (t
   void loadMemory().then(() => startMemorySync());
   // Is there a local model next to the main helper? Looked up now and whenever the settings change.
   void probeLocal(true);
-  onSettingsChange(() => void probeLocal(true));
+  onSettingsChange(() => {
+    void probeLocal(true);
+    void convo.warmUp(true);
+  });
+  // Let Ollama read the fixed start of the conversation now, so the first question (and every new chat) starts fast.
+  window.setTimeout(() => void convo.warmUp(), 3000);
 
   const ui = new AiChatUi(convo, {
     contextNow,
@@ -131,7 +136,10 @@ export function installAiChat(deps: { surface: Surface; strip: TabStrip; say: (t
     },
     goTo: (path) => nav.goTo(path),
   });
-  strip.onAi = () => ui.toggleSide();
+  strip.onAi = () => {
+    ui.toggleSide();
+    void convo.warmUp();
+  };
 
   aiBridge.register({
     ask(ctx: AiContext, options: AskOptions) {
@@ -146,7 +154,10 @@ export function installAiChat(deps: { surface: Surface; strip: TabStrip; say: (t
     openSettings: () => ui.showSettings(true),
     isBusy: () => convo.busy,
     isSideOpen: () => ui.sideOpen,
-    openSide: () => ui.openSide(false),
+    openSide: () => {
+      ui.openSide(false);
+      void convo.warmUp();
+    },
   });
 
   // Alt+I from anywhere (also inside an editor), or Ctrl+I outside an editor, opens the side chat; Alt+Shift+I opens the little one at the cell.
