@@ -1032,7 +1032,7 @@ one, and they all sit on the same router:
 | Server | What it is for | Tools |
 | --- | --- | --- |
 | `board`, `lab`, `examples` | the cells of a tab | `list_cells`, `get_cell`, `run_cell`, `set_code`, `click`, `flash`, `signal` |
-| `router` | the router itself | `stats`, `catalog`, `servers`, `recent`, `packets`, `analyze`, `ask`, `callers`, `reset_stats`, `trace`, `history`, `change`, `endpoints`, `self_check` |
+| `router` | the router itself | `stats`, `catalog`, `find_tools`, `servers`, `recent`, `packets`, `analyze`, `ask`, `callers`, `reset_stats`, `trace`, `history`, `change`, `endpoints`, `self_check` |
 | `code` | all the TypeScript of the page as text for a small AI ([8.11.3](#8113-the-code-of-the-page-for-a-small-ai)) | `overview`, `dump`, `search`, `read`, `list` |
 | `mail` | letters between the person, the helper, outside AI chats and cells ([8.19](#819-mail-letters-between-the-person-ais-and-cells)) | `check`, `inbox`, `read`, `send`, `reply`, `sent`, `delete`, `boxes` |
 | `docs` | the rules and the project documents: the one counter every party asks (helper, outside AI, cell code via `mcp`) | `ask_rules`, `read_docs` |
@@ -1043,7 +1043,13 @@ one, and they all sit on the same router:
 | `helper`, `local-ai` | the built-in AI helper and its second brain | `ask`, `consult` ... |
 
 Not sure what exists? Ask the router. It is the first thing to try for a person,
-a cell or an AI helper (the helper has a `discover` tool for it):
+a cell or an AI helper (the helper has a `discover` tool for it). Know roughly what you
+want but not which tool does it? Give a few words to `find_tools`: it ranks the tools of
+all servers by name and description and answers the best few, each with the server, the
+tool, a sentence on what it does and the `mcp_call` to copy (server, tool, `arguments_json`).
+With words that match nothing it names the servers instead. It is never blocked by the
+README gate; the helper, outside AIs (`mms.findTools('weather')`, the tool `find_tools`) and
+cells (`mcp.tool('router', 'find_tools', { query: 'weather' })`) all use the same one:
 
 ```ts
 const everything = await mcp.catalog()          // every server: what it is for, its tools, how many resources
@@ -2127,7 +2133,8 @@ The tools are the ones in `mms.help()`: `get_state`, `get_board`,
 `wait_for_request`, `reply_to_request`, `run_cell`, `set_mode`, `say_to_player`,
 `check_mail`, `read_mail`, `send_mail` ([8.19](#819-mail-letters-between-the-person-ais-and-cells)), `mcp_request`, `mcp_log`, `export_svg` and `ask_rules` (a few
 words in, the matching sections of the rules and the standing directives out;
-never blocked by the README gate). The assistant gets the list from the page
+never blocked by the README gate) and `find_tools` (a few words in, the best few MCP
+tools out, each with the call to copy; also never blocked). The assistant gets the list from the page
 itself, so it is always current.
 
 #### 11.3.2 Talking to the AI from a cell

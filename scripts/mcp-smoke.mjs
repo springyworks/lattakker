@@ -238,6 +238,16 @@ const wholeRules = await tool('ask_rules', {});
 check('ask_rules without a query is the whole rules text', wholeRules.ok === true && /## First contact/.test(wholeRules.text) && /## Cell code rules/.test(wholeRules.text));
 const noHit = await tool('ask_rules', { query: 'zzz qqq xyzzy' });
 check('ask_rules with words that match nothing names the sections instead', noHit.ok === true && /Nothing in the rules matches/.test(noHit.text) && /first contact/.test(noHit.text));
+// The tool finder: a few words in, the best few tools of every server out, each with a ready mcp_call.
+const foundWeather = await tool('find_tools', { query: 'weather forecast' });
+check('find_tools puts the weather tools first', foundWeather.ok === true && foundWeather.hits?.[0]?.server === 'weather', JSON.stringify(foundWeather.hits?.[0]));
+check('find_tools gives a ready mcp_call (server, tool, arguments_json)', typeof foundWeather.hits?.[0]?.mcp_call?.arguments_json === 'string' && !!foundWeather.hits[0].about);
+const foundMail = await tool('find_tools', { query: 'send a letter' });
+check('find_tools finds the mail tool for "send a letter"', (foundMail.hits ?? []).some((h) => h.server === 'mail' && h.tool === 'send'), JSON.stringify((foundMail.hits ?? []).map((h) => `${h.server}.${h.tool}`)));
+const foundNone = await tool('find_tools', { query: 'zzz qqq xyzzy' });
+check('find_tools with words that match nothing names the servers', foundNone.ok === true && foundNone.hits?.length === 0 && foundNone.servers?.length >= 10);
+const foundViaRouter = await tool('mcp_request', { server: 'router', method: 'tools/call', params: { name: 'find_tools', arguments: { query: 'rules' } } });
+check('find_tools is also a tool of the router server (cells and the helper call it there)', (foundViaRouter.result?.structuredContent?.hits ?? []).some((h) => h.server === 'docs' && h.tool === 'ask_rules'), JSON.stringify(foundViaRouter.result?.structuredContent?.hits?.map((h) => `${h.server}.${h.tool}`)));
 // The helper's own prompt sections come from the same file: the published copy must hold them too (one home).
 check('the published rules hold the helper sections (one home for every rule)', /## Helper: changing cells on its own/.test(rulesText) && /## Helper: using the tools/.test(rulesText));
 

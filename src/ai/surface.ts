@@ -63,6 +63,7 @@ READ
   mms.help()                 this guide
   mms.docs()                 { ok, urls: {...} } where to read the rules, the API typings (cell-api.d.ts), every example cell, and the README; fetch them like a coder reads a project
   mms.askRules('a few words')   the sections of the rules that answer your words, with the owner's standing directives (each with its strength); no words = the whole rules text
+  mms.findTools('a few words')   (async) the best few MCP tools for your words, over all servers: server, tool, a sentence, and the mcp_request to copy. Ask it when you do not know which tool does what
   mms.mcp('lab', 'resources/list' | 'tools/call' ..., params) (async)   send an MCP request to a tab's server through the page's router; mms.mcpLog(20) shows the last messages that crossed it
   mms.tabs()                 { current, tabs: [{ id, title, path, mode, codeCells, rows, columns }], paths } the tabs that hold code cells and which one the player sees
   mms.state()                { phase: 'setup'|'play'|'over', turn, winner, moveCount, lastMove, message, busy, redPieces, bluePieces }
@@ -95,7 +96,7 @@ ACT
 
 IDENTITY: every code cell has a uid such as c-1a2b3c4d. The uid stays with its content when cells move, swap or rows are inserted; the address changes. Keep the uid to find code again later; mms.resolve(uid) gives the current address.
 
-WebMCP: if the browser supports it, the same actions are registered as tools: get_state, get_board, legal_moves, make_move, shuffle_army, start_battle, pause_battle, resume_battle, undo_move, new_game, list_tabs, list_cells, get_cell, resolve_cell, set_cell_code, write_code_live, get_requests, wait_for_request, reply_to_request, run_cell, set_mode, say_to_player, check_mail, read_mail, send_mail, mcp_request, mcp_log, export_svg, ask_rules. mms.webmcp tells you what was registered.
+WebMCP: if the browser supports it, the same actions are registered as tools: get_state, get_board, legal_moves, make_move, shuffle_army, start_battle, pause_battle, resume_battle, undo_move, new_game, list_tabs, list_cells, get_cell, resolve_cell, set_cell_code, write_code_live, get_requests, wait_for_request, reply_to_request, run_cell, set_mode, say_to_player, check_mail, read_mail, send_mail, mcp_request, mcp_log, export_svg, ask_rules, find_tools. mms.webmcp tells you what was registered.
 An outside AI chat can use the same tools over MCP: run the dev server, open this page with ?mcp added to the URL, and connect to http://localhost:5178/mcp (see the README, section 11.3).
 The page also keeps an accessible text mirror in #mms-text (board grid, captured pieces, last move, code cells with output and errors). Each code cell is one list item: "A12: code: <first 3 lines, max 200 chars> | output: ... | error: ..."; use getCell for the whole code.
 
@@ -417,6 +418,16 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
     askRules(query?: unknown): Result {
       try {
         return ok({ text: askRules(typeof query === 'string' ? query : '', 4000), wholeFile: docUrls().rules });
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err));
+      }
+    },
+
+    /** The tool finder of the router: a few words in, the best few tools of every server out. */
+    async findTools(query?: unknown): Promise<Result> {
+      try {
+        const r = (await router.request('ai', 'router', 'tools/call', { name: 'find_tools', arguments: { query: typeof query === 'string' ? query : '' } }, outsideTrace())) as { structuredContent?: Record<string, unknown> };
+        return ok({ ...(r.structuredContent ?? {}), how: "Use a hit with mcp_request: server, method 'tools/call', params { name: tool, arguments: ... } (the arguments_json of a hit shows which arguments it needs)." });
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
       }
@@ -758,6 +769,13 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
       run: (a) => api.askRules(a.query),
     },
     {
+      name: 'find_tools',
+      description: 'Find the MCP tool you need by a few words (like "weather", "write cell code", "send a letter"). Gives the best few tools of all servers of this page: server, tool, one sentence on what it does and the call to copy. Never blocked: use it before anything else when you do not know what is possible.',
+      inputSchema: obj({ query: str('A few words about what you want to do.') }, ['query']),
+      readOnly: true,
+      run: (a) => api.findTools(a.query),
+    },
+    {
       name: 'get_state',
       description:
         'Read the Lattakker game status: phase (setup = arranging armies, play = battle, over), whose turn, winner, move count, the last move, and the message the player currently sees. Call this first and after every action.',
@@ -1026,10 +1044,11 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
     if (/request|reply/.test(name)) return 'helper';
     if (name === 'list_tabs' || name === 'mcp_log') return 'router';
     if (name === 'get_docs' || name === 'ask_rules') return 'cells';
+    if (name === 'find_tools') return 'router';
     return 'board';
   };
   // First contact: an AI that came in from outside (the bridge, WebMCP) reads the README before its first call is carried out. The rules themselves are never locked.
-  const OPEN = new Set(['read_readme', 'confirm_readme', 'introduce', 'ask_rules']);
+  const OPEN = new Set(['read_readme', 'confirm_readme', 'introduce', 'ask_rules', 'find_tools']);
   for (const t of tools) {
     const run = t.run.bind(t);
     t.run = (args) => {
@@ -1039,7 +1058,7 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
     };
   }
   for (const t of tools) {
-    if (t.name === 'mcp_request' || t.name.endsWith('_mail')) continue;
+    if (t.name === 'mcp_request' || t.name === 'find_tools' || t.name.endsWith('_mail')) continue;
     const run = t.run.bind(t);
     t.run = (args) => {
       router.notify('ai', targetOf(t.name, args), `tools/${t.name}`, args, outsideTrace());

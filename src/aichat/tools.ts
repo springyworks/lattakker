@@ -180,6 +180,11 @@ export const TOOL_DECLS: ToolDecl[] = [
     },
   },
   {
+    name: 'find_tools',
+    description: 'Find the tool you need by a few words, e.g. "weather", "write cell code", "send a letter". You get the best few tools of every MCP server: server, tool, what it does in a sentence, and the mcp_call to copy (server, tool, arguments_json). Use it when you do not know which tool does what; then call mcp_call with that line.',
+    parameters: { type: 'object', properties: { query: { type: 'string', description: 'A few words about what you want to do.' } }, required: ['query'] },
+  },
+  {
     name: 'discover',
     description: 'What this app can do over MCP, in one answer: every server (tabs, router, memory, status, weather, ollama, local-ai, helper), what it is for and the names of its tools, plus what the router has counted so far. Call it when you are not sure what is possible, then use mcp_call (tools/list shows the details of one server).',
     parameters: { type: 'object', properties: {} },
@@ -277,7 +282,7 @@ export const TOOL_DECLS: ToolDecl[] = [
 ];
 
 /** What a small model is offered: the tools for looking, going there, trying and suggesting. More tools make small models fumble. */
-const SMALL_MODEL_TOOLS = new Set(['check_mail', 'send_mail', 'look_around', 'list_cells', 'read_cell', 'goto_cell', 'flash_cell', 'run_cell', 'check_cell', 'find_free_cell', 'write_code', 'suggest_code', 'click_fix_button', 'put_in_input', 'read_docs', 'ask_rules']);
+const SMALL_MODEL_TOOLS = new Set(['check_mail', 'send_mail', 'look_around', 'list_cells', 'read_cell', 'goto_cell', 'flash_cell', 'run_cell', 'check_cell', 'find_free_cell', 'write_code', 'suggest_code', 'click_fix_button', 'put_in_input', 'read_docs', 'ask_rules', 'find_tools', 'mcp_call']);
 
 /** The shortest list that still lets a model look, go there, try and suggest: for a model whose memory is tiny. */
 const TIGHT_TOOLS = new Set(['look_around', 'read_cell', 'goto_cell', 'run_cell', 'write_code', 'suggest_code', 'click_fix_button', 'put_in_input']);
@@ -561,7 +566,7 @@ function announceDirect(host: ToolHost, name: string, args: Args, client: string
 export async function runTool(host: ToolHost, name: string, args: Args, client: string = CLIENT): Promise<string> {
   try {
     // First contact: the helper reads the README (the place of truth, on GitHub) before its first tool does anything.
-    const readsReadme = (name === 'read_docs' && (args.doc === 'readme' || args.doc === 'rules')) || name === 'ask_rules';
+    const readsReadme = (name === 'read_docs' && (args.doc === 'readme' || args.doc === 'rules')) || name === 'ask_rules' || name === 'find_tools';
     // Only the main helper is sent to the README; the second brain (local-ai) is given it in its instructions (see ai/bible.ts).
     if (client === CLIENT && !isOriented(HELPER) && !readsReadme) {
       return asText({ ...orientation('helper', name), how: 'Call read_docs with doc "readme" now (no query gives the list of its headings; a few words as query give the parts that answer them). Then repeat your call.' });
@@ -626,6 +631,10 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
         const tool = { consult_local: 'consult', teach_local: 'teach', manage_local: 'manage' }[name]!;
         const r = inner(await router.request(client, 'local-ai', 'tools/call', { name: tool, arguments: args }, turnTrace));
         return limit(asText(r.ok ? r.value : { error: r.value }));
+      }
+      case 'find_tools': {
+        const found = inner(await router.request(client, 'router', 'tools/call', { name: 'find_tools', arguments: { query: typeof args.query === 'string' ? args.query : '' } }, turnTrace));
+        return limit(asText(found.ok ? found.value : { error: found.value }));
       }
       case 'discover': {
         const catalog = inner(await router.request(client, 'router', 'tools/call', { name: 'catalog', arguments: {} }, turnTrace));

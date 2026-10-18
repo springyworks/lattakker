@@ -1,5 +1,6 @@
 import { callers } from '../ai/entry';
 import { analyze, ask as askTraffic, FILTER_HELP, FilterError, packets as pickPackets } from './analyze';
+import { findTools } from './findTools';
 import { ERR, McpError, TRACE_META, type Json, type McpRouter, type McpServer, type Trace } from './router';
 
 /**
@@ -10,6 +11,7 @@ import { ERR, McpError, TRACE_META, type Json, type McpRouter, type McpServer, t
  *   resources/read lattakker-router:///catalog   every server with its tools: what can be done in this app
  *   tools/call stats                             counters: messages, errors, rate, per server / client / method
  *   tools/call catalog                           every server, what it is for, its tools and how many resources
+ *   tools/call find_tools {query, n?}            the best few tools for a few words, each with a ready mcp_call line
  *   tools/call servers                           just the names
  *   tools/call recent {n?, server?, method?}     the last messages, optionally only one server or method
  *   tools/call reset_stats                       start counting from zero
@@ -43,6 +45,11 @@ const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'obj
 const TOOLS = [
   { name: 'stats', description: 'What the router has counted: messages, errors, messages per second (now and the last 60 s), and per server, client and method: how many, how many failed, how long they took.', inputSchema: { type: 'object', properties: {} } },
   { name: 'catalog', description: 'Everything this app can do over MCP: every server with a sentence on what it is for, its tools (name and description) and how many resources it holds. Start here when you do not know what is possible.', inputSchema: { type: 'object', properties: {} } },
+  {
+    name: 'find_tools',
+    description: 'Find the tool you need by a few words (like "weather", "write cell code", "send a letter"). Answers the best few tools of all servers: server, tool, one sentence on what it does, and a ready mcp_call (server, tool, arguments_json). Never blocked. When nothing matches it names the servers.',
+    inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'A few words about what you want to do.' }, n: { type: 'integer', description: 'How many tools at most (1 to 20, default 6).' } }, required: ['query'] },
+  },
   { name: 'servers', description: 'The names of the MCP servers of this page.', inputSchema: { type: 'object', properties: {} } },
   {
     name: 'recent',
@@ -118,12 +125,12 @@ const TOOLS = [
 export interface CatalogEntry {
   server: string;
   description: string;
-  tools: Array<{ name: string; description: string }>;
+  tools: Array<{ name: string; description: string; args?: string[] }>;
   resources: number | null;
 }
 
 /** Asks every server what it offers. A server that does not know a question is listed without that part. */
-export async function buildCatalog(router: McpRouter, as = 'router'): Promise<CatalogEntry[]> {
+export async function buildCatalog(router: McpRouter, as = 'router', withArgs = false): Promise<CatalogEntry[]> {
   const entries: CatalogEntry[] = [];
   for (const server of router.names()) {
     const entry: CatalogEntry = { server, description: router.describe(server), tools: [], resources: null };
@@ -137,8 +144,15 @@ export async function buildCatalog(router: McpRouter, as = 'router'): Promise<Ca
     }
     if (has.tools) {
       try {
-        const list = (await router.request(as, server, 'tools/list')) as { tools?: Array<{ name?: string; description?: string }> };
-        entry.tools = (list.tools ?? []).map((t) => ({ name: String(t.name ?? ''), description: String(t.description ?? '').slice(0, 200) }));
+        const list = (await router.request(as, server, 'tools/list')) as { tools?: Array<{ name?: string; description?: string; inputSchema?: { properties?: Record<string, unknown>; required?: unknown } }> };
+        entry.tools = (list.tools ?? []).map((t) => {
+          const tool: CatalogEntry['tools'][number] = { name: String(t.name ?? ''), description: String(t.description ?? '').slice(0, 200) };
+          if (withArgs) {
+            const required = Array.isArray(t.inputSchema?.required) ? (t.inputSchema.required as unknown[]) : [];
+            tool.args = Object.keys(t.inputSchema?.properties ?? {}).map((a) => (required.includes(a) ? `${a}*` : a));
+          }
+          return tool;
+        });
       } catch {
         // no tools
       }
@@ -344,6 +358,10 @@ export class RouterServer implements McpServer {
         return reply({ ...this.router.stats() });
       case 'catalog':
         return reply({ servers: await buildCatalog(this.router, from) });
+      case 'find_tools': {
+        const found = findTools(await buildCatalog(this.router, from, true), typeof args.query === 'string' ? args.query : '', typeof args.n === 'number' ? args.n : 6);
+        return reply({ ...found });
+      }
       case 'servers':
         return reply({ servers: this.router.names() });
       case 'recent': {

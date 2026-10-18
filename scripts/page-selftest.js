@@ -29,6 +29,18 @@
     t('the old option alone still allows write_code', names({ small: false, second: false }).includes('write_code'));
     config.updateSettings((s) => Object.assign(s, { autonomous: true, allowWrite: false }));
 
+    // ---- find a tool by a few words: the same finder for the helper, cell code and outside AIs
+    {
+      t('the helper has the tool find_tools (also a small model, with mcp_call to use what it finds)', names({ small: true, second: false }).includes('find_tools') && names({ small: true, second: false }).includes('mcp_call'));
+      const viaRouter = await router.request('selftest-cell', 'router', 'tools/call', { name: 'find_tools', arguments: { query: 'weather forecast' } });
+      const found = viaRouter.structuredContent;
+      t('find_tools (router) puts the weather tools first, with a ready mcp_call', found.hits.length > 0 && found.hits[0].server === 'weather' && typeof found.hits[0].mcp_call.arguments_json === 'string', JSON.stringify(found.hits[0]));
+      const none = (await router.request('selftest-cell', 'router', 'tools/call', { name: 'find_tools', arguments: { query: 'zzzqqq xyzzy' } })).structuredContent;
+      t('find_tools with words that match nothing names the servers', none.hits.length === 0 && none.servers.length >= 10, JSON.stringify(none).slice(0, 80));
+      const helperText = await toolsMod.runTool({ context: () => ({ tab: 'board' }) }, 'find_tools', { query: 'send a letter mail' });
+      t('the helper finds the mail tools by words (before the README, like ask_rules)', /"server":"mail"/.test(helperText) && /send_mail|send/.test(helperText), helperText.slice(0, 100));
+    }
+
     // ---- the rules counter: the helper asks the same loket as outside AIs
     {
       t('the helper has the tool ask_rules (also a small model)', names({ small: false, second: false }).includes('ask_rules') && names({ small: true, second: false }).includes('ask_rules'));
