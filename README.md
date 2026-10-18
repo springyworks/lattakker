@@ -2124,8 +2124,10 @@ The tools are the ones in `mms.help()`: `get_state`, `get_board`,
 `resume_battle`, `undo_move`, `new_game`, `list_tabs`, `list_cells`, `get_cell`,
 `resolve_cell`, `set_cell_code`, `write_code_live`, `get_requests`,
 `wait_for_request`, `reply_to_request`, `run_cell`, `set_mode`, `say_to_player`,
-`check_mail`, `read_mail`, `send_mail` ([8.19](#819-mail-letters-between-the-person-ais-and-cells)), `mcp_request`, `mcp_log` and `export_svg`. The assistant gets the list from the page itself, so it is
-always current.
+`check_mail`, `read_mail`, `send_mail` ([8.19](#819-mail-letters-between-the-person-ais-and-cells)), `mcp_request`, `mcp_log`, `export_svg` and `ask_rules` (a few
+words in, the matching sections of the rules and the standing directives out;
+never blocked by the README gate). The assistant gets the list from the page
+itself, so it is always current.
 
 #### 11.3.2 Talking to the AI from a cell
 
@@ -2587,6 +2589,9 @@ On GitHub the sources are
 
 - **Outside AIs** find the addresses in `llms.txt` (“Read these first”), in the page's
   `<head>`, in `mms.help()` and with `mms.docs()` (also the WebMCP tool `get_docs`).
+  `mms.askRules('a few words')` (the tool `ask_rules`) answers a question about the
+  rules with the sections and standing directives that match: one counter for every
+  AI, the same `askRules` the built-in helper's `read_docs` (doc `"rules"`) uses.
 - **The built-in helper** gets the same rules in its instructions (one file, so it
   cannot disagree with the published one) and the tool `read_docs`: `doc: "api"` with a
   query (“plot”, “CellRef flash”) gives exact signatures, `doc: "examples"` with a few

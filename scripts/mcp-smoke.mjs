@@ -229,6 +229,18 @@ const rulesText = await (await fetch(`${base}/ai/rules.md`)).text();
 check('ai/rules.md carries the standing directives with their strength scale', !/Standing directives/.test(rulesText) || (/0 to 100 %/.test(rulesText) && /\d+\. \[\d+ % · /.test(rulesText)));
 check('ai/everything.md has the same section', (await (await fetch(`${base}/ai/everything.md`)).text()).includes('Standing directives') === /Standing directives/.test(rulesText));
 
+// The rules counter: ask_rules answers a few words with the matching sections of the rules, plus the directives.
+const askedRules = await tool('ask_rules', { query: 'editor mistakes check syntax' });
+check('ask_rules finds the coder loop (check the editor until "no mistakes")', askedRules.ok === true && /check_cell/.test(askedRules.text) && /no mistakes/.test(askedRules.text), (askedRules.text ?? '').split('\n').find((l) => l.startsWith('##')) ?? '');
+check('ask_rules always carries the standing directives', !/Standing directives/.test(rulesText) || /Standing directives/.test(askedRules.text));
+check('ask_rules says where the whole file lives', typeof askedRules.wholeFile === 'string' && askedRules.wholeFile.endsWith('ai/rules.md'), askedRules.wholeFile);
+const wholeRules = await tool('ask_rules', {});
+check('ask_rules without a query is the whole rules text', wholeRules.ok === true && /## First contact/.test(wholeRules.text) && /## Cell code rules/.test(wholeRules.text));
+const noHit = await tool('ask_rules', { query: 'zzz qqq xyzzy' });
+check('ask_rules with words that match nothing names the sections instead', noHit.ok === true && /Nothing in the rules matches/.test(noHit.text) && /first contact/.test(noHit.text));
+// The helper's own prompt sections come from the same file: the published copy must hold them too (one home).
+check('the published rules hold the helper sections (one home for every rule)', /## Helper: changing cells on its own/.test(rulesText) && /## Helper: using the tools/.test(rulesText));
+
 // The scratch-tab habit (a directive): "ensure" makes the tab once, its first cell runs, and "close" removes it again.
 const tabs = (name, args) => tool('mcp_request', { server: 'tabs', method: 'tools/call', params: { name, arguments: args } }).then((r) => r.result?.structuredContent ?? r);
 const TAB = 'smoke-scratch';

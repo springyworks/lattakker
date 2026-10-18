@@ -12,7 +12,7 @@ import { McpError, router } from '../mcp/router';
 import { callers, currentCaller, outsideTrace, participant, throughChannel } from './entry';
 import { showSubtitle } from '../ui/subtitles';
 import { README_URL, isOriented, markOriented, orientation, readReadme } from './orientation';
-import { docUrls } from '../aichat/docs';
+import { docUrls, askRules } from '../aichat/docs';
 
 /**
  * Makes the page usable by external AI agents: a visually-hidden text mirror of the game, window.mms,
@@ -62,6 +62,7 @@ CELL PATHS (tabs: board, lab, examples). Cells are named like files, with / mean
 READ
   mms.help()                 this guide
   mms.docs()                 { ok, urls: {...} } where to read the rules, the API typings (cell-api.d.ts), every example cell, and the README; fetch them like a coder reads a project
+  mms.askRules('a few words')   the sections of the rules that answer your words, with the owner's standing directives (each with its strength); no words = the whole rules text
   mms.mcp('lab', 'resources/list' | 'tools/call' ..., params) (async)   send an MCP request to a tab's server through the page's router; mms.mcpLog(20) shows the last messages that crossed it
   mms.tabs()                 { current, tabs: [{ id, title, path, mode, codeCells, rows, columns }], paths } the tabs that hold code cells and which one the player sees
   mms.state()                { phase: 'setup'|'play'|'over', turn, winner, moveCount, lastMove, message, busy, redPieces, bluePieces }
@@ -94,7 +95,7 @@ ACT
 
 IDENTITY: every code cell has a uid such as c-1a2b3c4d. The uid stays with its content when cells move, swap or rows are inserted; the address changes. Keep the uid to find code again later; mms.resolve(uid) gives the current address.
 
-WebMCP: if the browser supports it, the same actions are registered as tools: get_state, get_board, legal_moves, make_move, shuffle_army, start_battle, pause_battle, resume_battle, undo_move, new_game, list_tabs, list_cells, get_cell, resolve_cell, set_cell_code, write_code_live, get_requests, wait_for_request, reply_to_request, run_cell, set_mode, say_to_player, check_mail, read_mail, send_mail, mcp_request, mcp_log, export_svg. mms.webmcp tells you what was registered.
+WebMCP: if the browser supports it, the same actions are registered as tools: get_state, get_board, legal_moves, make_move, shuffle_army, start_battle, pause_battle, resume_battle, undo_move, new_game, list_tabs, list_cells, get_cell, resolve_cell, set_cell_code, write_code_live, get_requests, wait_for_request, reply_to_request, run_cell, set_mode, say_to_player, check_mail, read_mail, send_mail, mcp_request, mcp_log, export_svg, ask_rules. mms.webmcp tells you what was registered.
 An outside AI chat can use the same tools over MCP: run the dev server, open this page with ?mcp added to the URL, and connect to http://localhost:5178/mcp (see the README, section 11.3).
 The page also keeps an accessible text mirror in #mms-text (board grid, captured pieces, last move, code cells with output and errors). Each code cell is one list item: "A12: code: <first 3 lines, max 200 chars> | output: ... | error: ..."; use getCell for the whole code.
 
@@ -411,6 +412,15 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
   const api = {
     help: (): string => HELP,
     docs: (): Result => ok({ urls: docUrls(), order: ['rules', 'api', 'examples', 'labDemos', 'readme'], howTo: 'Read rules first, look up exact names in api, find a similar cell in examples or labDemos and follow its style. The urls under "index" and "everything" bundle them.' }),
+
+    /** The rules counter: a few words in, the matching sections of the rules and the standing directives out. */
+    askRules(query?: unknown): Result {
+      try {
+        return ok({ text: askRules(typeof query === 'string' ? query : '', 4000), wholeFile: docUrls().rules });
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err));
+      }
+    },
 
     state: (): Result => ok(stateData()),
 
@@ -741,6 +751,13 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
       run: () => api.docs(),
     },
     {
+      name: 'ask_rules',
+      description: 'Ask the rules a question: give a few words (like "write in somebody\'s cell" or "personal information") and get the sections of the rules for AI helpers that answer them, with the owner\'s standing directives and their strengths. Without a query, the whole rules text. One counter for every AI: the built-in helper reads the same file. Never blocked: you may ask the rules before anything else.',
+      inputSchema: obj({ query: str('A few words about what you want to know. Leave out for the whole rules text.') }),
+      readOnly: true,
+      run: (a) => api.askRules(a.query),
+    },
+    {
       name: 'get_state',
       description:
         'Read the Lattakker game status: phase (setup = arranging armies, play = battle, over), whose turn, winner, move count, the last move, and the message the player currently sees. Call this first and after every action.',
@@ -1008,11 +1025,11 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
     if (/cell|code|^run_cell$/.test(name)) return tab && tab !== 'all' ? tab : 'board';
     if (/request|reply/.test(name)) return 'helper';
     if (name === 'list_tabs' || name === 'mcp_log') return 'router';
-    if (name === 'get_docs') return 'cells';
+    if (name === 'get_docs' || name === 'ask_rules') return 'cells';
     return 'board';
   };
-  // First contact: an AI that came in from outside (the bridge, WebMCP) reads the README before its first call is carried out.
-  const OPEN = new Set(['read_readme', 'confirm_readme', 'introduce']);
+  // First contact: an AI that came in from outside (the bridge, WebMCP) reads the README before its first call is carried out. The rules themselves are never locked.
+  const OPEN = new Set(['read_readme', 'confirm_readme', 'introduce', 'ask_rules']);
   for (const t of tools) {
     const run = t.run.bind(t);
     t.run = (args) => {

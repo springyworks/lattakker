@@ -68,18 +68,44 @@ export function standingDirectives(): string {
   }
 }
 
+/** The placeholders of rules.md made real: links to this page and to GitHub. */
+const fill = (text: string): string => text.replaceAll('{{SITE}}ai/', `${site()}ai/`).replaceAll('{{GITHUB_README_RAW}}', `${GITHUB_RAW}README.md`).replaceAll('{{GITHUB_README}}', `${GITHUB}README.md`);
+
 /** The rules the built-in helper is given (the same file is published for outside AIs). */
 export const RULES = {
   first: (parts['first contact'] ?? '').replaceAll('{{GITHUB_README_RAW}}', `${GITHUB_RAW}README.md`).replaceAll('{{GITHUB_README}}', `${GITHUB}README.md`),
   behave: parts['how to behave'] ?? '',
   coder: parts['work like a coder'] ?? '',
   cell: parts['cell code rules'] ?? '',
+  /** One "## Heading" section of rules.md, by its heading. Empty when the heading is not there (tests/rulesConsistency guards every name the code uses). */
+  section: (heading: string): string => fill(parts[heading.toLowerCase()] ?? ''),
   get all(): string {
-    const text = rulesRaw.replaceAll('{{SITE}}ai/', `${site()}ai/`).replaceAll('{{GITHUB_README_RAW}}', `${GITHUB_RAW}README.md`).replaceAll('{{GITHUB_README}}', `${GITHUB}README.md`);
+    const text = fill(rulesRaw);
     const directives = standingDirectives();
     return directives ? `${text}\n\n## Standing directives\n\n${directives}\n` : text;
   },
 };
+
+/**
+ * The one counter of the rules: asks the rules a few words and answers with the sections that match best, with
+ * every standing directive (they always count). Without a query, the whole rules text. Serves the built-in
+ * helper (read_docs doc "rules") and outside AIs (the ask_rules tool) the same answer.
+ */
+export function askRules(query: string, budget: number): string {
+  const words = terms(query ?? '');
+  if (!words.length) return cut(RULES.all, budget);
+  const directives = standingDirectives();
+  const tail = directives ? `\n\n## Standing directives (they always count)\n${directives}` : '';
+  const head = `From the rules for AI helpers (the whole file: ${docUrls().rules}):\n\n`;
+  const ranked = Object.entries(parts)
+    .map(([title, text]) => ({ title, text, s: score({ title, text }, words) }))
+    .filter((x) => x.s > 0)
+    .sort((a, b) => b.s - a.s);
+  if (!ranked.length) return fill(cut(`${head}Nothing in the rules matches "${query}". The sections: ${Object.keys(parts).join('; ')}.${tail}`, budget));
+  const room = Math.max(600, budget - tail.length - head.length);
+  const body = ranked.slice(0, 3).map((x) => `## ${x.title}\n${x.text}`).join('\n\n');
+  return fill(`${head}${cut(body, room)}${tail}`);
+}
 
 // ---------------------------------------------------------------- chunks
 
@@ -221,7 +247,7 @@ function outline(doc: string, chunks: Chunk[], budget: number): string {
  */
 export async function readDocs(args: { doc: string; query?: string; path?: string }, budget: number): Promise<string> {
   const doc = args.doc.toLowerCase();
-  if (doc === 'rules') return cut(RULES.all, budget);
+  if (doc === 'rules') return askRules(args.query ?? '', budget);
   if (doc !== 'api' && doc !== 'examples' && doc !== 'readme') return JSON.stringify({ error: `doc must be api, examples, readme or rules (not "${args.doc}")`, urls: docUrls() });
   let chunks: Chunk[];
   try {

@@ -144,7 +144,7 @@ export const TOOL_DECLS: ToolDecl[] = [
   {
     name: 'read_docs',
     description:
-      'Read the project like a coder: doc "api" = the exact names and signatures of everything a cell can use (print, plot, grid, at, on, every, game, input ...); doc "examples" = the real example cells the children start with, with comments; doc "readme" = the README by topic; doc "rules" = the rules for helpers. Give "query" (a few words, e.g. "grid click" or "timer every") to get the best matches; "path" (e.g. /lab/A16) to get one example cell whole; with neither you get an outline. Before writing code: look up the names in "api", find a similar cell in "examples", follow its style.',
+      'Read the project like a coder: doc "api" = the exact names and signatures of everything a cell can use (print, plot, grid, at, on, every, game, input ...); doc "examples" = the real example cells the children start with, with comments; doc "readme" = the README by topic; doc "rules" = the rules for helpers and the owner\'s standing directives (a query gives the sections that answer it). Give "query" (a few words, e.g. "grid click" or "timer every") to get the best matches; "path" (e.g. /lab/A16) to get one example cell whole; with neither you get an outline. Before writing code: look up the names in "api", find a similar cell in "examples", follow its style.',
     parameters: {
       type: 'object',
       properties: {

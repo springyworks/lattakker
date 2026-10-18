@@ -26,36 +26,19 @@ const BASE_PROMPT = `You are the helper inside "Lattakker Sheet", a spreadsheet 
 
 You ARE connected to the app and you have tools to use it (look at the list your tools come with). Use them instead of guessing, and never say you cannot reach the app or must ask the person to run code for you.`;
 
-const CHANGE_RULE_ASK = `The only thing you cannot do yourself is change a cell: you offer code with suggest_code and the person presses the button. If the person asks you to write and run code on your own, offer it with suggest_code and say that a grown-up can switch on "Let the helper work on its own" in the settings (the ⚙ button).`;
-const CHANGE_RULE_AUTONOMOUS = `You work on your own, like a careful programmer, and the person watches. To make or change code: look up the names in read_docs (doc "api"), find a similar cell in read_docs (doc "examples", a few words as query), look at the cell with read_cell when it already has code, then write it with write_code (find_free_cell gives an empty spot; mode "append" adds below code that is already there, and the person has an undo button). Every write_code answer tells you two things: "problems" (what the code editor underlines, with line numbers: the same list the person sees) and what the cell printed or its error when it ran. Then repeat until it works: (1) if there are problems, fix them all and write the COMPLETE code again on the same path; (2) if there are none, look at what it printed or showed and compare it with what the person asked; (3) if it is wrong or empty, change the code and write it again. check_cell asks the editor about a draft or an existing cell without writing, run_cell runs a cell again. Do not stop at the first try and do not hand the work back: keep going until the editor has no mistakes and the output is right, or until your writes run out, and then say honestly what still fails. Never change somebody else's code except by adding below it (mode "append"); suggest_code is for changes to it.`;
-const CHANGE_RULE_WRITE = `You may write code yourself, but only in an EMPTY cell: look up the names in read_docs (doc "api"), find a similar cell in read_docs (doc "examples", a few words as query), then find_free_cell and write_code (the person watches it being typed, and has an undo button). You see what it printed or its error: if there is an error, fix it with write_code on the same path (at most twice), then tell the person what happened. A cell that already has code is never changed by you: use suggest_code for it.`;
-
-/** What only the built-in helper's tools make possible; the general rules come from ai-docs/rules.md, the same file outside AIs read. */
-const TOOL_HINTS = `
-How to use your tools:
-- Use look_around when the question is about "this cell" or an error. When the question has a line number, "here" means that line: look_around shows the code with line numbers. To add code there, use suggest_code with after_line.
-- A cell name like A16 exists in every tab. If it is empty in the person's tab, the tools use the other tab that has code there and tell you which; say the full path (like /lab/A16) in your answer.
-- "go to", "show me", "take me to", "focus on" a cell: call goto_cell. It moves the screen and makes the cell blink.
-- Before you write or explain code, use read_docs: doc "api" with a query for exact names and signatures; doc "examples" with a query to find a working cell like the one you need (its path can be opened with goto_cell); doc "readme" for how the app works.
-- Questions like "which example ...", "show me an example of ...", "how do I ..." are answered with read_docs (doc "examples", a few words as query). Only name a cell path that a tool returned: the example cells are NOT where you would guess.
-- If the person reports an error, look_around shows the cell's error: fix that exact error.
-- Mail: look_around says how many letters wait for you (unread_mail). Read them with check_mail, answer with send_mail (reply_to = the letter's id). The person reads and writes mail under the ✉ button.
-- Code for a cell always goes through suggest_code or write_code: code that is only written in your answer gets no button. Never claim you changed a cell unless write_code said so.
-- When the person gives you a text whose spelling is to be corrected (it is about words, not about a cell), write NO code and touch no cell: call click_fix_button with that text (it presses the "✏ fix" button of their question box, and the corrected text appears there), then say in one short line what you changed. To rewrite or translate a text, call put_in_input with the finished text instead. If a tool fails, give the text in your answer.`;
+// Every rule text comes from ai-docs/rules.md, the one home of the rules (tests/rulesConsistency guards these names).
+const CHANGE_RULE_ASK = (): string => RULES.section('Helper: changing cells by asking');
+const CHANGE_RULE_AUTONOMOUS = (): string => RULES.section('Helper: changing cells on its own');
+const CHANGE_RULE_WRITE = (): string => RULES.section('Helper: changing cells, empty ones only');
+const TOOL_HINTS = (): string => RULES.section('Helper: using the tools');
+const MEMORY_RULES = (): string => RULES.section('Helper: memory and discovery');
+const SMALL_RULES = (): string => RULES.section('Helper: small models');
 
 /** Where the documents live, for a model that can open links itself (the built-in helper reads them with read_docs). */
 function pointers(): string {
   const u = docUrls();
   return `\nDocuments (read them with read_docs; if you can open links, these are the addresses): index ${u.index} · API ${u.api} · examples ${u.examples} · README ${u.readme}`;
 }
-
-const MEMORY_RULES = `
-- You have a memory that survives reloads (recall, remember, tidy_memory). Recall it when the person refers to earlier work or goals; remember lasting, useful things (one idea per note, short, no personal information); tidy it when asked.
-- If you are not sure what the app can do, call discover: it lists every MCP server and tool (the weather, the model on this computer called ollama, the memory, the router's statistics ...). mcp_call talks MCP to them. Before you rely on the local model, ask mcp_call ollama tools/call status: it says in plain words if the model server is missing. Cell code can use the same things: weather, ollama, input and mcp (read_docs doc "api" has them).
-- What you know and keep, if you are asked: the first time you know nothing about the person or their sheet, only these instructions, their question, the cell they asked from and what your tools show. Your memory (recall, remember) is stored in this browser only: it survives reloads but does not follow the person to another computer, another browser or another address. This chat is forgotten on reload or when a new conversation starts.`;
-
-const SMALL_RULES = `
-- Your list of tools is short on purpose. Use one tool at a time, and only the names on your list. Do the shortest thing that answers the question.`;
 
 /** The owner's standing directives (with their strengths), for every model: a small one gets them too. */
 function directives(): string {
@@ -65,11 +48,10 @@ function directives(): string {
 
 /** The fixed instructions, shaped for this model: the shared rules (ai-docs/rules.md), how to use the tools, and where the documents are. A small model gets no memory tools. */
 export function buildPrompt(options: { small: boolean; write: boolean }): string {
-  return `${BASE_PROMPT} ${options.write ? (getSettings().autonomous ? CHANGE_RULE_AUTONOMOUS : CHANGE_RULE_WRITE) : CHANGE_RULE_ASK}\n\nFirst contact (your very first tool call: read_docs with doc "readme"):\n${RULES.first}\n\nRules (the same for every AI that helps here):\n${RULES.behave}\n\nHow to work:\n${RULES.coder}${directives()}\n\nCell code:\n${RULES.cell}\n${TOOL_HINTS}${options.small ? SMALL_RULES : MEMORY_RULES}${pointers()}`;
+  return `${BASE_PROMPT} ${options.write ? (getSettings().autonomous ? CHANGE_RULE_AUTONOMOUS() : CHANGE_RULE_WRITE()) : CHANGE_RULE_ASK()}\n\nFirst contact (your very first tool call: read_docs with doc "readme"):\n${RULES.first}\n\nRules (the same for every AI that helps here):\n${RULES.behave}\n\nHow to work:\n${RULES.coder}${directives()}\n\nCell code:\n${RULES.cell}\n\nHow to use your tools:\n${TOOL_HINTS()}\n${options.small ? SMALL_RULES() : MEMORY_RULES()}${pointers()}`;
 }
 
-const LOCAL_PROMPT = `
-- A second, smaller model lives on this computer and keeps the memory and the database (consult_local, teach_local, manage_local). Use consult_local for cheap lookups, summaries and drafts, and teach_local to hand it lasting knowledge to store, so it is kept on this computer and not only in this chat. It is less clever than you: give it clear, self-contained text.`;
+const LOCAL_PROMPT = (): string => `\n${RULES.section('Helper: the second brain')}`;
 
 export type Entry =
   | { kind: 'user'; text: string; where: string; path: string | null }
@@ -154,7 +136,7 @@ export class Conversation {
   /** The model's fixed instructions: a model on this computer also gets the Bible (the rules and the README chapters that fit) up front, because it cannot open the README itself. */
   private async systemFor(small: boolean, write: boolean, second: boolean): Promise<{ system: string; hasReadme: boolean }> {
     const bible = getSettings().provider === 'local' ? await bibleFor(localWindow(), 0.35) : null;
-    const system = `${bible ? `${bible.text}\n\n` : ''}${buildPrompt({ small, write })}${second && !small ? LOCAL_PROMPT : ''}\n${small ? '' : `(Your memory holds ${memoryInfo().count} notes.)`}`;
+    const system = `${bible ? `${bible.text}\n\n` : ''}${buildPrompt({ small, write })}${second && !small ? LOCAL_PROMPT() : ''}\n${small ? '' : `(Your memory holds ${memoryInfo().count} notes.)`}`;
     return { system, hasReadme: !!bible?.hasReadme };
   }
 
