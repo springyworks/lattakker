@@ -22,6 +22,7 @@ import { ERR, McpError, TRACE_META, type Json, type McpRouter, type McpServer, t
  *   tools/call ask {question}                    "what is going on?", "any errors?", "who is busiest?", "what does ai-chat do?"
  *
  *   tools/call callers                           outside AIs that called in: client, version, model, user agent, how often
+ *   tools/call runaway                           who is held back because they were running away, and for how long
  *   tools/call pending                           requests sent and not answered yet: since when, deadline, and how much longer it is worth waiting (time, probability)
  *   tools/call exercise {seconds?, per_second?}  the smoke test inside the router: lively read-only traffic to every server, then a report (changes nothing)
  *
@@ -81,6 +82,11 @@ const TOOLS = [
     description:
       'The requests that were sent and are not answered yet. For each: who asked whom for what, since when (Unix ms), the deadline (Unix ms), how long it has waited, and an estimate of how much longer it is worth waiting as a pair: waitMs and p ("wait waitMs more and p of the similar answers in the history were in by then"). ' +
       'The estimate comes from the times of earlier answers of the same kind, it is history and not a promise, and it is null when there is too little history. Slow requests also send a notifications/progress to the asker by themselves.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'runaway',
+    description: 'Who is held back right now because they were running away (the same call again and again, or far too many calls), why, and for how many more seconds. A held caller gets a refusal that says so. The person ends it at once by pressing the home square (the corner cell of any tab). Never blocked.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -386,6 +392,8 @@ export class RouterServer implements McpServer {
         return reply({ callers: callers() });
       case 'pending':
         return reply({ now: Date.now(), pending: this.router.pending(), lastExercise: this.lastExercise });
+      case 'runaway':
+        return reply({ held: this.router.holding() });
       case 'exercise':
         return reply({ ...(await this.exercise(args, trace)) });
       case 'trace': {

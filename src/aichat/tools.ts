@@ -592,6 +592,9 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
     if (client === CLIENT && !isOriented(HELPER) && !readsReadme) {
       return asText({ ...orientation('helper', name), how: 'Call read_docs with doc "readme" now (no query gives the list of its headings; a few words as query give the parts that answer them). Then repeat your call.' });
     }
+    // Run-away: a helper that calls the same tool again and again, or far too many, is stopped with words it can obey (see McpRouter.admit).
+    const refusal = router.admit(client, turnTrace, `${name} ${JSON.stringify(args).slice(0, 120)}`);
+    if (refusal) return asText({ error: refusal });
     announceDirect(host, name, args, client);
     switch (name) {
       case 'look_around': {

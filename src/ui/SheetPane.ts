@@ -1,4 +1,5 @@
 import { CellHover } from './CellHover';
+import { cutRunaway } from '../home';
 import { aiBridge } from '../aichat/bridge';
 import { InternalEvent, type Cell, type MaxPopupMenu, type PopupMenuHandler } from '@maxgraph/core';
 import type { Sheet } from '../sheet/Sheet';
@@ -330,7 +331,9 @@ export class SheetPane {
         } else if (hooks.onOtherClick?.(id, cell, evt)) {
           return;
         } else if (id === 'hdr:corner') {
+          const cut = cutRunaway();
           hooks.onCorner();
+          if (cut) hooks.say(cut, 'info');
         } else if (id.startsWith('hdr:c')) {
           const col = Number(id.slice(5));
           for (let r = 0; r < sheet.rowCount; r++) sheet.flash(formatAddress(col, r), THEME.flash, 400);

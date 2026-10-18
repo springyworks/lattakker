@@ -25,6 +25,8 @@ export const ERR = {
   internal: -32603,
   /** The deadline of a request passed before the answer came (MCP: requests SHOULD have timeouts, with a maximum). */
   timeout: -32001,
+  /** The caller was running away (the same call again and again, or far too many calls) and is held back for a while. */
+  runaway: -32002,
 } as const;
 
 export class McpError extends Error {
@@ -148,6 +150,20 @@ const LATENCY_KEPT = 60;
 const LATENCY_KEYS = 300;
 const DEADLINE_META = 'lattakker/deadlineMs';
 
+/**
+ * Run-away: a caller (a cell with a timer, an outside AI, the helper) that keeps asking and never stops. Within RUNAWAY_WINDOW_MS the same call
+ * RUNAWAY_REPEAT times, or RUNAWAY_BURST calls of any kind, makes the router hold the caller for HOLD_MS: its calls are refused with a plain
+ * explanation, so it can stop by itself and tell the person. The home square (the corner cell of every tab) cuts at once: see cut().
+ */
+const RUNAWAY_WINDOW_MS = 10_000;
+const RUNAWAY_REPEAT = 40;
+const RUNAWAY_BURST = 200;
+const HOLD_MS = 30_000;
+/** Pressing home holds the callers that made at least this many calls in the window (a caller that asked once or twice was not running away). */
+const ACTIVE_CALLS = 5;
+/** The router's own probes (the exercise, the self check) are traffic on purpose. */
+const isProbe = (from: string): boolean => from === 'exercise' || from.startsWith('router-');
+
 /** One request on its way: sent, not answered. */
 interface Flight {
   trace: Trace;
@@ -162,6 +178,17 @@ interface Flight {
   startedPerf: number;
   acks: number;
   timers: Array<ReturnType<typeof setTimeout>>;
+  /** Stops the wait now: the asker gets this error and whatever the server answers later is thrown away. */
+  abort?: (err: McpError) => void;
+}
+
+/** A caller that is held back, and why. */
+export interface Hold {
+  who: string;
+  reason: string;
+  /** Unix ms. */
+  since: number;
+  until: number;
 }
 
 export interface PendingRequest {
@@ -315,6 +342,10 @@ export class McpRouter {
   private readonly buckets: number[] = new Array<number>(HISTORY_SECONDS).fill(0);
   private bucketSecond = Math.floor(performance.now() / 1000);
   private statsSince = 0;
+  /** When each caller (and each call) was made lately, and who is held. */
+  private readonly activity = new Map<string, number[]>();
+  private readonly repeats = new Map<string, number[]>();
+  private readonly holds = new Map<string, Hold>();
 
   register(server: McpServer): void {
     this.servers.set(server.name, server);
@@ -401,6 +432,9 @@ export class McpRouter {
     const own = this.metaTrace(wire);
     const asked = this.askedWait(wire);
     this.stripMeta(wire, own);
+    // The router itself can always be asked (to see why a caller is held); everything else goes through the run-away check.
+    const refusal = to === 'router' ? null : this.admit(from, own ?? via, `${to} ${method} ${brief(wire)}`);
+    if (refusal) throw new McpError(ERR.runaway, refusal);
     const started = performance.now();
     const base = this.stamp(from, via, own);
     const now = Date.now();
@@ -453,6 +487,10 @@ export class McpRouter {
         );
       }, Math.max(0, flight.trace.deadline - Date.now()));
       flight.timers.push(timer);
+      flight.abort = (err) => {
+        clearTimeout(timer);
+        reject(err);
+      };
       try {
         Promise.resolve(work()).then(
           (value) => {
@@ -536,6 +574,79 @@ export class McpRouter {
         ...etaMeta(elapsedMs, f.trace.deadline, estimate(this.latency.get(f.key) ?? [], elapsedMs)),
       };
     });
+  }
+
+  /**
+   * Is this caller allowed to make this call now? Returns null, or the words that refuse it. Every way into the page asks this: the router's
+   * requests, the tools of the helper, the tools an outside AI calls over /mcp or WebMCP. `what` is the call as text (the same text again
+   * and again is a run-away). The person ('you') is never held: a new question from the person starts clean, even for the helper that was held.
+   */
+  admit(from: string, via: Pick<Trace, 'origin' | 'startedAt'> | undefined, what: string): string | null {
+    if (isProbe(from)) return null;
+    const fromPerson = via?.origin === 'you';
+    const who = via && !fromPerson ? via.origin : from;
+    const now = Date.now();
+    const hold = this.holds.get(who);
+    if (hold) {
+      if (hold.until <= now || (fromPerson && (via?.startedAt ?? 0) > hold.since)) this.holds.delete(who);
+      else return this.refusal(hold, now);
+    }
+    if (who === 'you') return null;
+    const burst = this.tick(this.activity, who, now);
+    const same = this.tick(this.repeats, `${who}|${what.slice(0, 160)}`, now);
+    const reason = same >= RUNAWAY_REPEAT ? `the same call ${same} times in ${RUNAWAY_WINDOW_MS / 1000} s` : burst >= RUNAWAY_BURST ? `${burst} calls in ${RUNAWAY_WINDOW_MS / 1000} s` : '';
+    if (!reason) return null;
+    const held = this.hold(who, reason, now);
+    this.broadcast('router', 'notifications/runaway', { who, reason, heldForSeconds: HOLD_MS / 1000 });
+    return this.refusal(held, now);
+  }
+
+  private tick(map: Map<string, number[]>, key: string, now: number): number {
+    let times = map.get(key);
+    if (!times) {
+      if (map.size >= MAX_KEYS) map.delete(map.keys().next().value as string);
+      map.set(key, (times = []));
+    }
+    times.push(now);
+    while (times.length && times[0] < now - RUNAWAY_WINDOW_MS) times.shift();
+    return times.length;
+  }
+
+  private hold(who: string, reason: string, now: number): Hold {
+    const held: Hold = { who, reason, since: now, until: now + HOLD_MS };
+    this.holds.set(who, held);
+    return held;
+  }
+
+  private refusal(hold: Hold, now: number): string {
+    return `Stopped: ${hold.who} was running away (${hold.reason}), so its calls are refused for ${Math.max(1, Math.ceil((hold.until - now) / 1000))} more seconds. Do not repeat the call: stop what you are doing, tell the person what you were trying to do and ask what they want. The person can press the home square (the corner cell) to start clean.`;
+  }
+
+  /** Who is held back now (see admit). */
+  holding(): Array<Hold & { secondsLeft: number }> {
+    const now = Date.now();
+    for (const [who, h] of this.holds) if (h.until <= now) this.holds.delete(who);
+    return [...this.holds.values()].map((h) => ({ ...h, secondsLeft: Math.ceil((h.until - now) / 1000) }));
+  }
+
+  /**
+   * The cut of the home square: every request that is waiting for an answer is stopped (its asker gets an error that says so), and whoever has been
+   * calling busily lately is held back for a while, so a loop that nobody watches stops and the page is usable again. The person is never held.
+   */
+  cut(why: string): { stopped: number; held: string[] } {
+    const now = Date.now();
+    const flights = [...this.flights.values()];
+    for (const f of flights) f.abort?.(new McpError(ERR.runaway, `Stopped: ${why}. Do not repeat the call; tell the person what you were trying to do.`));
+    const held: string[] = [];
+    for (const [key, times] of this.activity) {
+      const lately = times.filter((t) => t >= now - RUNAWAY_WINDOW_MS).length;
+      if (lately >= ACTIVE_CALLS && key !== 'you') {
+        this.hold(key, why, now);
+        held.push(key);
+      }
+    }
+    if (flights.length || held.length) this.broadcast('router', 'notifications/runaway', { why, stoppedRequests: flights.length, held });
+    return { stopped: flights.length, held: [...new Set([...held, ...this.holds.keys()])] };
   }
 
   /** A server tells one client something. A notification has no answer. Returns its trace, for a message that follows from it. */

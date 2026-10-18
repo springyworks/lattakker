@@ -1054,6 +1054,10 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
     t.run = (args) => {
       const who = participant();
       if (who && !OPEN.has(t.name) && !isOriented(who)) return fail(`Read the README first (${README_URL}); your call to ${t.name} was not carried out.`, orientation(who, t.name));
+      // Run-away: an outside AI that repeats a call (or makes far too many) is refused with words it can obey; the person's home square starts clean.
+      const caller = who && !OPEN.has(t.name) ? currentCaller() : null;
+      const refusal = caller ? router.admit(caller.origin, undefined, `${t.name} ${JSON.stringify(args ?? {}).slice(0, 120)}`) : null;
+      if (refusal) return fail(refusal);
       return run(args);
     };
   }

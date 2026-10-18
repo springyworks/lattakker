@@ -1256,6 +1256,8 @@ arrived, and `p` is the share that really had. With fewer than 5 answers in the 
 nearly everything seen, the estimate is `null`: it says so instead of making a number up. A client that cannot receive notifications (an outside AI over HTTP) asks
 `mcp.tool('router', 'pending')` (or `mcp.pending()` in a cell): every request that is on its way, since when (Unix ms), until when, and the estimate.
 
+**Run-away.** Whoever calls (a cell with a timer, the helper, an outside AI over `/mcp` or WebMCP) is watched by the router: the same call 40 times in 10 seconds, or 200 calls of any kind, and that caller is held back for 30 seconds, its calls refused with words that say why (error code -32002). `mcp.tool('router', 'runaway')` shows who is held. The home square, the corner cell of every tab, cuts at once: waiting requests are stopped, the helper's work is cancelled and busy callers are held, so the page is usable again. The person is never held, and a new question from the person starts clean.
+
 **The smoke test in the router.** The router tool `exercise {seconds?, per_second?, servers?, wait?}` sends harmless, read-only requests to every server for a few
 seconds (ping, lists, counters, a tiny search), so the switchboard of the Monitor lights up, and then reports: how many were answered, how fast per server, and
 five checks of its own (nothing lost, every answer carried the moment of the initiative, all the same moment, nothing left waiting, no deadline hit). It only sends what is on
