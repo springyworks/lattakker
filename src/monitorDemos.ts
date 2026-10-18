@@ -280,8 +280,8 @@ mcp.tap((m) => {
 })
 
 // A quiet heartbeat: one ping every 10 seconds, so the drawing shows the router is alive without nagging. This is the ONLY regular
-// traffic of this cell: change '10s' to slow it down or speed it up.
-every('10s', () => mcp.call('status', 'ping'))
+// traffic of this cell: change '10s' to slow it down or speed it up. If there is no 'status' service, the router itself is pinged.
+every('10s', () => mcp.call('status', 'ping').catch(() => mcp.call('router', 'ping')))
 
 // The numbers at the bottom of the drawing.
 const label = pic.write(40, 858, '', { fill: '#475569', 'font-size': 12, 'font-family': 'monospace' })
