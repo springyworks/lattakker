@@ -87,6 +87,11 @@ export class SheetPane {
         sheet.setCode(address, code);
         hooks.say(`Restarted ${address} ▶ Its timers stopped and the code runs from the top.`, 'info');
       },
+      onStop: (address) => {
+        sheet.stopTasks(address);
+        sheet.notifyChanged(address);
+        hooks.say(`Stopped the timers and watchers in ${address}.`, 'good');
+      },
       onOpen: (address) => {
         this.openedAddress = address;
         // However the editor was opened (menu, Enter, helper, link), the cell under it wears the pick frame, as after a click.
@@ -427,6 +432,7 @@ export class SheetPane {
         if (!isBoard) menu.addItem(`❓ Help for ${address}`, null, () => showHelp('cell', { tab: sheet.id, address }));
         const at = { x: evt.clientX, y: evt.clientY };
         menu.addItem('⤢ Fit to view', null, () => void sheet.fitToView(at));
+        menu.addItem('⤢ Show all', null, () => void sheet.showAll());
         if (!isBoard && sheet.getPicked().length > 1 && sheet.isPicked(sheet.ownerOf(address))) {
           for (const item of this.groupItems()) {
             if (item.separator) menu.addSeparator();
@@ -443,6 +449,8 @@ export class SheetPane {
               sheet.notifyChanged(address);
               hooks.say(`Stopped the timers and watchers in ${address}.`, 'good');
             });
+          } else if (sheet.dataAt(address)?.code.trim()) {
+            menu.addItem(`▶ Start timers & watchers in ${address}`, null, () => this.restartCell(address));
           }
           const d = sheet.dataAt(address);
           if (d?.code) {
@@ -487,7 +495,7 @@ export class SheetPane {
       const all = sheet.ownersIn(0, 0, sheet.colCount - 1, sheet.rowCount - 1).filter((a) => sheet.dataAt(a)?.code.trim());
       const timers = all.filter((a) => sheet.taskCount(a) > 0);
       menu.addItem('⌂ Back to the first screen', null, () => hooks.onCorner());
-      menu.addItem('⤢ Fit everything in view', null, () => void sheet.fitToView(null), undefined, undefined, all.length > 0);
+      menu.addItem('⤢ Show all', null, () => void sheet.showAll(), undefined, undefined, all.length > 0);
       menu.addItem('100% zoom', null, () => sheet.zoomReset(), undefined, undefined, sheet.graph.getView().getScale() !== 1);
       menu.addSeparator();
       menu.addItem(`Pick every block (${all.length})`, null, () => {
@@ -521,6 +529,7 @@ export class SheetPane {
 
     menu.addItem(`Pick all of ${name}`, null, pickLine);
     menu.addItem(`⤢ Fit ${name} in view`, null, () => rect && void sheet.fitRect(rect), undefined, undefined, !!rect);
+    menu.addItem('⤢ Show all', null, () => void sheet.showAll());
     menu.addSeparator();
     menu.addItem(`▶ Restart the ${owners.length} cells with code`, null, () => {
       flashAll(owners);
@@ -628,6 +637,11 @@ export class SheetPane {
     );
   }
 
+  private restartCell(address: string): void {
+    this.sheet.setCode(address, this.sheet.dataAt(address)?.code ?? '');
+    this.hooks.say(`Started ${address} ▶ The code runs from the top, with its timers and watchers.`, 'info');
+  }
+
   private menuItemsFor(address: string): MenuItem[] | null {
     const sheet = this.sheet;
     if (sheet.isBoardAddress(address) || this.hooks.reserved?.(address)) return null;
@@ -706,6 +720,8 @@ export class SheetPane {
             this.hooks.say(`Stopped the timers and watchers in ${address}.`, 'good');
           },
         });
+      } else if (hasCode) {
+        items.push({ label: '▶ Start timers & watchers', title: 'Runs the code from the top, which starts its timers and event watchers again.', onSelect: () => this.restartCell(address) });
       }
     }
     items.push({ separator: true });

@@ -1,5 +1,5 @@
 import { InternalEvent } from '@maxgraph/core';
-import type { Sheet } from '../sheet/Sheet';
+import { MIN_SCALE, type Sheet } from '../sheet/Sheet';
 import { workspace } from '../workspace';
 
 const STEP = 1.15;
@@ -12,7 +12,6 @@ const PINCH_MAX = 0.06;
 const MAX_LEAD = 1.5;
 /** The glide: the picture covers 63% of the way to the aim every this many milliseconds, and never goes past it. */
 const GLIDE_MS = 70;
-const MIN_SCALE = 0.4;
 const MAX_SCALE = 2.5;
 
 /**

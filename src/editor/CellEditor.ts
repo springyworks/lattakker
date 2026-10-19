@@ -31,6 +31,8 @@ const BUTTONS: Array<[string, string, string]> = [
 export interface CellEditorHooks {
   onSave(address: string, code: string): void;
   onRun(address: string, code: string): void;
+  /** Stops the timers and event watchers the cell runs; its code stays. */
+  onStop(address: string): void;
   onClose(): void;
   onOpen?(address: string): void;
   /** A click on the output preview at the bottom of the editor: it counts as a click on the cell itself. */
@@ -463,11 +465,17 @@ export class CellEditor {
 
   /** Right-click on the title bar or the output strip gets the popup menu too, not the browser's. */
   private installWindowMenus(titleBar: HTMLElement, out: HTMLElement, outCell: HTMLElement, tag: HTMLElement): void {
-    installPopupMenu(titleBar, () => [
+    installPopupMenu(titleBar, () => {
+      const tasks = this.address ? this.sheet.taskCount(this.address) : 0;
+      return [
       { label: 'Restart', hint: 'Ctrl+Enter', onSelect: () => this.run() },
+      { label: '⤢ Zoom to fit', hint: 'F', title: 'Zooms and moves the sheet so this whole editor fits the window. Choose again for the whole sheet, then back to where you were.', onSelect: () => void this.sheet.fitToView(null, 'editor') },
+      { label: tasks > 0 ? `⏹ Stop timers & events (${tasks})` : '⏹ Stop timers & events', title: 'Stops every timer and event watcher this cell started. The code stays.', disabled: tasks === 0, onSelect: () => { if (this.address) this.hooks.onStop(this.address); } },
+      { label: '▶ Start timers & events', title: 'Runs the code from the top, which starts its timers and event watchers again.', disabled: tasks > 0, onSelect: () => this.run() },
       { label: 'Restart & close', hint: 'Esc', onSelect: () => this.close(true) },
       { label: 'Close, keep the old code', danger: true, onSelect: () => this.close(false) },
-    ], undefined, () => this.askContext());
+      ];
+    }, undefined, () => this.askContext());
     installPopupMenu(out, () => {
       const picked = window.getSelection()?.toString() ?? '';
       const text = picked || outCell.innerText.trim();
@@ -479,6 +487,7 @@ export class CellEditor {
         },
         { label: this.outOpen ? 'Shrink output' : 'Enlarge output', onSelect: () => tag.click() },
         { label: 'Restart', hint: 'Ctrl+Enter', onSelect: () => this.run() },
+        { label: '⤢ Zoom to fit', hint: 'F', onSelect: () => void this.sheet.fitToView(null, 'editor') },
       ];
     }, undefined, () => this.askContext());
   }

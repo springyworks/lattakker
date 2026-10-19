@@ -52,6 +52,8 @@ export const CW = 60;
 export const CH = 60;
 export const HDR_W = 44;
 export const HDR_H = 26;
+/** The furthest the sheet zooms out; far enough to see a whole tall sheet at once. */
+export const MIN_SCALE = 0.15;
 export const ORIGIN_X = HDR_W;
 export const ORIGIN_Y = HDR_H;
 
@@ -275,6 +277,8 @@ export class Sheet {
   private rubber: { startX: number; startY: number; active: boolean; additive: boolean; base: Set<string>; box: Cell | null } | null = null;
   /** When the last rubber band ended: the click that follows it is not a click on a cell. */
   private rubberEndedAt = 0;
+  /** A press on a picked group of empty cells: dragging it makes the group one block and carries it. */
+  private groupPress: { first: string; cols: number; rows: number; startX: number; startY: number; grab: { x: number; y: number } } | null = null;
   /** Asked before the code of a cell is rewritten (its editor may be open on it). */
   private codeLocked: (address: string) => boolean = () => false;
   private shapeHandlers: Array<(change: ShapeChange) => void> = [];
@@ -1469,6 +1473,7 @@ export class Sheet {
   }
 
   private cancelContentDrag(): void {
+    this.groupPress = null;
     const drag = this.contentDrag;
     if (!drag) return;
     this.contentDrag = null;
@@ -1483,7 +1488,7 @@ export class Sheet {
   private draggable(address: string): boolean {
     if (this.isBoardAddress(address)) return false;
     const d = this.data.get(address);
-    if (!d || !d.code.trim()) return false;
+    if (!d || (!d.code.trim() && d.span.cols === 1 && d.span.rows === 1)) return false;
     if (this.coveredBy.has(address)) return false;
     return true;
   }
@@ -1833,6 +1838,13 @@ export class Sheet {
     if (!id.startsWith('sheet:')) return;
     const address = id.slice(6);
     const event = me.getEvent() as MouseEvent;
+    const group = !event.altKey && event.button === 0 && !event.ctrlKey && !event.metaKey && !event.shiftKey ? this.pickedEmptyRect(address) : null;
+    if (group && !this.fingerIsScrolling(me)) {
+      const p = this.modelPoint(me);
+      const origin = this.geometryOf(group.first)!;
+      this.groupPress = { ...group, startX: me.getGraphX(), startY: me.getGraphY(), grab: { x: p.x - origin.x, y: p.y - origin.y } };
+      return;
+    }
     if (!this.draggable(address) || event.altKey) {
       // Not a block to carry (an empty cell, or Alt held): a press and drag here draws a rubber band around cells.
       if (event.button === 0 && !this.isBoardAddress(address) && !this.fingerIsScrolling(me)) {
@@ -1858,7 +1870,48 @@ export class Sheet {
     };
   }
 
+  /** The picked cells when they are two or more empty 1×1 cells that exactly fill a rectangle and include `address`. */
+  private pickedEmptyRect(address: string): { first: string; cols: number; rows: number } | null {
+    if (this.picked.size < 2 || !this.picked.has(address)) return null;
+    for (const a of this.picked) {
+      const d = this.data.get(a);
+      if (!d || d.code.trim() || d.span.cols !== 1 || d.span.rows !== 1) return null;
+    }
+    const b = this.pickedBounds();
+    if (!b || b.cols * b.rows !== this.picked.size) return null;
+    return { first: formatAddress(b.col, b.row), cols: b.cols, rows: b.rows };
+  }
+
+  /** The press on a picked group turns into a block drag once the pointer has really moved. */
+  private startGroupDrag(me: InternalMouseEvent): void {
+    const press = this.groupPress;
+    if (!press) return;
+    if (Math.hypot(me.getGraphX() - press.startX, me.getGraphY() - press.startY) < DRAG_THRESHOLD) return;
+    this.groupPress = null;
+    const got = this.setUserSize(press.first, press.cols, press.rows);
+    if (!got || (got.cols !== press.cols || got.rows !== press.rows)) {
+      if (got) this.forceSpan(press.first, 1, 1);
+      this.flash(press.first, THEME.flashBad);
+      return;
+    }
+    this.pick([press.first], press.first);
+    const cell = this.cells.get(press.first)!;
+    const geo = cell.getGeometry()!;
+    this.contentDrag = {
+      address: press.first,
+      cell,
+      size: { width: geo.width, height: geo.height },
+      origin: { x: geo.x, y: geo.y },
+      grab: press.grab,
+      startX: press.startX,
+      startY: press.startY,
+      moved: false,
+      spring: new Spring({ x: geo.x + geo.width / 2, y: geo.y + geo.height / 2 }),
+    };
+  }
+
   private onContentMouseMove(me: InternalMouseEvent): void {
+    this.startGroupDrag(me);
     const drag = this.contentDrag;
     if (!drag) return;
     const gx = me.getGraphX();
@@ -1919,6 +1972,7 @@ export class Sheet {
   }
 
   private onContentMouseUp(me: InternalMouseEvent): void {
+    this.groupPress = null;
     this.onRubberUp(me);
     const drag = this.contentDrag;
     if (!drag) return;
@@ -2432,7 +2486,7 @@ export class Sheet {
     const x1 = Math.max(...blocks.map((d) => ORIGIN_X + (d.col + d.span.cols) * CW));
     const y1 = Math.max(...blocks.map((d) => ORIGIN_Y + (d.row + d.span.rows) * CH));
     const fit = Math.min((c.clientWidth * 0.85) / (x1 - x0), (c.clientHeight * 0.85) / (y1 - y0));
-    const scale = Math.min(2, Math.max(0.4, blocks.length > 1 ? fit : Math.max(0.8, fit)));
+    const scale = Math.min(2, Math.max(MIN_SCALE, blocks.length > 1 ? fit : Math.max(0.8, fit)));
     const cx = ((x0 + x1) / 2 + t.x) * scale;
     const cy = ((y0 + y1) / 2 + t.y) * scale;
     return { scale, left: Math.max(0, cx - c.clientWidth / 2), top: Math.max(0, cy - c.clientHeight / 2) };
@@ -2445,7 +2499,7 @@ export class Sheet {
   viewOfRect(r: { x: number; y: number; width: number; height: number }, maxScale = 2): SheetView {
     const c = this.container;
     const t = this.graph.getView().getTranslate();
-    const scale = Math.min(maxScale, Math.max(0.4, Math.min((c.clientWidth * 0.92) / r.width, (c.clientHeight * 0.92) / r.height)));
+    const scale = Math.min(maxScale, Math.max(MIN_SCALE, Math.min((c.clientWidth * 0.92) / r.width, (c.clientHeight * 0.92) / r.height)));
     const cx = (r.x + r.width / 2 + t.x) * scale;
     const cy = (r.y + r.height / 2 + t.y) * scale;
     return { scale, left: Math.max(0, cx - c.clientWidth / 2), top: Math.max(0, cy - c.clientHeight / 2) };
@@ -2478,18 +2532,8 @@ export class Sheet {
           steps.push({ shown: 'block', key: owner, address: owner, rect: { x: ORIGIN_X + d.col * CW, y: ORIGIN_Y + d.row * CH, width: d.span.cols * CW, height: d.span.rows * CH } });
         }
       }
-      let x0 = this.board ? ORIGIN_X : Infinity;
-      let y0 = this.board ? ORIGIN_Y : Infinity;
-      let x1 = this.board ? ORIGIN_X + 10 * CW : -Infinity;
-      let y1 = this.board ? ORIGIN_Y + 10 * CH : -Infinity;
-      for (const d of this.data.values()) {
-        if (!d.code.trim() || this.coveredBy.has(d.address)) continue;
-        x0 = Math.min(x0, ORIGIN_X + d.col * CW);
-        y0 = Math.min(y0, ORIGIN_Y + d.row * CH);
-        x1 = Math.max(x1, ORIGIN_X + (d.col + d.span.cols) * CW);
-        y1 = Math.max(y1, ORIGIN_Y + (d.row + d.span.rows) * CH);
-      }
-      if (x1 > x0 && y1 > y0) steps.push({ shown: 'content', key: 'content', rect: { x: x0, y: y0, width: x1 - x0, height: y1 - y0 } });
+      const content = this.contentRect();
+      if (content) steps.push({ shown: 'content', key: 'content', rect: content });
     }
 
     const now = this.viewState();
@@ -2511,6 +2555,30 @@ export class Sheet {
       return { shown: 'back' };
     }
     return { shown: 'none' };
+  }
+
+  /** The rectangle (model units) around everything that is there: the board and every block with code, however far out. */
+  contentRect(): { x: number; y: number; width: number; height: number } | null {
+    let x0 = this.board ? ORIGIN_X : Infinity;
+    let y0 = this.board ? ORIGIN_Y : Infinity;
+    let x1 = this.board ? ORIGIN_X + 10 * CW : -Infinity;
+    let y1 = this.board ? ORIGIN_Y + 10 * CH : -Infinity;
+    for (const d of this.data.values()) {
+      if (!d.code.trim() || this.coveredBy.has(d.address)) continue;
+      x0 = Math.min(x0, ORIGIN_X + d.col * CW);
+      y0 = Math.min(y0, ORIGIN_Y + d.row * CH);
+      x1 = Math.max(x1, ORIGIN_X + (d.col + d.span.cols) * CW);
+      y1 = Math.max(y1, ORIGIN_Y + (d.row + d.span.rows) * CH);
+    }
+    return x1 > x0 && y1 > y0 ? { x: x0, y: y0, width: x1 - x0, height: y1 - y0 } : null;
+  }
+
+  /** Zooms out (as far as it takes) to show every non-empty cell and block at once, so nothing forgotten far away stays hidden. */
+  async showAll(): Promise<boolean> {
+    const r = this.contentRect();
+    if (!r) return false;
+    await this.fitRect(r);
+    return true;
   }
 
   /** The blocks with code (by owner) in a whole row (`row`) or a whole column (`col`), and the rectangle (model units) around them. */
@@ -2545,7 +2613,7 @@ export class Sheet {
     const rect = this.container.getBoundingClientRect();
     const px = clientX - rect.left;
     const py = clientY - rect.top;
-    const scale = Math.max(0.4, from.scale / factor);
+    const scale = Math.max(MIN_SCALE, from.scale / factor);
     if (scale === from.scale) return;
     const k = scale / from.scale;
     await this.flyTo({ scale, left: Math.max(0, (from.left + px) * k - px), top: Math.max(0, (from.top + py) * k - py) });
@@ -2562,7 +2630,7 @@ export class Sheet {
     const id = ++this.flight;
     const c = this.container;
     const from = this.viewState();
-    const end = Math.min(2.5, Math.max(0.4, target.scale));
+    const end = Math.min(2.5, Math.max(MIN_SCALE, target.scale));
     const hx = c.clientWidth / 2;
     const hy = c.clientHeight / 2;
     // The point in the middle of the window, in units that do not depend on the zoom.
@@ -2578,7 +2646,7 @@ export class Sheet {
         if (id !== this.flight) return resolve();
         const p = Math.min(1, (now - start) / duration);
         const e = p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
-        const s = Math.max(0.4, from.scale * Math.pow(end / from.scale, e) * (1 - dip * Math.sin(Math.PI * e)));
+        const s = Math.max(MIN_SCALE, from.scale * Math.pow(end / from.scale, e) * (1 - dip * Math.sin(Math.PI * e)));
         this.graph.zoomTo(s, false);
         c.scrollLeft = (a.x + (b.x - a.x) * e) * s - hx;
         c.scrollTop = (a.y + (b.y - a.y) * e) * s - hy;
@@ -2601,7 +2669,7 @@ export class Sheet {
 
   zoomBy(factor: number): void {
     const view = this.graph.getView();
-    const next = Math.min(2.5, Math.max(0.4, view.getScale() * factor));
+    const next = Math.min(2.5, Math.max(MIN_SCALE, view.getScale() * factor));
     this.graph.zoomTo(next, false);
     this.updateStickyHeaders();
   }
@@ -2610,7 +2678,7 @@ export class Sheet {
   zoomAround(factor: number, clientX: number, clientY: number): void {
     const view = this.graph.getView();
     const before = view.getScale();
-    const next = Math.min(2.5, Math.max(0.4, before * factor));
+    const next = Math.min(2.5, Math.max(MIN_SCALE, before * factor));
     if (next === before) return;
     const rect = this.container.getBoundingClientRect();
     const px = clientX - rect.left;
