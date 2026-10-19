@@ -308,8 +308,14 @@ export const focusPoints = {
       out.push(`Editor on ${path}: ${model.getLineCount()} lines${pos ? `, cursor at line ${pos.lineNumber}, column ${pos.column}` : ''}${ed.hasTextFocus() ? ', has the keyboard focus' : ''}`);
       const live = ed.getSelection();
       const range = live && !live.isEmpty() ? trimmed(model, model.validateRange(live)) : null;
-      if (!range || range.isEmpty()) out.push('  nothing is selected');
-      else {
+      if (!range || range.isEmpty()) {
+        out.push('  nothing is selected');
+        if (pos) {
+          const text = model.getLineContent(pos.lineNumber);
+          const at = Math.min(pos.column - 1, text.length);
+          out.push(`  the cursor is here (▮): ${pos.lineNumber} | ${clip(`${text.slice(0, at)}▮${text.slice(at)}`, 140)}`);
+        }
+      } else {
         const first = range.startLineNumber;
         const last = range.endLineNumber;
         out.push(`  selected: ${first === last ? `line ${first}, columns ${range.startColumn}-${range.endColumn}` : `lines ${first}-${last} (from column ${range.startColumn} of line ${first} to column ${range.endColumn} of line ${last})`}, ${model.getValueInRange(range).length} characters`);
