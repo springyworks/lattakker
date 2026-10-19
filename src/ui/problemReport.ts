@@ -2,6 +2,7 @@ import { workspace } from '../workspace';
 import { router } from '../mcp/router';
 import { jobs, type JobNode } from '../aichat/jobs';
 import { callers } from '../ai/entry';
+import { focusPoints } from '../editor/focusPoints';
 
 /**
  * The problem report: for the moment a person sees something wrong (or something lovely) in the GUI and an AI is asked about it.
@@ -200,6 +201,7 @@ export function snapshot(): string {
     '## App state',
     `Tabs (▶ = in front):`,
     ...tabs,
+    ...focusPoints.report().map((l) => (l.startsWith(' ') ? l : `  ${l}`)),
     `Last cell pointed at: ${focus ? workspace.pathOf(focus.tab, focus.address, focus.tile) : 'none'}`,
     ...(open.length ? ['Jobs of the helper:', ...open.map((l) => `  ${l}`)] : ['Jobs of the helper: none']),
     '',

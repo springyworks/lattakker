@@ -296,6 +296,36 @@ export const focusPoints = {
     return { ok: true };
   },
 
+  /** For the GUI report: where the cursor is in the open cell editor, what is selected (with line numbers) and what is marked. */
+  report(): string[] {
+    const out: string[] = [];
+    for (const ed of monaco.editor.getEditors()) {
+      const model = ed.getModel();
+      const owner = model && ed.getDomNode()?.isConnected ? parseCellUri(model.uri) : null;
+      if (!model || !owner || !workspace.get(owner.scope)) continue;
+      const path = workspace.pathOf(owner.scope, owner.address);
+      const pos = ed.getPosition();
+      out.push(`Editor on ${path}: ${model.getLineCount()} lines${pos ? `, cursor at line ${pos.lineNumber}, column ${pos.column}` : ''}${ed.hasTextFocus() ? ', has the keyboard focus' : ''}`);
+      const live = ed.getSelection();
+      const range = live && !live.isEmpty() ? trimmed(model, model.validateRange(live)) : null;
+      if (!range || range.isEmpty()) out.push('  nothing is selected');
+      else {
+        const first = range.startLineNumber;
+        const last = range.endLineNumber;
+        out.push(`  selected: ${first === last ? `line ${first}, columns ${range.startColumn}-${range.endColumn}` : `lines ${first}-${last} (from column ${range.startColumn} of line ${first} to column ${range.endColumn} of line ${last})`}, ${model.getValueInRange(range).length} characters`);
+        for (let n = first; n <= Math.min(last, first + 11); n++) out.push(`    ${String(n).padStart(3)} | ${clip(model.getLineContent(n), 120)}`);
+        if (last > first + 11) out.push(`    … ${last - first - 11} more lines`);
+      }
+    }
+    if (!out.length) {
+      const sel = liveSelection();
+      out.push(sel ? `No cell editor is open. The last selection was ${sel.ref} (${describeLines(sel)})` : 'No cell editor is open.');
+    }
+    const marks = focusPoints.list({}).filter((x) => x.state !== 'gone').slice(0, 6);
+    for (const m of marks) out.push(`  marked by ${m.by}: ${m.ref} (${describeLines(m)}${m.state === 'edited' ? ', edited since' : ''})`);
+    return out;
+  },
+
   /** For the question the AI gets: the person's marked places and what is selected right now, each with its words. Empty when there are none. */
   note(): string {
     const lines: string[] = [];
