@@ -425,6 +425,8 @@ export class SheetPane {
         const isBoard = sheet.isBoardAddress(address);
         if (!isBoard) menu.addItem(`🤖 Ask the AI about ${address}`, null, () => aiBridge.ask({ tab: sheet.id, address }));
         if (!isBoard) menu.addItem(`❓ Help for ${address}`, null, () => showHelp('cell', { tab: sheet.id, address }));
+        const at = { x: evt.clientX, y: evt.clientY };
+        menu.addItem('⤢ Fit to view', null, () => void sheet.fitToView(at));
         if (!isBoard && sheet.getPicked().length > 1 && sheet.isPicked(sheet.ownerOf(address))) {
           for (const item of this.groupItems()) {
             if (item.separator) menu.addSeparator();
@@ -436,7 +438,7 @@ export class SheetPane {
           if (sheet.dataAt(address)?.code) menu.addItem(`Clear ${address}`, null, () => sheet.setCode(address, ''));
           const tasks = sheet.taskCount(address);
           if (tasks > 0) {
-            menu.addItem(`Stop timers in ${address} (${tasks})`, null, () => {
+            menu.addItem(`Stop timers & watchers in ${address} (${tasks})`, null, () => {
               sheet.stopTasks(address);
               sheet.notifyChanged(address);
               hooks.say(`Stopped the timers and watchers in ${address}.`, 'good');
@@ -494,7 +496,7 @@ export class SheetPane {
       }, undefined, undefined, all.length > 0);
       menu.addItem('Let go of the picked cells', null, () => sheet.pick([]), undefined, undefined, sheet.getPicked().length > 0);
       menu.addItem(`▶ Restart all ${all.length} cells`, null, () => run(all, 'the sheet'), undefined, undefined, all.length > 0);
-      menu.addItem(`⏹ Stop all timers (${timers.length} cells)`, null, () => stopTimers(timers, 'the sheet'), undefined, undefined, timers.length > 0);
+      menu.addItem(`⏹ Stop all timers & watchers (${timers.length} cells)`, null, () => stopTimers(timers, 'the sheet'), undefined, undefined, timers.length > 0);
       menu.addSeparator();
       menu.addItem('❓ Help', null, () => showHelp('cell', { tab: sheet.id, address: formatAddress(0, firstFree) }));
       return;
@@ -524,7 +526,7 @@ export class SheetPane {
       flashAll(owners);
       run(owners, name);
     }, undefined, undefined, owners.length > 0);
-    menu.addItem(`⏹ Stop timers (${timers.length})`, null, () => stopTimers(timers, name), undefined, undefined, timers.length > 0);
+    menu.addItem(`⏹ Stop timers & watchers (${timers.length})`, null, () => stopTimers(timers, name), undefined, undefined, timers.length > 0);
     menu.addItem(`🔲 Make one block of ${name}`, null, () => {
       pickLine();
       this.makeBlockFromPicked();
@@ -697,7 +699,7 @@ export class SheetPane {
       });
       if (tasks > 0) {
         items.push({
-          label: `⏹ Stop timers (${tasks})`,
+          label: `⏹ Stop timers & watchers (${tasks})`,
           onSelect: () => {
             sheet.stopTasks(address);
             sheet.notifyChanged(address);

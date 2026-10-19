@@ -643,7 +643,7 @@ the ⋮ and a menu opens with what you can do with that cell or cell-block:
 |---|---|
 | tiny first line | The cell's address, its stable id (`c-1f3a9b02`, the same after moves) and how often it ran. Click to copy the id. |
 | Edit code / Write TypeScript here | Opens the popup editor. |
-| Run again, Size, Stop timers | Re-run the code; make the block wider, narrower, taller, shorter or 1×1; cancel its `every`/`on` tasks. |
+| Run again, Size, Stop timers & watchers | Re-run the code; make the block wider, narrower, taller, shorter or 1×1; cancel everything the cell started: its `every`/`after` timers **and** its `on` watchers (the cell and its output stay). |
 | Used by / Reads | Lists of cells (pick one to jump there). *Used by* counts cells that read this one, watch its size/code/clicks, or name its address in their code. |
 | Copy | Address, id or code. |
 | Show ids on all cells | Draws each code cell's id in tiny type in its corner. |
@@ -745,8 +745,9 @@ Every cell reference has:
 
 A range also has `.color(fill)` and `.print(...)` that apply to every cell in it.
 Right-click any cell for the same information as menus: **Used by** and
-**Reads** list the cells (click one to jump to it), and **Stop timers** appears
-when the cell has timers running. The reactive reads behind `.usedBy` and
+**Reads** list the cells (click one to jump to it), and **Stop timers & watchers**
+appears when the cell has timers or watchers running (see
+[8.5](#85-watching-things-on) for what it stops and what it does not). The reactive reads behind `.usedBy` and
 `.reads` are explained in [9.2 Is this reactive programming?](#92-is-this-reactive-programming).
 
 ### 8.3 The game
@@ -779,7 +780,7 @@ Also: `sheet.mode` (`'run'`/`'view'`), `sheet.cols`, `sheet.rows`, `mode`.
 | `await sleep(500)` | Wait. A number is milliseconds; text works too: `'2s'`. Other cells keep running while you wait. |
 | `every(interval, fn)` | Run `fn` again and again. `fn(n)` gets the count 1, 2, 3... `every(fn)` means once a second. |
 | `after(interval, fn)` | Run `fn` once, later. |
-| `stop()` | Stop every timer and watcher this cell started. |
+| `stop()` | Stop every timer **and** every `on` watcher this cell started. Same as right-click → *Stop timers & watchers*. |
 
 An *interval* is a number of milliseconds or text: `'250ms'`, `'1s'`, `'1.5s'`,
 `'1m'` (a minute), `'1h'`. The shortest allowed is 10 ms. `every` and `after`
@@ -820,6 +821,37 @@ remembering:
   "calculate something from other cells".
 - **Inside `every`/`on`/`after`**: reading is free and not tracked. Only the
   function runs again. Good for "keep a counter or a clock".
+
+#### A cell can have timers and reactions to outside events
+
+A cell with code can do two kinds of "keep going" work at once:
+
+- **Timers**: `every(...)` and `after(...)` run because time passes.
+- **Reactions to outside events**: `on(...)` runs because something *else*
+  happened (a square changed, the game moved, someone resized or clicked a
+  cell, a message or signal arrived from another tab).
+
+Both are owned by the cell and are stopped together:
+
+| You do | Timers (`every`, `after`) | Watchers (`on`, signals) | Cell and output |
+|---|---|---|---|
+| `stop()` in the code, or right-click → **Stop timers & watchers** | stopped | stopped | stay as they are |
+| `off()` returned by one `every`/`after`/`on` | that one stops | that one stops | stay |
+| Edit, move or clear the cell | stopped first | stopped first | the new run starts fresh |
+
+There is deliberately no separate "stop only the events" switch: a cell that
+is quiet on the clock but still reacting to the game would be confusing. To
+keep the timer but drop the reaction, keep the `off` function that `on`
+returned and call it.
+
+One thing keeps a cell reacting after you stopped it: **reads at the top of
+the cell** (`at('B7').text`, `cell.cols`, `sheet.mode`). Those make the whole
+cell run again when what it read changes, and that new run starts its timers
+and watchers again. If a cell seems to "come back to life" after *Stop
+timers & watchers*, look for a top-level read. (A watcher that wakes more
+than 50 times a second is stopped by the sheet, and a chain of more than 400
+re-runs in 2 seconds is cut, so nothing can run away for ever.)
+
 
 ### 8.6 Events: size, code, click, sheet
 
