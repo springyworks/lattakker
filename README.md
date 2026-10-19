@@ -515,13 +515,14 @@ to the board. A new battle is already running every time the page opens: click a
 piece, click a dot. (**New game** brings back the setup, with **Shuffle** and
 **Start the battle!**.) A cell's 🔍 zooms in on it; **🔍 Zoom back out**, top right, goes back.
 Press the column letters or row numbers (the borders with A1, B7 ...) with the left mouse button and pull: the whole sheet follows the pointer in both directions, anywhere on the screen, and glides on a little when you let go. A plain click on them still flashes the column or row. Below the board
-are some grey-green cells that already do things: one counts the pieces, one
+are some grey-green cells that already do things: one plays the game with random moves (a typed TypeScript program: press Start, and it plays Red until you stop it or the game ends), one
 paints the board, one tells whose turn it is. They update by themselves after
 every move. They are small programs, written in **TypeScript**.
 
 1. Click a cell such as `A12` and press **Show code** (or double-click the cell).
-   You are now reading the program that makes the numbers.
-2. Change `'red'` to `'blue'`, press **Ctrl+Enter**. The numbers change.
+   You are now reading a random player. Press **Start the battle!** and watch it play Red.
+2. Change `['red']` to `['red', 'blue']`, press **Ctrl+Enter**. Now the cell
+   plays both sides: two virtual players, and the built-in Blue player keeps quiet.
 3. Click an empty cell, double-click it and type `print('Hello!')`. Press
    Ctrl+Enter. That is your first program.
 4. Make it alive:
@@ -760,8 +761,11 @@ when the cell has timers running. The reactive reads behind `.usedBy` and
 | `game.pieces(color?)` | All pieces on the board (`'red'` / `'blue'` / both), each with an `address`. |
 | `game.captured(color)` | Pieces of that colour that were removed. |
 | `game.pieceAt('B7', { peek? })` | The piece on a square. `peek: true` shows hidden Blue ranks (cheating, but handy for bots). |
-| `game.legalMoves('B7' or 'red')` | Where a piece (or a whole colour) can move. |
-| `game.move(from, to)` | Move a red piece, only on Red's turn. Returns a message. |
+| `game.legalMoves('B7', 'red' or 'blue')` | Where a piece (or a whole colour) can move. |
+| `game.move(from, to, color?)` | Move a piece (`'red'` by default), only on that colour's turn. Returns a message that starts with `Moving` when the move was made. Blue moves only after `takeOverBlue()`. |
+| `game.busy` | `true` while pieces are still moving on the screen. |
+| `game.bluePlayer` | `'builtin'` (the player that comes with the page) or `'virtual'` (code has taken Blue over). |
+| `game.takeOverBlue()`, `game.giveBackBlue()` | Let code play Blue: the built-in Blue player keeps quiet, so two virtual players can play each other. Blue goes back by itself when the cell stops, is edited, runs again or is cleared. |
 | `game.say(text)` | Show a message in the game's speech bubble. |
 
 Also: `sheet.mode` (`'run'`/`'view'`), `sheet.cols`, `sheet.rows`, `mode`.
@@ -1959,7 +1963,12 @@ Reading, no risk:
   of the neighbours. This answers "what breaks if I change this?". See
   [8.2](#82-the-cell-itself-and-other-cells).
 - *The game:* `mms.state()`, `mms.board()`, `mms.legalMoves('red')`.
-  Blue's hidden pieces stay hidden for the assistant too.
+  Blue's hidden pieces stay hidden for the assistant too, until the assistant
+  takes Blue over (`mms.takeOverBlue()`, tool `take_over_blue`): then it plays
+  Blue with `mms.move(from, to, 'blue')` (tool `make_move` with `color`), sees
+  Blue's side with `mms.board('blue')`, and two virtual players can play each
+  other. `mms.giveBackBlue()` (tool `give_back_blue`) returns Blue to the
+  built-in player.
 - *What the player is doing:* `mms.state().editorOpenOn` names the cell whose
   editor is open right now, so "fix this" can mean the cell in front of the
   child. Note that `cells()` shows the saved code, not text typed in the open
@@ -2129,7 +2138,7 @@ To check by hand without any AI:
 `curl -s -X POST http://localhost:5178/mcp -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'`
 
 The tools are the ones in `mms.help()`: `get_state`, `get_board`,
-`legal_moves`, `make_move`, `shuffle_army`, `start_battle`, `pause_battle`,
+`legal_moves`, `make_move`, `take_over_blue`, `give_back_blue`, `shuffle_army`, `start_battle`, `pause_battle`,
 `resume_battle`, `undo_move`, `new_game`, `list_tabs`, `list_cells`, `get_cell`,
 `resolve_cell`, `set_cell_code`, `write_code_live`, `get_requests`,
 `wait_for_request`, `reply_to_request`, `run_cell`, `set_mode`, `say_to_player`,
@@ -2493,8 +2502,14 @@ showed a sign of life, and one that is quiet for too long is marked
   yet". No answer within 120 s: it is asked again (3 tries), then the chat says so.
 - *The local model* (answers arrive word by word): every word is a sign of life.
   Before the first word the page asks Ollama whether the model is in memory:
-  "not in memory yet: most likely still loading" (allowed for up to 20 minutes) or
-  "in memory and working on it".
+  "not in memory yet: most likely still loading" or "in memory and working on it".
+  **Patience.** There is no hard cut-off. Once the model has been silent for the time
+  chosen in **⚙ › Ask me whether to keep waiting after** (default 10 minutes; 2 minutes
+  up to 4 hours, or never), the chat asks: *Wait 10 / 30 / 60 min more* or *Stop*, and
+  shows what is known (server alive, model in memory, share on the GPU). If nobody answers
+  within 3 minutes (you walked away) the request is stopped and the chat says why. The
+  silence is counted from the last word, so a model that stops halfway is noticed too, and
+  the quiet seconds show in the job list. Code: `src/aichat/patience.ts`.
 - *The librarian's claims are checked*: a small model sometimes says it stored
   something without doing it. After `teach` the counts of notes and records are
   compared, it is asked once more to really use a tool, and if nothing was written the

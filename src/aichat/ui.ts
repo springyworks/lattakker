@@ -5,7 +5,7 @@ import { router } from '../mcp/router';
 import { jobs, onJobsChange, type JobNode } from './jobs';
 import { installPopupMenu } from '../editor/EditorContextMenu';
 import type { Conversation, Entry } from './agent';
-import { destination, forgetAll, getKey, getSettings, isConfigured, OLLAMA_CONTEXT_OPTIONS, SERVER_CONTEXT, setKey, updateSettings } from './config';
+import { destination, forgetAll, getKey, getSettings, isConfigured, OLLAMA_CONTEXT_OPTIONS, patienceMs, SERVER_CONTEXT, setKey, updateSettings, WAIT_OPTIONS } from './config';
 import { localAssistantReady, localState, localWarning, makeLocalProvider, onLocalChange } from './localAi';
 import { renderMarkdown, linkify } from './markdown';
 import { allNotes, exportJson, forget, importJson, isKeptSafe, keepSafe, memoryInfo, onMemoryChange, wipe } from './memory';
@@ -13,6 +13,7 @@ import { describeModel } from './modelInfo';
 import { ammo, gaugeText } from './ammo';
 import { diagnose } from './diagnose';
 import { getLive, onLiveChange } from './ollamaLoad';
+import { answerCheckpoint, checkpoints, EXTENSIONS, minutesText, onCheckpointChange } from './patience';
 import { memoryFileState } from './memorySync';
 import { GeminiProvider, OpenAiCompatProvider, friendly, makeProvider, type ModelProvider } from './providers';
 import type { AiContext, FixResult } from './tools';
@@ -159,6 +160,7 @@ export class AiChatUi {
     onJobsChange(() => this.convo.busy && this.render());
     onLocalChange(() => this.render());
     onLiveChange(() => this.render());
+    onCheckpointChange(() => this.render());
     ammo.onChange(() => this.render());
     onMemoryChange(() => this.settingsOpen && this.render());
     void isKeptSafe().then((v) => (this.kept = v));
@@ -417,7 +419,9 @@ export class AiChatUi {
       }
       const own = new AbortController();
       abort = own;
-      const timer = window.setTimeout(() => own.abort(), 180000);
+      // The model on this computer may be slow: the same patience as in the settings, and never less than 3 minutes. "Never ask" (0) sets no timer.
+      const patient = patienceMs();
+      const timer = patient ? window.setTimeout(() => own.abort(), Math.max(180000, patient)) : 0;
       btn.textContent = '…';
       btn.title = 'Correcting… press again to stop.';
       try {
@@ -563,10 +567,36 @@ export class AiChatUi {
         status.append(el('div', { className: 'ai-live-known', textContent: `✔ Known: ${note.known.join(' · ')}` }));
         if (note.maybe.length) status.append(el('div', { className: 'ai-live-maybe', textContent: `≈ Maybe (a reading, not a fact): ${note.maybe.join('; ')}` }));
       }
+      status.append(...this.checkpointNodes());
       status.append(tree);
       log.append(status);
-    }
+    } else log.append(...this.checkpointNodes());
     if (stick) log.scrollTop = log.scrollHeight;
+  }
+
+  /** The model has been silent for as long as the settings allow: ask whether to keep waiting. Unanswered, the request is stopped by itself. */
+  private checkpointNodes(): HTMLElement[] {
+    return checkpoints().map((c) => {
+      const left = Math.max(0, Math.round((c.until - performance.now()) / 1000));
+      const buttons = el('div', { className: 'ai-actions' });
+      for (const m of EXTENSIONS) {
+        const b = el('button', { className: 'ai-send', textContent: `Wait ${minutesText(m)} more` });
+        b.onclick = () => answerCheckpoint(c.id, m);
+        buttons.append(b);
+      }
+      const stop = el('button', { className: 'ai-stop', textContent: 'Stop' });
+      stop.onclick = () => answerCheckpoint(c.id, 0);
+      buttons.append(stop);
+      const facts = c.facts();
+      return el(
+        'div',
+        { className: 'ai-patience' },
+        el('div', { className: 'ai-why slow', textContent: `⏳ ${c.model} has been silent for ${minutesText(Math.max(1, Math.round(c.silentSeconds() / 60)))}. It may still be working (a big model on a small computer is slow). Keep waiting?` }),
+        ...(facts.length ? [el('div', { className: 'ai-why-hint', textContent: facts.join(' · ') })] : []),
+        buttons,
+        el('div', { className: 'ai-why-chain', textContent: `No answer within ${Math.ceil(left / 60)} min (${left} s) and the request is stopped. Change how long it waits in ⚙.` }),
+      );
+    });
   }
 
   /** The jobs as a tree, one line each: what it does, what it waits for, how long ago it last showed a sign of life. */
@@ -925,6 +955,9 @@ export class AiChatUi {
     const memory = el('select', { className: 'ai-wide' });
     for (const n of OLLAMA_CONTEXT_OPTIONS) memory.append(el('option', { value: String(n), textContent: n === SERVER_CONTEXT ? 'As the server runs it (recommended: never reloads the model)' : `${n / 1024}k tokens${n >= 131072 ? ' (high RAM use)' : n === 4096 ? ' (too small for the helper)' : ''}`, selected: s.local.context === n }));
     memory.onchange = () => updateSettings((x) => (x.local.context = Number(memory.value)));
+    const patience = el('select', { className: 'ai-wide' });
+    for (const n of WAIT_OPTIONS) patience.append(el('option', { value: String(n), textContent: n === 0 ? 'Never ask (only the Stop button ends the wait)' : `${minutesText(n)} of silence`, selected: s.local.waitMinutes === n }));
+    patience.onchange = () => updateSettings((x) => (x.local.waitMinutes = Number(patience.value)));
     return el(
       'div',
       { className: 'ai-group' },
@@ -936,6 +969,7 @@ export class AiChatUi {
         (m) => updateSettings((x) => (x.local.model = m)),
       ),
       el('div', { className: 'ai-field' }, el('label', { textContent: 'Memory of the chat (Ollama only)' }), memory, el('div', { className: 'ai-note', textContent: 'Context is measured in tokens, not kilobytes. "As the server runs it" sends no size, so Ollama keeps using the instance (and the remembered conversation) it already has: connecting or disconnecting this page never reloads the model. Set the size once in the Ollama service (OLLAMA_CONTEXT_LENGTH). A size chosen here that differs from the one in memory makes Ollama start a new instance. Weights plus the context cache and runtime all need memory: even 48 GB RAM does not guarantee 256k will fit; try 32k or 64k if loading fails or the computer swaps. The 🔋 line shows token use, not RAM use; check ollama ps and your system monitor too.' })),
+      el('div', { className: 'ai-field' }, el('label', { textContent: 'Ask me whether to keep waiting after' }), patience, el('div', { className: 'ai-note', textContent: 'A big model on a small computer can take many minutes before the first word, and a question may take longer still. The page never gives up by itself while words keep coming. When the model has been silent this long it asks you: wait 10, 30 or 60 minutes more, or stop. If nobody answers within 3 minutes (you walked away) the request is stopped. The status lines show what the page can know (is the server alive, is the model in memory, how much of it runs on the GPU). Ollama\'s own log is deeper: start it with OLLAMA_DEBUG=1 and follow it (journalctl -u ollama -f).' })),
       el('div', { className: 'ai-field' }, el('label', { textContent: 'Key (only if your server wants one)' }), key),
       el(
         'details',

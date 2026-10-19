@@ -128,8 +128,11 @@ export class SheetPane {
     // Picking a group, the shape of blocks (handles, selections, span(...)), and the keys that act on the picked cells.
     sheet.setCodeLocked((address) => this.editor.isOpen && this.editor.address === address);
     sheet.onShapeChange((change) => {
-      if (!change.byPerson) return;
       const { address, size, rewrote, limited } = change;
+      if (!change.byPerson) {
+        if (limited) hooks.say(`${address} asked for more room with span(...) than there is: other blocks (or the board) are in the way, so it is ${size.cols}×${size.rows}.`, 'info');
+        return;
+      }
       hooks.say(
         `${address} is now ${size.cols}×${size.rows}.${rewrote ? ` Its span(${size.cols}, ${size.rows}) line says so now too.` : ''}${limited ? ' Other cells were in the way, so it could not get bigger.' : ''} Code that reads cell.cols or watches 'size' wakes up.`,
         limited ? 'info' : 'good',
@@ -415,15 +418,8 @@ export class SheetPane {
       }
       const id = cell?.getId() ?? '';
       if (id.startsWith('sheet:') && hooks.reserved?.(id.slice(6))) return;
-      if (id.startsWith('hdr:r')) {
-        const rowIndex = Number(id.slice(5));
-        if (rowIndex < (hooks.firstFreeRow ?? 0)) return;
-        menu.addItem(`Insert row below ${rowIndex + 1}`, null, () => {
-          sheet.insertRow(rowIndex);
-          sheet.reveal(rowIndex + 1);
-          sheet.highlightRow(rowIndex + 1);
-          hooks.say(`Inserted a new row ${rowIndex + 2}. Everything below moved down one; references in code are updated.`, 'good');
-        });
+      if (id === 'hdr:corner' || /^hdr:[rc]\d+$/.test(id)) {
+        this.headerMenu(menu, id);
       } else if (id.startsWith('sheet:')) {
         const address = id.slice(6);
         const isBoard = sheet.isBoardAddress(address);
@@ -463,6 +459,103 @@ export class SheetPane {
         if (!isBoard) this.addCellList(menu, 'Reads', sheet.readsOf(address), 'Reads nothing');
       }
     };
+  }
+
+  /** The right-click list of a sheet border: a row number, a column letter or the ⌂ corner. */
+  private headerMenu(menu: MaxPopupMenu, id: string): void {
+    const { sheet, hooks } = this;
+    const firstFree = hooks.firstFreeRow ?? 0;
+    const flashAll = (owners: string[]): void => owners.forEach((a) => sheet.flash(a, THEME.flash, 500));
+    const run = (owners: string[], what: string): void => {
+      for (const a of owners) sheet.setCode(a, sheet.dataAt(a)!.code);
+      hooks.say(owners.length ? `Restarted ${owners.length} ${owners.length === 1 ? 'cell' : 'cells'} in ${what} ▶` : `No cell with code in ${what}.`, 'info');
+    };
+    const copy = (text: string): void => {
+      void navigator.clipboard?.writeText(text).then(() => hooks.say(`Copied ${text}`, 'good'), () => hooks.say(`Could not reach the clipboard. It is ${text}`, 'bad'));
+    };
+    const stopTimers = (owners: string[], what: string): void => {
+      for (const a of owners) {
+        sheet.stopTasks(a);
+        sheet.notifyChanged(a);
+      }
+      hooks.say(`Stopped the timers and watchers in ${what}.`, 'good');
+    };
+
+    if (id === 'hdr:corner') {
+      const all = sheet.ownersIn(0, 0, sheet.colCount - 1, sheet.rowCount - 1).filter((a) => sheet.dataAt(a)?.code.trim());
+      const timers = all.filter((a) => sheet.taskCount(a) > 0);
+      menu.addItem('⌂ Back to the first screen', null, () => hooks.onCorner());
+      menu.addItem('⤢ Fit everything in view', null, () => void sheet.fitToView(null), undefined, undefined, all.length > 0);
+      menu.addItem('100% zoom', null, () => sheet.zoomReset(), undefined, undefined, sheet.graph.getView().getScale() !== 1);
+      menu.addSeparator();
+      menu.addItem(`Pick every block (${all.length})`, null, () => {
+        sheet.pick(all);
+        this.describePicked();
+      }, undefined, undefined, all.length > 0);
+      menu.addItem('Let go of the picked cells', null, () => sheet.pick([]), undefined, undefined, sheet.getPicked().length > 0);
+      menu.addItem(`▶ Restart all ${all.length} cells`, null, () => run(all, 'the sheet'), undefined, undefined, all.length > 0);
+      menu.addItem(`⏹ Stop all timers (${timers.length} cells)`, null, () => stopTimers(timers, 'the sheet'), undefined, undefined, timers.length > 0);
+      menu.addSeparator();
+      menu.addItem('❓ Help', null, () => showHelp('cell', { tab: sheet.id, address: formatAddress(0, firstFree) }));
+      return;
+    }
+
+    const isRow = id.startsWith('hdr:r');
+    const index = Number(id.slice(5));
+    const name = isRow ? `row ${index + 1}` : `column ${colToLetters(index)}`;
+    const line = isRow ? { row: index } : { col: index };
+    const { owners, rect } = sheet.lineBlocks(line);
+    const range = isRow
+      ? `A${index + 1}:${colToLetters(sheet.colCount - 1)}${index + 1}`
+      : `${colToLetters(index)}1:${colToLetters(index)}${sheet.rowCount}`;
+    const timers = owners.filter((a) => sheet.taskCount(a) > 0);
+    const emptyHere = isRow
+      ? sheet.ownersIn(0, index, sheet.colCount - 1, index).filter((a) => !sheet.dataAt(a)?.code.trim())
+      : sheet.ownersIn(index, 0, index, sheet.rowCount - 1).filter((a) => !sheet.dataAt(a)?.code.trim());
+    const pickLine = (): void => {
+      sheet.pick(isRow ? sheet.ownersIn(0, index, sheet.colCount - 1, index) : sheet.ownersIn(index, 0, index, sheet.rowCount - 1));
+      this.describePicked();
+    };
+
+    menu.addItem(`Pick all of ${name}`, null, pickLine);
+    menu.addItem(`⤢ Fit ${name} in view`, null, () => rect && void sheet.fitRect(rect), undefined, undefined, !!rect);
+    menu.addSeparator();
+    menu.addItem(`▶ Restart the ${owners.length} cells with code`, null, () => {
+      flashAll(owners);
+      run(owners, name);
+    }, undefined, undefined, owners.length > 0);
+    menu.addItem(`⏹ Stop timers (${timers.length})`, null, () => stopTimers(timers, name), undefined, undefined, timers.length > 0);
+    menu.addItem(`🔲 Make one block of ${name}`, null, () => {
+      pickLine();
+      this.makeBlockFromPicked();
+    }, undefined, undefined, owners.length === 0 && emptyHere.length > 1);
+    menu.addItem(`🗑 Clear the ${owners.length} cells with code`, null, () => {
+      pickLine();
+      this.clearPicked();
+    }, undefined, undefined, owners.length > 0);
+    menu.addSeparator();
+    if (isRow) {
+      menu.addItem(`Insert a row above ${index + 1}`, null, () => this.insertRowAfter(index - 1), undefined, undefined, index - 1 >= firstFree);
+      menu.addItem(`Insert a row below ${index + 1}`, null, () => this.insertRowAfter(index), undefined, undefined, index >= firstFree);
+      menu.addSeparator();
+    }
+    const go = menu.addItem('Go to', null, () => {});
+    if (isRow) {
+      menu.addItem('The top', null, () => sheet.reveal(0), go);
+      menu.addItem(`The first free row (${firstFree + 1})`, null, () => sheet.reveal(firstFree), go, undefined, firstFree > 0);
+      menu.addItem(`The bottom (row ${sheet.rowCount})`, null, () => sheet.reveal(sheet.rowCount - 1), go);
+    } else {
+      menu.addItem('Column A', null, () => sheet.reveal(0, 0), go);
+      menu.addItem(`The last column (${colToLetters(sheet.colCount - 1)})`, null, () => sheet.reveal(0, sheet.colCount - 1), go);
+    }
+    menu.addItem(`Copy ${range}`, null, () => copy(range));
+  }
+
+  private insertRowAfter(rowIndex: number): void {
+    this.sheet.insertRow(rowIndex);
+    this.sheet.reveal(rowIndex + 1);
+    this.sheet.highlightRow(rowIndex + 1);
+    this.hooks.say(`Inserted a new row ${rowIndex + 2}. Everything below moved down one; references in code are updated.`, 'good');
   }
 
   private resize(address: string, cols: number, rows: number): void {

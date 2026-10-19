@@ -19,6 +19,10 @@ const MAX_SCALE = 2.5;
  * Zooms the sheet (the game board and every cell with it) on its own, without zooming the whole browser page:
  * Ctrl + mouse wheel (or a trackpad pinch), Ctrl + "+", Ctrl + "-" and Ctrl + 0 (back to 100%), and a small − 100% + control
  * at the bottom right of the sheet. The browser's own page zoom is kept out of the way for as long as the sheet is on screen.
+ *
+ * Fit to view (the ⤢ button, the F key, or Ctrl + Shift + F while typing in an editor) shows whatever the pointer is on whole:
+ * the code editor window, the board or a block. Again, and the thing that holds it is shown whole, then the whole sheet, then
+ * the view from before the first press.
  */
 export class ZoomControls {
   private readonly box = document.createElement('div');
@@ -28,10 +32,17 @@ export class ZoomControls {
   private frame = 0;
   private applied = 0;
   private lastTime = 0;
+  /** Where the pointer last was over the sheet: fit to view fits what is there. */
+  private pointer: { x: number; y: number } | null = null;
 
   constructor(private readonly sheet: Sheet) {
     this.box.className = 'zoom-controls';
-    this.box.append(this.button('−', 'Zoom out (Ctrl and −)', () => this.step(1 / STEP)), this.label, this.button('+', 'Zoom in (Ctrl and +)', () => this.step(STEP)));
+    this.box.append(
+      this.button('−', 'Zoom out (Ctrl and −)', () => this.step(1 / STEP)),
+      this.label,
+      this.button('+', 'Zoom in (Ctrl and +)', () => this.step(STEP)),
+      this.button('⤢', 'Fit to view: show what the pointer was on whole (key F). Press again to show what holds it, then everything, then back where you were.', () => void this.fit()),
+    );
     this.label.type = 'button';
     this.label.className = 'zoom-level';
     this.label.title = 'Back to 100% (Ctrl and 0)';
@@ -39,20 +50,35 @@ export class ZoomControls {
     for (const type of ['pointerdown', 'mousedown', 'dblclick', 'wheel']) this.box.addEventListener(type, (e) => e.stopPropagation());
     document.body.append(this.box);
 
-    // Trackpad pinch and Ctrl + mouse wheel arrive as wheel events with ctrlKey set.
-    sheet.container.addEventListener(
+    // Trackpad pinch and Ctrl + mouse wheel arrive as wheel events with ctrlKey set. Heard on the window, before anything else,
+    // so that blocks, popups and code editors that swallow wheel events cannot take the zoom away.
+    window.addEventListener(
       'wheel',
       (e) => {
-        if (!e.ctrlKey) return;
+        if (!e.ctrlKey || !(e.target instanceof Node) || !(sheet.container.contains(e.target) || this.box.contains(e.target))) return;
         e.preventDefault();
+        e.stopPropagation();
         this.wheel(e);
       },
-      { passive: false },
+      { passive: false, capture: true },
+    );
+    window.addEventListener(
+      'pointermove',
+      (e) => {
+        if (e.target instanceof Node && sheet.container.contains(e.target)) this.pointer = { x: e.clientX, y: e.clientY };
+      },
+      true,
     );
     window.addEventListener(
       'keydown',
       (e) => {
-        if (!(e.ctrlKey || e.metaKey) || e.altKey || workspace.current !== sheet.id) return;
+        if (workspace.current !== sheet.id || e.altKey) return;
+        if (e.key.toLowerCase() === 'f' && this.fitKey(e)) {
+          e.preventDefault();
+          if (!e.repeat) void this.fit();
+          return;
+        }
+        if (!(e.ctrlKey || e.metaKey)) return;
         if (e.key === '+' || e.key === '=') this.step(STEP);
         else if (e.key === '-' || e.key === '_') this.step(1 / STEP);
         else if (e.key === '0') this.reset();
@@ -142,6 +168,22 @@ export class ZoomControls {
   private reset(): void {
     this.stop();
     this.aimAt(-Math.log(this.sheet.graph.getView().getScale()), this.centre());
+  }
+
+  /** F while the pointer is on the sheet and nobody is typing; Ctrl + Shift + F also while typing in an editor. */
+  private fitKey(e: KeyboardEvent): boolean {
+    if (e.ctrlKey || e.metaKey) return e.shiftKey;
+    if (e.shiftKey) return false;
+    const target = e.target instanceof Element ? e.target : null;
+    if (target?.closest('input, textarea, select, [contenteditable], .monaco-editor')) return false;
+    const rect = this.sheet.container.getBoundingClientRect();
+    const p = this.pointer;
+    return !!p && p.x >= rect.left && p.x <= rect.right && p.y >= rect.top && p.y <= rect.bottom;
+  }
+
+  private async fit(): Promise<void> {
+    this.stop();
+    await this.sheet.fitToView(this.pointer);
   }
 
   private place(): void {

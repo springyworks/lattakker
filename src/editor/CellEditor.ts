@@ -347,6 +347,15 @@ export class CellEditor {
     titleBar.innerHTML = `${escapeHtml(address)} · TypeScript`;
     titleBar.title = 'Ctrl+Enter restarts the cell · Esc restarts it and closes · drag this bar to move · double-click it to fill the screen';
     this.installTitleDrag(titleBar);
+    const fit = document.createElement('button');
+    fit.type = 'button';
+    fit.className = 'cell-editor-fit';
+    fit.textContent = '⤢ fit';
+    fit.title = 'Fit to view: zoom and move the sheet so this whole editor fits the window (F or Ctrl+Shift+F anywhere over it). Press again for the whole sheet, then back to where you were.';
+    fit.addEventListener('pointerdown', (e) => e.stopPropagation());
+    fit.addEventListener('dblclick', (e) => e.stopPropagation());
+    fit.addEventListener('click', () => void this.sheet.fitToView(null, 'editor'));
+    titleBar.appendChild(fit);
     const body = document.createElement('div');
     body.className = 'cell-editor-body';
     host.appendChild(titleBar);

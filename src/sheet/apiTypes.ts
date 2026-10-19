@@ -141,10 +141,18 @@ interface GameApi {
   captured(color: 'red' | 'blue'): PieceInfo[];
   /** Piece on a square. peek:true shows hidden Blue ranks (cheating, but handy for bots). */
   pieceAt(address: string, options?: { peek?: boolean }): PieceInfo | null;
-  /** Legal moves for one square or for a whole colour. */
+  /** true while pieces are still moving on the screen: a move made now would be refused. */
+  readonly busy: boolean;
+  /** Who makes Blue's moves: 'builtin' (the player that comes with the page) or 'virtual' (code has taken Blue over, see takeOverBlue). */
+  readonly bluePlayer: 'builtin' | 'virtual';
+  /** Legal moves for one square or for a whole colour ('red' or 'blue'). */
   legalMoves(addressOrColor: string): Array<{ from: string; to: string }>;
-  /** Make a move for Red (only during Red's turn). Returns a message. */
-  move(from: string, to: string): string;
+  /** Move a piece of that colour (default 'red'), only during that colour's turn. Blue only moves after takeOverBlue(). Returns a message; it starts with "Moving" when the move was made. */
+  move(from: string, to: string, color?: 'red' | 'blue'): string;
+  /** Play Blue from code: the built-in Blue player keeps quiet and game.move(from, to, 'blue') makes Blue's moves, so two virtual players can play each other. Blue goes back to the built-in player by itself when this cell stops, is edited or runs again (or call giveBackBlue()). */
+  takeOverBlue(): void;
+  /** Hand Blue back to the built-in player. */
+  giveBackBlue(): void;
   /** Show a message in the game bubble. */
   say(text: string): void;
 }
@@ -1145,7 +1153,7 @@ declare function at(address: string): CellRef;
 declare function range(text: string): CellRange;
 /** The sheet this cell lives in: its mode (run or view), its columns and rows, and cell() and range() to reach other cells. */
 declare const sheet: SheetApi;
-/** The game: whose turn it is, the pieces (game.pieces('red')), the moves, and game.move('B7', 'B6') to play. Everything about the battle is in here. */
+/** The game: whose turn it is, the pieces (game.pieces('red')), the moves, and game.move('B7', 'B6') to play (game.takeOverBlue() lets code play Blue too). Everything about the battle is in here. */
 declare const game: GameApi;
 /** 'run' or 'view' */
 declare const mode: 'run' | 'view';

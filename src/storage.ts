@@ -26,6 +26,7 @@ export function restoreCells(sheet: Sheet, cells: SavedCell[]): void {
     sheet.setCode(address, code, uid);
     if (Array.isArray(size) && size.length === 2) sheet.restoreUserSize(address, { cols: Number(size[0]), rows: Number(size[1]) });
   }
+  sheet.freeBuried();
 }
 
 interface SavedApp {

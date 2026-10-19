@@ -12,7 +12,7 @@ import type { Sheet } from './sheet/Sheet';
  */
 
 const KEY = 'lattakker:examples-rev';
-export const EXAMPLES_REV = 9;
+export const EXAMPLES_REV = 11;
 
 /** What each revision added, per tab. */
 const ADDED: Record<number, { board: string[]; lab: string[] }> = {
@@ -24,10 +24,16 @@ const ADDED: Record<number, { board: string[]; lab: string[] }> = {
   7: { board: ['A51'], lab: [] },
   8: { board: [], lab: [] },
   9: { board: ['K51'], lab: [] },
+  10: { board: [], lab: [] },
+  11: { board: [], lab: [] },
 };
 
 /** The code (without its comments) that an example had before a revision replaced it. */
 const REPLACED: Record<number, { board: Record<string, string[]>; lab: Record<string, string[]> }> = {
+  // 11: board A12 (the random player) used to start playing at once; it now starts on hold and a click starts or holds it.
+  11: { board: { A12: ["span(4, 3)\ntype Side = 'red' | 'blue'\ninterface Step {\nfrom: string\nto: string\n}\nconst PLAYS: Side[] = ['red']\nconst PAUSE: string = '700ms'\nif (PLAYS.includes('blue')) game.takeOverBlue()\nlet made: number = 0\nconst pick = (steps: Step[]): Step => steps[Math.floor(Math.random() * steps.length)]\nconst tick = (): void => {\nif (game.phase === 'over') {\nshow(`Game over: ${game.winner ?? 'nobody'} won after ${made} moves of mine`)\nstop()\nreturn\n}\nif (game.phase !== 'play') {\nshow('Waiting: press Start on the game')\nreturn\n}\nif (game.busy) return\nconst side: Side = game.turn\nif (!PLAYS.includes(side)) return\nconst steps: Step[] = game.legalMoves(side)\nif (steps.length === 0) {\nshow(`${side} cannot move`)\nreturn\n}\nconst step: Step = pick(steps)\nconst answer: string = game.move(step.from, step.to, side)\nif (answer.startsWith('Moving')) made++\nshow(`${side}: ${step.from} → ${step.to}\\n${made} moves made\\nA random player: no thinking`)\n}\nevery(PAUSE, tick)\nshow('Random player ready')\ncolor('#e1e6f0')"] }, lab: {} },
+  // 10: board A12 was the red/blue piece counter; it is now a typed random player (and can play Blue too).
+  10: { board: { A12: ["span(4, 2)\nconst red = game.pieces('red').length\nconst blue = game.pieces('blue').length\nprint(`Red has ${red} pieces`)\nprint(`Blue has ${blue} pieces`)\ncolor(red >= blue ? '#d9e8dd' : '#f0d8d5')"] }, lab: {} },
   // 8: Lab A31 calls draw() without the arguments it asks for; the cells are now checked as strictly as the app (draw(last?, from?)).
   8: { board: {}, lab: { A31: ["span(5, 3)\nmemory.heard = memory.heard ?? 0\nconst draw = (last, from) => show(\n'I listen for waves from any tab\\n' +\n'Waves heard: ' + memory.heard + '\\n' +\n(from ? 'Latest: wave ' + last + ' from ' + from : 'Nothing yet. Click Q42 on the board.')\n)\nmcp.on('wave', (n, from) => {\nmemory.heard++\ncolor('hsl(' + ((n * 47) % 360) + ', 60%, 82%)')\ndraw(n, from)\nmcp.emit('echo', n)\n})\ndraw()"] } },
   2: {

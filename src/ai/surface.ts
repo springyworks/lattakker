@@ -42,6 +42,14 @@ const LEGEND =
   '~~ = lake (nobody can enter). .. = empty square. Columns A-J left to right, rows 1-10 top to bottom: ' +
   "row 1 is Blue's back row, row 10 is Red's back row. Red (the player, and the AI helping them) moves up the board.";
 
+const LEGEND_BLUE =
+  'Legend (seen as Blue): B10 = your own Blue piece of rank 10 (B1..B10; BS = Blue Spy, rank 1; BB = Blue Bomb; BF = Blue Flag). ' +
+  'R? = hidden Red piece (rank unknown). r5 = Red piece revealed by combat, rank 5 (rS = spy, rB = bomb, rF = flag). ' +
+  '~~ = lake (nobody can enter). .. = empty square. Columns A-J left to right, rows 1-10 top to bottom: ' +
+  "row 1 is Blue's back row, Blue moves down the board.";
+
+type Side = 'red' | 'blue';
+
 const HELP = `LATTAKKER SHEET - window.mms guide (everything runs locally in this page; free, no tracking, no network unless the player starts a Share session or sets up the optional built-in helper, the 🤖 AI button)
 
 FIRST, BEFORE ANYTHING ELSE: read the README, the place of truth: ${README_URL}
@@ -66,9 +74,9 @@ READ
   mms.findTools('a few words')   (async) the best few MCP tools for your words, over all servers: server, tool, a sentence, and the mcp_request to copy. Ask it when you do not know which tool does what
   mms.mcp('lab', 'resources/list' | 'tools/call' ..., params) (async)   send an MCP request to a tab's server through the page's router; mms.mcpLog(20) shows the last messages that crossed it
   mms.tabs()                 { current, tabs: [{ id, title, path, mode, codeCells, rows, columns }], paths } the tabs that hold code cells and which one the player sees
-  mms.state()                { phase: 'setup'|'play'|'over', turn, winner, moveCount, lastMove, message, busy, redPieces, bluePieces }
-  mms.board()                { rows: [10 strings, row 1 first], legend, text }. Hidden Blue pieces stay hidden (B?).
-  mms.legalMoves(x)          x = 'red' or a Red square like 'B7' -> [{from,to}]. Only Red is shown (Blue stays hidden).
+  mms.state()                { phase: 'setup'|'play'|'over', turn, winner, moveCount, lastMove, message, busy, bluePlayer: 'builtin'|'virtual', redPieces, bluePieces }
+  mms.board('red'|'blue')    { rows: [10 strings, row 1 first], legend, text }. As Red (default) hidden Blue pieces stay hidden (B?); as Blue (after takeOverBlue) your Blue pieces are shown and Red's are hidden (R?).
+  mms.legalMoves(x)          x = 'red' or a Red square like 'B7' -> [{from,to}]. Blue's moves only after takeOverBlue(); until then Blue stays hidden.
   mms.cells('board'|'lab'|'all')  cells holding code: [{uid, tab, address, path, code, output, error, mode}]; board by default
   mms.getCell('A12')         one cell: { uid, tab, address, path, code, output, error, text, mode, ... }. Also accepts a path ('/lab/J24'), a uid, or a tab: mms.getCell('J24', 'lab').
   mms.resolve('@c-1a2b3c4d') where a cell is now: { tab, address, path, uid, hasCode }. Takes an address, a path or a uid.
@@ -79,6 +87,8 @@ ACT
   mms.shuffle()              setup phase only: re-deal Red's army randomly
   mms.start()                setup -> play (Red moves first)
   mms.move('B7','B6') (async)  Red moves one square (Scouts: any distance in a line); waits for Blue's reply. Returns the new state.
+  mms.takeOverBlue()         you play Blue: the built-in Blue player keeps quiet. Then mms.move('B4','B5','blue') makes Blue's move, so two virtual players (two AIs, or you for both) can play each other.
+  mms.giveBackBlue()         the built-in Blue player plays again (it also does when the page is reloaded; a cell that took Blue over gives it back when it stops)
   mms.pause() / mms.resume() pause or continue the battle (nobody moves while paused)
   mms.newGame()              back to setup with new armies
   mms.undo()                 take back Red's last move and Blue's answer
@@ -96,7 +106,7 @@ ACT
 
 IDENTITY: every code cell has a uid such as c-1a2b3c4d. The uid stays with its content when cells move, swap or rows are inserted; the address changes. Keep the uid to find code again later; mms.resolve(uid) gives the current address.
 
-WebMCP: if the browser supports it, the same actions are registered as tools: get_state, get_board, legal_moves, make_move, shuffle_army, start_battle, pause_battle, resume_battle, undo_move, new_game, list_tabs, list_cells, get_cell, resolve_cell, set_cell_code, write_code_live, get_requests, wait_for_request, reply_to_request, run_cell, set_mode, say_to_player, check_mail, read_mail, send_mail, mcp_request, mcp_log, export_svg, ask_rules, find_tools. mms.webmcp tells you what was registered.
+WebMCP: if the browser supports it, the same actions are registered as tools: get_state, get_board, legal_moves, make_move, take_over_blue, give_back_blue, shuffle_army, start_battle, pause_battle, resume_battle, undo_move, new_game, list_tabs, list_cells, get_cell, resolve_cell, set_cell_code, write_code_live, get_requests, wait_for_request, reply_to_request, run_cell, set_mode, say_to_player, check_mail, read_mail, send_mail, mcp_request, mcp_log, export_svg, ask_rules, find_tools. mms.webmcp tells you what was registered.
 An outside AI chat can use the same tools over MCP: run the dev server, open this page with ?mcp added to the URL, and connect to http://localhost:5178/mcp (see the README, section 11.3).
 The page also keeps an accessible text mirror in #mms-text (board grid, captured pieces, last move, code cells with output and errors). Each code cell is one list item: "A12: code: <first 3 lines, max 200 chars> | output: ... | error: ..."; use getCell for the whole code.
 
@@ -106,8 +116,8 @@ CELL CODE (TypeScript, async allowed, re-runs when things it reads change)
   at('B7')           another cell: .text .code .piece .color(c) .print(...) .flash()
   range('A1:J10')    array of cells with .color(c) and .print(...)
   game.phase game.turn game.winner game.moveCount game.lastMove game.history
-  game.pieces('red') game.captured('blue') game.pieceAt('B7') game.legalMoves('B7'|'red')
-  game.move('B7','B6') game.say('hi')
+  game.pieces('red') game.captured('blue') game.pieceAt('B7') game.legalMoves('B7'|'red'|'blue')
+  game.move('B7','B6') game.move('B4','B5','blue') game.say('hi')   game.busy game.bluePlayer game.takeOverBlue() game.giveBackBlue()
   sheet.mode sheet.cols sheet.rows   mode   sleep(ms|'2s')   log(...)
   show(...) replace output   clear()   span() read size, span(4) keep rows
   plot(Math.sin, {from:0,to:6.28,title:'wave'})  XY plot as output; also plot([1,4,9]), plot([[0,1],[1,3]]), plot({a: f, b: g})
@@ -157,29 +167,34 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
   const game = () => view.game;
   const sleep = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
 
-  function tokenFor(row: number, col: number): string {
+  /** One square as text, seen from `as`: your own pieces show their rank, the other side's only once combat revealed them. */
+  function tokenFor(row: number, col: number, as: Side = 'red'): string {
     if (isLake(row, col)) return '~~';
     const p: Piece | null = game().board[row]?.[col] ?? null;
     if (!p) return '..';
-    if (p.color === 'red') return `R${rankGlyph(p.rank)}`;
-    return p.revealed ? `b${rankGlyph(p.rank)}` : 'B?';
+    if (p.color === as) return `${as === 'red' ? 'R' : 'B'}${rankGlyph(p.rank)}`;
+    const other = as === 'red' ? 'b' : 'r';
+    return p.revealed ? `${other}${rankGlyph(p.rank)}` : `${other === 'b' ? 'B' : 'R'}?`;
   }
 
-  function boardRows(): string[] {
+  function boardRows(as: Side = 'red'): string[] {
     const rows: string[] = [];
     for (let r = 0; r < BOARD_ROWS; r++) {
       const tokens: string[] = [];
-      for (let c = 0; c < BOARD_COLS; c++) tokens.push(tokenFor(r, c).padEnd(3));
+      for (let c = 0; c < BOARD_COLS; c++) tokens.push(tokenFor(r, c, as).padEnd(3));
       rows.push(tokens.join(' ').trimEnd());
     }
     return rows;
   }
 
-  function boardText(): string {
+  function boardText(as: Side = 'red'): string {
     const header = 'Columns: ' + [...COLUMNS].map((c) => c.padEnd(3)).join(' ').trimEnd();
-    const lines = boardRows().map((row, i) => `${`Row ${i + 1}:`.padEnd(7)} ${row}`);
+    const lines = boardRows(as).map((row, i) => `${`Row ${i + 1}:`.padEnd(7)} ${row}`);
     return [header, ...lines].join('\n');
   }
+
+  /** Set while an outside AI plays Blue (see takeOverBlue); calling it hands Blue back to the built-in player. */
+  let blueRelease: (() => void) | null = null;
 
   function describeMove(m: ReturnType<GameView['moveInfo']>): string {
     const who = m.color === 'red' ? 'Red' : 'Blue';
@@ -207,6 +222,7 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
       message: hud.lastMessage.text,
       busy: view.isBusy(),
       paused: view.isPaused(),
+      bluePlayer: view.bluePlayer,
       redPieces: g.pieces('red').length,
       bluePieces: g.pieces('blue').length,
       tab: workspace.current,
@@ -435,15 +451,20 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
 
     state: (): Result => ok(stateData()),
 
-    board: (): Result => ok({ rows: boardRows(), columns: [...COLUMNS], legend: LEGEND, text: boardText() }),
+    board(as?: unknown): Result {
+      const side: Side = typeof as === 'string' && as.trim().toLowerCase() === 'blue' ? 'blue' : 'red';
+      if (side === 'blue' && !blueRelease) return fail("Blue's point of view is for the player of Blue: call takeOverBlue() first.");
+      return ok({ rows: boardRows(side), columns: [...COLUMNS], legend: side === 'blue' ? LEGEND_BLUE : LEGEND, text: boardText(side), as: side });
+    },
 
     legalMoves(fromOrColor: unknown): Result {
       if (typeof fromOrColor !== 'string') return fail("pass 'red' or a Red square such as 'B7'");
       const key = fromOrColor.trim();
-      if (key.toLowerCase() === 'blue') return fail("Blue's moves are hidden. Ask for 'red' or a Red square.");
-      if (key.toLowerCase() === 'red') {
+      const lower = key.toLowerCase();
+      if (lower === 'blue' && !blueRelease) return fail("Blue's moves are hidden. Ask for 'red' or a Red square, or take Blue over (takeOverBlue) to play Blue yourself.");
+      if (lower === 'red' || lower === 'blue') {
         const moves = game()
-          .allLegalMoves('red')
+          .allLegalMoves(lower)
           .map((m) => ({ from: view.addrOf(m.from), to: view.addrOf(m.to) }));
         return ok({ moves, note: game().phase === 'play' ? undefined : 'No moves until the battle starts (call start).' });
       }
@@ -451,17 +472,35 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
       if (!pos) return fail(`"${key}" is not a board square (A1 to J10)`);
       const piece = game().at(pos);
       if (!piece) return ok({ moves: [], note: 'That square is empty.' });
-      if (piece.color !== 'red') return fail("That is a Blue piece; Blue's moves are hidden.");
+      if (piece.color !== 'red' && !blueRelease) return fail("That is a Blue piece; Blue's moves are hidden.");
       return ok({ moves: game().legalMoves(pos).map((to) => ({ from: view.addrOf(pos), to: view.addrOf(to) })) });
     },
 
-    async move(from: unknown, to: unknown): Promise<Result> {
+    async move(from: unknown, to: unknown, color?: unknown): Promise<Result> {
       if (typeof from !== 'string' || typeof to !== 'string') return fail('move(from, to) needs two squares like "B7", "B6"');
-      const message = view.codeMove(from.trim().toUpperCase(), to.trim().toUpperCase());
+      const who = color === undefined || color === null || color === '' ? 'red' : typeof color === 'string' ? color.trim().toLowerCase() : '';
+      if (who !== 'red' && who !== 'blue') return fail("the colour is 'red' (default) or 'blue'");
+      if (who === 'blue' && !blueRelease) return fail('Blue is played by the built-in player. Call takeOverBlue() first, then move for Blue.');
+      const message = view.codeMove(from.trim().toUpperCase(), to.trim().toUpperCase(), who);
       if (!message.startsWith('Moving')) return fail(message);
       const done = await waitForMoves();
       flush();
       return ok({ message, settled: done, state: stateData() });
+    },
+
+    /** An outside AI plays Blue: the built-in player keeps quiet until giveBackBlue() (or a reload). */
+    takeOverBlue(): Result {
+      if (!blueRelease) blueRelease = view.takeOverBlue();
+      flush();
+      return ok({ message: "You play Blue now. Make Blue's moves with move(from, to, 'blue'); see Blue's side with board('blue'). Call giveBackBlue() when you are done.", state: stateData() });
+    },
+
+    giveBackBlue(): Result {
+      const had = blueRelease !== null;
+      blueRelease?.();
+      blueRelease = null;
+      flush();
+      return ok({ message: had ? 'The built-in Blue player plays again.' : 'The built-in Blue player was already playing.', state: stateData() });
     },
 
     shuffle(): Result {
@@ -786,25 +825,39 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
     {
       name: 'get_board',
       description:
-        'Read the 10x10 board as text. R10 is a visible Red piece of rank 10, B? a hidden Blue piece, b5 a revealed Blue piece, ~~ a lake, .. an empty square. Columns A-J, rows 1-10 (row 1 is at the top, Blue side). Hidden Blue pieces stay hidden.',
-      inputSchema: obj({}),
+        "Read the 10x10 board as text. R10 is a visible Red piece of rank 10, B? a hidden Blue piece, b5 a revealed Blue piece, ~~ a lake, .. an empty square. Columns A-J, rows 1-10 (row 1 is at the top, Blue side). Hidden Blue pieces stay hidden. After take_over_blue, as 'blue' shows the board from Blue's side (B10 your own Blue piece, R? a hidden Red piece).",
+      inputSchema: obj({ as: str("'red' (default) or 'blue' (only after take_over_blue)") }),
       readOnly: true,
-      run: () => api.board(),
+      run: (a) => api.board(a.as),
     },
     {
       name: 'legal_moves',
-      description: "List legal moves for the player's Red army. Pass 'red' for every Red move, or one Red square such as 'B7' for that piece. Only works once the battle has started.",
-      inputSchema: obj({ from_or_color: str("'red' or a Red square like 'B7'") }, ['from_or_color']),
+      description: "List legal moves for the player's Red army. Pass 'red' for every Red move, or one Red square such as 'B7' for that piece. Pass 'blue' (or a Blue square) only after take_over_blue. Only works once the battle has started.",
+      inputSchema: obj({ from_or_color: str("'red' or a Red square like 'B7' ('blue' after take_over_blue)") }, ['from_or_color']),
       readOnly: true,
       run: (a) => api.legalMoves(a.from_or_color),
     },
     {
       name: 'make_move',
       description:
-        'Move a Red piece from one square to another during the battle (for example from B7 to B6). Pieces move one square up, down, left or right; Scouts (rank 2) can slide any distance. Waits for Blue to answer, then returns the new state. If the move is not allowed you get a kid-friendly reason to explain.',
-      inputSchema: obj({ from: str('Square to move from, e.g. B7'), to: str('Square to move to, e.g. B6') }, ['from', 'to']),
+        "Move a Red piece from one square to another during the battle (for example from B7 to B6). Pieces move one square up, down, left or right; Scouts (rank 2) can slide any distance. Waits for Blue to answer, then returns the new state. With color 'blue' (only after take_over_blue) it moves a Blue piece instead, and nobody answers: you play both sides. If the move is not allowed you get a kid-friendly reason to explain.",
+      inputSchema: obj({ from: str('Square to move from, e.g. B7'), to: str('Square to move to, e.g. B6'), color: str("'red' (default) or 'blue' (only after take_over_blue)") }, ['from', 'to']),
       readOnly: false,
-      run: (a) => api.move(a.from, a.to),
+      run: (a) => api.move(a.from, a.to, a.color),
+    },
+    {
+      name: 'take_over_blue',
+      description: "Play Blue yourself: the built-in Blue player stops answering, and make_move with color 'blue' makes Blue's moves. With it, two virtual players (two AIs, or you for both sides) can play each other. Blue goes back to the built-in player with give_back_blue (or when the page is reloaded).",
+      inputSchema: obj({}),
+      readOnly: false,
+      run: () => api.takeOverBlue(),
+    },
+    {
+      name: 'give_back_blue',
+      description: 'Hand Blue back to the built-in Blue player, which then answers again (at once when it is Blue\'s turn).',
+      inputSchema: obj({}),
+      readOnly: false,
+      run: () => api.giveBackBlue(),
     },
     {
       name: 'shuffle_army',

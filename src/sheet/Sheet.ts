@@ -1066,8 +1066,8 @@ export class Sheet {
     const d = this.data.get(address);
     const cell = this.cells.get(address);
     if (!d || !cell) return;
-    cols = Math.max(1, Math.min(Math.floor(cols), this.colCount - d.col));
-    rows = Math.max(1, Math.min(Math.floor(rows), this.rowCount - d.row));
+    // A block never lies over another block or the board: it would hide it, and the mouse could not reach it any more.
+    ({ cols, rows } = this.fitFree(d, { cols: Math.max(1, Math.floor(cols) || 1), rows: Math.max(1, Math.floor(rows) || 1) }));
     if (d.span.cols === cols && d.span.rows === rows) return;
     const model = this.graph.getDataModel();
     model.batchUpdate(() => {
@@ -1110,8 +1110,34 @@ export class Sheet {
     const request = { cols: Math.max(1, Math.floor(cols) || 1), rows: Math.max(1, Math.floor(rows) || 1) };
     const decision = decideSpan(d.shape, request, readSpanCall(d.code));
     d.shape = decision.shape;
+    const before = d.span;
     this.setSpan(address, decision.apply.cols, decision.apply.rows);
+    const got = d.span;
+    // The code asked for more room than there is: say so once (a timer cell asks again at every tick, and gets the same answer).
+    if ((got.cols !== decision.apply.cols || got.rows !== decision.apply.rows) && (got.cols !== before.cols || got.rows !== before.rows)) {
+      this.flash(address, THEME.flashBad);
+      this.shapeHandlers.forEach((h) => h({ address, size: got, byPerson: false, limited: true, rewrote: false }));
+    }
     if (decision.rewriteTo) this.rewriteSpanLine(address, decision.rewriteTo);
+  }
+
+  /**
+   * Blocks that an older version let lie under another block (hidden, and out of the mouse's reach) come back out:
+   * the block on top shrinks to the biggest size that leaves the others alone. Returns the blocks that were shrunk.
+   */
+  freeBuried(): string[] {
+    const shrunk: string[] = [];
+    for (const [covered, owner] of [...this.coveredBy]) {
+      const buried = this.data.get(covered);
+      const top = this.data.get(owner);
+      if (!top || !buried || !(buried.code.trim() || buried.span.cols > 1 || buried.span.rows > 1) || shrunk.includes(owner)) continue;
+      const fit = this.fitFree(top, top.span, { cols: 1, rows: 1 });
+      this.forceSpan(owner, fit.cols, fit.rows);
+      if (top.shape.user) top.shape = { ...top.shape, user: fit };
+      if (top.code.trim()) this.rewriteSpanLine(owner, fit);
+      shrunk.push(owner);
+    }
+    return shrunk;
   }
 
   /** The size the person gave this block, or null when nobody did. */
@@ -1167,7 +1193,7 @@ export class Sheet {
   }
 
   /** The biggest size not larger than `want` that does not run over other code, merged blocks or the board. */
-  private fitFree(d: SheetCellData, want: Size): Size {
+  private fitFree(d: SheetCellData, want: Size, floor: Size = d.span): Size {
     let { cols, rows } = want;
     cols = Math.min(cols, this.colCount - d.col);
     rows = Math.min(rows, this.rowCount - d.row);
@@ -1178,9 +1204,9 @@ export class Sheet {
     };
     // Shrink the side that grew until it fits.
     while (!free(cols, rows)) {
-      if (cols > d.span.cols && cols >= rows) cols--;
-      else if (rows > d.span.rows) rows--;
-      else if (cols > d.span.cols) cols--;
+      if (cols > floor.cols && cols >= rows) cols--;
+      else if (rows > floor.rows) rows--;
+      else if (cols > floor.cols) cols--;
       else break;
     }
     return { cols: Math.max(1, cols), rows: Math.max(1, rows) };
@@ -1300,7 +1326,7 @@ export class Sheet {
   }
 
   /** The blocks (by owner) that touch a rectangle of cells; board squares are left out. */
-  private ownersIn(c1: number, r1: number, c2: number, r2: number): string[] {
+  ownersIn(c1: number, r1: number, c2: number, r2: number): string[] {
     const owners = new Set<string>();
     for (let r = Math.max(0, r1); r <= Math.min(r2, this.rowCount - 1); r++) {
       for (let c = Math.max(0, c1); c <= Math.min(c2, this.colCount - 1); c++) {
@@ -2410,6 +2436,107 @@ export class Sheet {
     const cx = ((x0 + x1) / 2 + t.x) * scale;
     const cy = ((y0 + y1) / 2 + t.y) * scale;
     return { scale, left: Math.max(0, cx - c.clientWidth / 2), top: Math.max(0, cy - c.clientHeight / 2) };
+  }
+
+  /** Where the last fit-to-view flight ended, so that the next press knows this step of the chain has been shown. */
+  private lastFit: { key: string; view: SheetView } | null = null;
+
+  /** The view that shows a rectangle (model units) whole and centred, with a little room around it. */
+  viewOfRect(r: { x: number; y: number; width: number; height: number }, maxScale = 2): SheetView {
+    const c = this.container;
+    const t = this.graph.getView().getTranslate();
+    const scale = Math.min(maxScale, Math.max(0.4, Math.min((c.clientWidth * 0.92) / r.width, (c.clientHeight * 0.92) / r.height)));
+    const cx = (r.x + r.width / 2 + t.x) * scale;
+    const cy = (r.y + r.height / 2 + t.y) * scale;
+    return { scale, left: Math.max(0, cx - c.clientWidth / 2), top: Math.max(0, cy - c.clientHeight / 2) };
+  }
+
+  /**
+   * Fit to view, at the pointer. What is under the pointer is shown whole: the code editor window, else the board, else the
+   * block. Pressed again when it already fits, the thing that holds it is shown whole (the sheet's content), and once that fits
+   * too, the view goes back to where it was before the first press. `only: 'editor'` is for the editor's own button.
+   */
+  async fitToView(client: { x: number; y: number } | null, only?: 'editor'): Promise<{ shown: 'editor' | 'board' | 'block' | 'content' | 'back' | 'none'; address?: string }> {
+    const c = this.container;
+    const view = this.graph.getView();
+    const scale = view.getScale();
+    const t = view.getTranslate();
+    const rect = c.getBoundingClientRect();
+    const at = client ? { x: (c.scrollLeft + client.x - rect.left) / scale - t.x, y: (c.scrollTop + client.y - rect.top) / scale - t.y } : null;
+    const inside = (r: { x: number; y: number; width: number; height: number }): boolean => !!at && at.x >= r.x && at.x <= r.x + r.width && at.y >= r.y && at.y <= r.y + r.height;
+
+    const steps: Array<{ shown: 'editor' | 'board' | 'block' | 'content'; key: string; rect: { x: number; y: number; width: number; height: number }; address?: string; maxScale?: number }> = [];
+    const frame = this.graph.getDataModel().getCell('ed:frame')?.getGeometry();
+    if (frame && (only === 'editor' || inside(frame))) steps.push({ shown: 'editor', key: 'ed:frame', rect: { x: frame.x, y: frame.y, width: frame.width, height: frame.height }, maxScale: 2.5 });
+    if (only !== 'editor') {
+      const board = { x: ORIGIN_X, y: ORIGIN_Y, width: 10 * CW, height: 10 * CH };
+      if (this.board && inside(board)) steps.push({ shown: 'board', key: 'board', rect: board });
+      if (at && !steps.length) {
+        const owner = this.ownerOf(formatAddress(Math.floor((at.x - ORIGIN_X) / CW), Math.floor((at.y - ORIGIN_Y) / CH)));
+        const d = this.data.get(owner);
+        if (d && !this.isBoardAddress(owner) && (d.code.trim() || d.span.cols > 1 || d.span.rows > 1)) {
+          steps.push({ shown: 'block', key: owner, address: owner, rect: { x: ORIGIN_X + d.col * CW, y: ORIGIN_Y + d.row * CH, width: d.span.cols * CW, height: d.span.rows * CH } });
+        }
+      }
+      let x0 = this.board ? ORIGIN_X : Infinity;
+      let y0 = this.board ? ORIGIN_Y : Infinity;
+      let x1 = this.board ? ORIGIN_X + 10 * CW : -Infinity;
+      let y1 = this.board ? ORIGIN_Y + 10 * CH : -Infinity;
+      for (const d of this.data.values()) {
+        if (!d.code.trim() || this.coveredBy.has(d.address)) continue;
+        x0 = Math.min(x0, ORIGIN_X + d.col * CW);
+        y0 = Math.min(y0, ORIGIN_Y + d.row * CH);
+        x1 = Math.max(x1, ORIGIN_X + (d.col + d.span.cols) * CW);
+        y1 = Math.max(y1, ORIGIN_Y + (d.row + d.span.rows) * CH);
+      }
+      if (x1 > x0 && y1 > y0) steps.push({ shown: 'content', key: 'content', rect: { x: x0, y: y0, width: x1 - x0, height: y1 - y0 } });
+    }
+
+    const now = this.viewState();
+    const same = (a: SheetView, b: SheetView): boolean => Math.abs(Math.log(a.scale / b.scale)) < 0.03 && Math.abs(a.left - b.left) < c.clientWidth * 0.03 && Math.abs(a.top - b.top) < c.clientHeight * 0.03;
+    for (const step of steps) {
+      const target = this.viewOfRect(step.rect, step.maxScale);
+      if (same(target, now) || (this.lastFit?.key === step.key && same(this.lastFit.view, now))) continue;
+      this.zoomReturn ??= now;
+      this.zoomedOn = step.address ?? null;
+      this.zoomListeners.forEach((l) => l());
+      await this.flyingTo(target);
+      this.lastFit = { key: step.key, view: this.viewState() };
+      if (step.address) this.flash(step.address, undefined, 600);
+      return { shown: step.shown, address: step.address };
+    }
+    this.lastFit = null;
+    if (this.zoomReturn) {
+      await this.zoomOut();
+      return { shown: 'back' };
+    }
+    return { shown: 'none' };
+  }
+
+  /** The blocks with code (by owner) in a whole row (`row`) or a whole column (`col`), and the rectangle (model units) around them. */
+  lineBlocks(line: { row: number } | { col: number }): { owners: string[]; rect: { x: number; y: number; width: number; height: number } | null } {
+    const owners = ('row' in line ? this.ownersIn(0, line.row, this.colCount - 1, line.row) : this.ownersIn(line.col, 0, line.col, this.rowCount - 1)).filter((a) => this.data.get(a)?.code.trim());
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const a of owners) {
+      const d = this.data.get(a)!;
+      x0 = Math.min(x0, ORIGIN_X + d.col * CW);
+      y0 = Math.min(y0, ORIGIN_Y + d.row * CH);
+      x1 = Math.max(x1, ORIGIN_X + (d.col + d.span.cols) * CW);
+      y1 = Math.max(y1, ORIGIN_Y + (d.row + d.span.rows) * CH);
+    }
+    return { owners, rect: owners.length ? { x: x0, y: y0, width: x1 - x0, height: y1 - y0 } : null };
+  }
+
+  /** Flies to show a rectangle (model units) whole; zooming out afterwards goes back to where it was. */
+  async fitRect(r: { x: number; y: number; width: number; height: number }): Promise<void> {
+    this.zoomReturn ??= this.viewState();
+    this.zoomedOn = null;
+    this.zoomListeners.forEach((l) => l());
+    await this.flyingTo(this.viewOfRect(r));
+    this.lastFit = null;
   }
 
   /** A step back from where the pointer is: the point under it stays where it is, everything around goes further away. (Ctrl + right-click.) */

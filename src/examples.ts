@@ -2,37 +2,98 @@
 export const EXAMPLES: Array<[string, string]> = [
   [
     'A12',
-    `// This cell is TypeScript. Double-click it to edit.
-// It re-runs after every move, so the numbers stay fresh.
-// Code is a list of instructions. The computer reads them from top to bottom.
-// A line starting with two slashes is a comment: a note for humans.
-// The computer ignores comments, so I can talk to you as much as I like!
+    `// A random player: it plays the game by itself, picking any legal move,
+// again and again, until you hold it or the game ends. No intelligence needed!
+// Every value in this cell has a type, so hover over a name to see it.
+// It starts on hold. CLICK THIS CELL to start it, click again to hold it.
+// (It also waits until the battle begins: press Start on the game first.)
 
-// span(4, 2) sets the size of this cell: 4 columns wide and 2 rows tall.
-// Think of the cell as a window; now you know how big the window is.
-span(4, 2)
+// 4 columns wide, 3 rows tall.
+span(4, 3)
 
-// const makes a named box that holds a value. The name here is red.
-// game.pieces('red') asks the game for a list of all red pieces.
-// .length counts how many things are in that list. So red is a number.
-const red = game.pieces('red').length
+// A type is a name for a kind of value. A Side is one of exactly two words.
+type Side = 'red' | 'blue'
 
-// Same idea for the blue pieces. A new box called blue holds that count.
-const blue = game.pieces('blue').length
+// An interface describes the shape of a thing: a Step has a from and a to,
+// both squares written as text, like 'B7' and 'B6'.
+interface Step {
+  from: string
+  to: string
+}
 
-// print adds a new line of text to this cell. Text can be glued to values.
-// Text between backticks is a template string: whatever sits inside the
-// dollar-and-curly-brackets part is replaced by the value of that box.
-// So if red is 40, the cell shows: Red has 40 pieces
-print(\`Red has \${red} pieces\`)
+// Which sides does this cell play? ['red'] plays Red against the built-in
+// Blue player. ['red', 'blue'] plays both sides: two virtual players.
+// (: Side[] says this box holds a list of sides.)
+const PLAYS: Side[] = ['red']
 
-// Same trick again, this time to show the Blue count.
-print(\`Blue has \${blue} pieces\`)
+// How long to wait between two moves, so you can watch (700 milliseconds).
+const PAUSE: string = '700ms'
 
-// color() paints the cell background. The ? : part is a tiny question.
-// "Is red at least as big as blue?" If yes, use green (#d9e8dd).
-// If no, use a soft red (#f0d8d5). So the cell turns green when Red leads.
-color(red >= blue ? '#d9e8dd' : '#f0d8d5')`,
+// let makes a box whose value can change. Both start "empty": we are on hold
+// (false means no, true means yes), and no moves have been made yet.
+let playing: boolean = false
+let made: number = 0
+
+// pick chooses one item from a list at random. Math.random() gives a number
+// from 0 up to (not including) 1; times the length, rounded down, is a place
+// in the list.
+const pick = (steps: Step[]): Step => steps[Math.floor(Math.random() * steps.length)]
+
+// What this cell says about itself while it is on hold.
+const hold = (): void => {
+  show(\`A random player, on hold\\n\${made} moves made\\nClick me to play\`)
+}
+
+// takeOverBlue() tells the built-in Blue player to keep quiet, so this cell
+// can make Blue's moves too. giveBackBlue() lets the built-in player play again.
+const setPlaying = (on: boolean): void => {
+  playing = on
+  if (PLAYS.includes('blue')) {
+    if (on) game.takeOverBlue()
+    else game.giveBackBlue()
+  }
+  if (on) show('Random player: starting...')
+  else hold()
+}
+
+// tick is one turn of the loop: look at the game, and move if it is our turn.
+const tick = (): void => {
+  // On hold: do nothing at all.
+  if (!playing) return
+  // The game ended: say who won and go back on hold.
+  if (game.phase === 'over') {
+    setPlaying(false)
+    show(\`Game over: \${game.winner ?? 'nobody'} won after \${made} moves of mine\`)
+    return
+  }
+  if (game.phase !== 'play') {
+    show('Waiting: press Start on the game')
+    return
+  }
+  // Pieces are still sliding on the screen, or it is not our turn: wait.
+  if (game.busy) return
+  const side: Side = game.turn
+  if (!PLAYS.includes(side)) return
+
+  // Every move that side may make now, as a list of Steps.
+  const steps: Step[] = game.legalMoves(side)
+  if (steps.length === 0) {
+    show(\`\${side} cannot move\`)
+    return
+  }
+  const step: Step = pick(steps)
+  const answer: string = game.move(step.from, step.to, side)
+  if (answer.startsWith('Moving')) made++
+  show(\`\${side}: \${step.from} → \${step.to}\\n\${made} moves made\\nA random player: click me to hold\`)
+}
+
+// A click on this cell flips between playing and on hold, like a light switch.
+on(cell, 'click', () => setPlaying(!playing))
+
+// every() calls tick again and again. It stops when this cell is edited.
+every(PAUSE, tick)
+hold()
+color('#e1e6f0')`,
   ],
   [
     'E12',

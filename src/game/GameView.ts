@@ -24,6 +24,9 @@ import {
 
 const DRAG_THRESHOLD = 4;
 
+/** Who makes Blue's moves: the player built into the page, or code that has taken Blue over. */
+export type BluePlayer = 'builtin' | 'virtual';
+
 interface DragState {
   pieceId: number;
   from: Pos;
@@ -72,6 +75,8 @@ export class GameView {
   private busy = false;
   private paused = false;
   private epoch = 0;
+  /** Who has taken Blue over (a cell, an outside AI). While anyone has, the built-in Blue player keeps quiet. */
+  private blueHolders = new Set<symbol>();
   private drag: DragState | null = null;
   lastInteraction = 0;
 
@@ -165,11 +170,38 @@ export class GameView {
     );
   }
 
+  /** Who plays Blue: the built-in player, or code (a cell, an outside AI) that has taken Blue over. */
+  get bluePlayer(): BluePlayer {
+    return this.blueHolders.size > 0 ? 'virtual' : 'builtin';
+  }
+
+  /**
+   * Code takes Blue over: the built-in player no longer answers, and `codeMove(from, to, 'blue')` plays Blue's moves.
+   * Returns the way to hand Blue back (calling it twice does nothing). Blue goes back to the built-in player when the last holder lets go.
+   */
+  takeOverBlue(): () => void {
+    const key = Symbol('blue');
+    this.blueHolders.add(key);
+    this.updateHud();
+    this.onChange?.();
+    return () => {
+      if (!this.blueHolders.delete(key)) return;
+      this.updateHud();
+      this.onChange?.();
+      // Blue was waiting for its player: the built-in one carries on (a move that is still being shown does this itself when it ends).
+      if (this.blueHolders.size === 0 && this.game.phase === 'play' && this.game.turn === 'blue' && !this.busy) void this.blueMoves();
+    };
+  }
+
   /** Blue answers when a saved game was stopped in the middle of Blue's turn. */
   private async blueMoves(): Promise<void> {
     this.busy = true;
     this.showBlueThinking();
     if (!(await this.thinkTime(650))) return;
+    if (this.bluePlayer === 'virtual') {
+      this.busy = false;
+      return;
+    }
     const move = chooseBlueMove(this.game);
     this.busy = false;
     if (move) await this.playMove(move.from, move.to, 'blue');
@@ -736,9 +768,13 @@ export class GameView {
     this.updateHud();
     this.onChange?.();
 
-    if (this.game.phase === 'play' && this.game.turn === 'blue') {
+    if (this.game.phase === 'play' && this.game.turn === 'blue' && this.bluePlayer === 'builtin') {
       this.showBlueThinking();
       if (!(await this.thinkTime(who === 'red' ? 650 : 250))) return;
+      if (this.blueHolders.size > 0) {
+        this.busy = false;
+        return;
+      }
       const move = chooseBlueMove(this.game);
       this.busy = false;
       if (move) await this.playMove(move.from, move.to, 'blue');
@@ -782,7 +818,8 @@ export class GameView {
   }
 
   private showBlueThinking(): void {
-    if (this.paused) this.hud.setTurn('The battle is paused', 'none', 'Press Continue to go on');
+    if (this.bluePlayer === 'virtual') this.hud.setTurn('Blue is played by code', 'blue', 'A cell or an outside AI makes Blue\'s moves');
+    else if (this.paused) this.hud.setTurn('The battle is paused', 'none', 'Press Continue to go on');
     else this.hud.setTurn('Blue is thinking. Please wait', 'blue', 'You cannot move until Blue has moved');
   }
 
@@ -806,6 +843,7 @@ export class GameView {
     } else if (g.phase === 'play') {
       if (this.paused) hud.setTurn('The battle is paused', 'none', 'Press Continue to go on');
       else if (g.turn === 'red') hud.setTurn('It is your turn now', 'red', 'Click a red piece, then a green dot');
+      else if (this.bluePlayer === 'virtual') hud.setTurn('Blue is played by code', 'blue', "A cell or an outside AI makes Blue's moves");
       else hud.setTurn('Blue is thinking. Please wait', 'blue', 'You cannot move until Blue has moved');
       if (this.paused) {
         hud.setButtonLabel('btn:start', 'Continue', 'The battle is paused');
@@ -907,19 +945,22 @@ export class GameView {
     this.hud.say('Welcome, General! 👋 The battle is running and it is your move. Click a red piece, then a green dot. Guard your flag 🚩 at H10!', 'good');
   }
 
-  /** Used by code cells: move for Red if it is legal right now. */
-  codeMove(fromAddr: string, toAddr: string): string {
+  /** Used by code cells and outside AIs: move for `who` (Red unless told otherwise) if it is legal right now. Blue only moves for code that has taken Blue over. */
+  codeMove(fromAddr: string, toAddr: string, who: Color = 'red'): string {
     const from = this.posOf(fromAddr);
     const to = this.posOf(toAddr);
     if (!from || !to) return 'Use board addresses like B7 and B6.';
     if (this.paused) return 'The battle is paused. Press Continue first.';
     if (this.busy) return 'Pieces are still moving, try again in a moment.';
     if (this.game.phase !== 'play') return 'The battle has not started.';
-    if (this.game.turn !== 'red') return "It is Blue's turn.";
+    if (this.game.turn !== who) return `It is ${this.game.turn === 'red' ? "Red's" : "Blue's"} turn.`;
+    if (who === 'blue' && this.bluePlayer === 'builtin') return 'Blue is played by the built-in player. Take Blue over first (takeOverBlue), then move for Blue.';
+    const piece = this.game.at(from);
+    if (piece && piece.color !== who) return `That is a ${piece.color === 'red' ? 'Red' : 'Blue'} piece, and it is ${who === 'red' ? "Red's" : "Blue's"} turn.`;
     const reason = this.game.explain(from, to);
     if (reason) return reason;
     this.clearSelection();
-    void this.playMove(from, to, 'red');
+    void this.playMove(from, to, who);
     return `Moving ${fromAddr} → ${toAddr}`;
   }
 

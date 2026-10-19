@@ -201,6 +201,21 @@ body.grab-armed .sheet-pane {
   user-select: none;
   touch-action: none;
 }
+.cell-editor-fit {
+  float: right;
+  margin-left: 8px;
+  padding: 0 6px;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+  color: #1f2933;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid #9aa5b1;
+  border-radius: 4px;
+}
+.cell-editor-fit:hover {
+  background: #fff;
+}
 .cell-editor-body {
   flex: 1 1 auto;
   min-height: 0;

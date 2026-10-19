@@ -12,6 +12,10 @@ export const SERVER_CONTEXT = 0;
 export const OLLAMA_CONTEXT_OPTIONS = [SERVER_CONTEXT, 4096, 8192, 16384, 32768, 65536, 131072, 262144];
 export const DEFAULT_OLLAMA_CONTEXT = SERVER_CONTEXT;
 
+/** After this many silent minutes the model on this computer is not given up on: the person is asked whether to keep waiting. 0 = never ask (only the Stop button ends the wait). */
+export const WAIT_OPTIONS = [0, 2, 5, 10, 20, 30, 60, 120, 240];
+export const DEFAULT_WAIT_MINUTES = 10;
+
 /** Used for budgeting when the server's own size is not known yet (before the first answer from /api/ps). */
 const ASSUMED_SERVER_WINDOW = 32768;
 let serverWindow = 0;
@@ -29,7 +33,7 @@ export function localWindow(chosen: number = getSettings().local.context): numbe
 export interface AiSettings {
   provider: ProviderId;
   /** An OpenAI-compatible server, for example Ollama (http://localhost:11434/v1) or LM Studio (http://localhost:1234/v1). */
-  local: { baseUrl: string; model: string; /** How many tokens the model may remember at once (Ollama's num_ctx). More is smarter but uses more memory. */ context: number };
+  local: { baseUrl: string; model: string; /** How many tokens the model may remember at once (Ollama's num_ctx). More is smarter but uses more memory. */ context: number; /** Silent minutes before the person is asked whether to keep waiting (0 = never ask). */ waitMinutes: number };
   gemini: { model: string; adultAck: boolean };
   /** Keep the key in this browser (localStorage) instead of only until the page is closed. */
   remember: boolean;
@@ -51,7 +55,7 @@ export interface AiSettings {
 
 export const DEFAULT_SETTINGS: AiSettings = {
   provider: 'local',
-  local: { baseUrl: 'http://localhost:11434/v1', model: '', context: DEFAULT_OLLAMA_CONTEXT },
+  local: { baseUrl: 'http://localhost:11434/v1', model: '', context: DEFAULT_OLLAMA_CONTEXT, waitMinutes: DEFAULT_WAIT_MINUTES },
   gemini: { model: 'gemini-flash-latest', adultAck: false },
   remember: false,
   autoPopup: true,
@@ -76,7 +80,7 @@ function merge(base: AiSettings, saved: Partial<AiSettings> | null): AiSettings 
   const seconds = (saved as { v?: number }).v === 2 || Number(saved.autoSeconds) !== 22 ? Number(saved.autoSeconds) : base.autoSeconds;
   return {
     provider: saved.provider === 'gemini' ? 'gemini' : 'local',
-    local: { baseUrl: String(saved.local?.baseUrl || base.local.baseUrl), model: String(saved.local?.model ?? ''), context: OLLAMA_CONTEXT_OPTIONS.includes(Number(saved.local?.context)) ? Number(saved.local?.context) : base.local.context },
+    local: { baseUrl: String(saved.local?.baseUrl || base.local.baseUrl), model: String(saved.local?.model ?? ''), context: OLLAMA_CONTEXT_OPTIONS.includes(Number(saved.local?.context)) ? Number(saved.local?.context) : base.local.context, waitMinutes: WAIT_OPTIONS.includes(Number(saved.local?.waitMinutes)) ? Number(saved.local?.waitMinutes) : base.local.waitMinutes },
     gemini: { model: String(saved.gemini?.model || base.gemini.model), adultAck: saved.gemini?.adultAck === true },
     remember: saved.remember === true,
     autoPopup: saved.autoPopup !== false,
@@ -111,6 +115,9 @@ function persist(): void {
     // storage blocked: the settings simply last until the page is closed
   }
 }
+
+/** The silence after which the person is asked whether to keep waiting, in milliseconds (0 = never). */
+export const patienceMs = (): number => settings.local.waitMinutes * 60000;
 
 export const getSettings = (): AiSettings => settings;
 

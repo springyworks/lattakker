@@ -1,7 +1,8 @@
-import { DEFAULT_OLLAMA_CONTEXT, getKey, getSettings, localWindow, noteServerWindow, type AiSettings } from './config';
+import { DEFAULT_OLLAMA_CONTEXT, getKey, getSettings, localWindow, noteServerWindow, patienceMs, type AiSettings } from './config';
 import { ammo } from './ammo';
 import { describeModel, describeTimings, loadEstimate, parsePs, parseTimings, rememberLoad, setLastRun, setLive, type PsModel, type Timings } from './ollamaLoad';
 import { jobs, type JobHandle } from './jobs';
+import { askToContinue, minutesText } from './patience';
 
 /**
  * The two kinds of language-model server the helper can talk to, behind one small interface. Messages and tools
@@ -39,7 +40,7 @@ export interface ModelReply {
   raw?: unknown;
 }
 
-export type AiErrorKind = 'network' | 'auth' | 'rate' | 'blocked' | 'tools' | 'bad' | 'server';
+export type AiErrorKind = 'network' | 'auth' | 'rate' | 'blocked' | 'tools' | 'bad' | 'server' | 'patience';
 
 export class AiError extends Error {
   constructor(
@@ -326,17 +327,48 @@ export class OpenAiCompatProvider implements ModelProvider {
     }
     // What is really going on while the first word has not come yet: ask the server whether the model is in memory.
     const ctl = new AbortController();
-    const relay = (): void => ctl.abort();
+    let asking: { withdraw: () => void } | null = null;
+    const relay = (): void => {
+      asking?.withdraw();
+      ctl.abort();
+    };
     signal.addEventListener('abort', relay);
     let words = 0;
     let askedWindow = false;
     let waitingForFirst = true;
     let stuck = '';
     let sawAbsent = false;
+    // Patience: after this much silence (since the question went out, or since the last piece of the answer) the person is asked whether to keep waiting.
+    let lastSign = performance.now();
+    let limitMs = patienceMs();
+    let lastFacts: string[] = [];
+    const stopWatching = (): void => {
+      window.clearInterval(watch);
+      asking?.withdraw();
+    };
     job.state('waiting');
     job.say(`question sent to ${new URL(this.baseUrl, location.href).host}; nothing has come back yet`, false);
     const watch = window.setInterval(() => {
-      if (!waitingForFirst) return;
+      const silentMs = performance.now() - lastSign;
+      if (limitMs > 0 && silentMs >= limitMs && !asking) {
+        const question = askToContinue(this.model || 'the model', () => Math.round((performance.now() - lastSign) / 1000), () => lastFacts);
+        asking = question;
+        void question.answer.then(({ minutes, away }) => {
+          if (asking === question) asking = null;
+          if (minutes < 0 || signal.aborted) return;
+          if (minutes > 0) {
+            limitMs = (performance.now() - lastSign) + minutes * 60000;
+            job.say(`you chose to keep waiting for ${minutesText(minutes)} more`, false);
+            return;
+          }
+          stuck = `${this.label} gave no word for ${Math.round((performance.now() - lastSign) / 60000)} min, ${away ? 'and nobody answered the question whether to keep waiting, so the request was stopped' : 'and you chose to stop'}.`;
+          ctl.abort();
+        });
+      }
+      if (!waitingForFirst) {
+        if (silentMs >= 3000) job.say(`no new piece for ${Math.round(silentMs / 1000)} s; ${text.length} characters so far`, false);
+        return;
+      }
       const quiet = Math.round((performance.now() - sentAt) / 1000);
       void Promise.all([this.ps(), native ? this.alive() : Promise.resolve(null)]).then(([{ loaded, others, mine }, ping]) => {
         if (!waitingForFirst) return;
@@ -351,11 +383,6 @@ export class OpenAiCompatProvider implements ModelProvider {
           maybe.push(`${this.model} is being loaded (Ollama does not say so; this is the usual reason)`, loadEstimate(this.model, quiet));
           if (others.length) maybe.push(`it has to make room first (to free it: ollama stop ${others[0]})`);
           job.say(`the model is not in memory yet: loading it, probably. ${quiet} s so far, ${loadEstimate(this.model, quiet)}.${others.length ? ` Ollama is also holding ${others.join(', ')} in memory: it has to make room first (to free it: ollama stop ${others[0]}).` : ''}`, false);
-          // Loading is slow but allowed; a model that never shows up in memory is given up on after 20 minutes.
-          if (quiet > 1200) {
-            stuck = 'The model did not finish loading within 20 minutes.';
-            ctl.abort();
-          }
         } else {
           if (loaded && sawAbsent) {
             // It appeared while we waited: that was a load, and its length is the best guess for the next one.
@@ -370,11 +397,8 @@ export class OpenAiCompatProvider implements ModelProvider {
             maybe.push('this server does not tell what is in its memory, so nothing more can be said');
           }
           job.say(loaded === true ? `the model is in memory${mine ? ` (${describeModel(mine)})` : ''} and is reading the question; no word yet (${quiet} s)` : `waiting for the server; nothing has come back yet (${quiet} s)`, false);
-          if (quiet > 300) {
-            stuck = `The model gave no word for ${quiet} s although it is in memory: it looks stuck.`;
-            ctl.abort();
-          }
         }
+        lastFacts = [...known, ...maybe.map((m) => `maybe: ${m}`)];
         setLive({ known, maybe });
       });
     }, 3000);
@@ -383,16 +407,16 @@ export class OpenAiCompatProvider implements ModelProvider {
     try {
       res = await fetch(native ? `${this.root()}/api/chat` : this.url('/chat/completions'), { method: 'POST', headers: this.headers(), body: JSON.stringify(body), signal: ctl.signal });
     } catch (err) {
-      window.clearInterval(watch);
+      stopWatching();
       signal.removeEventListener('abort', relay);
       waitingForFirst = false;
       setLive(null);
       if (signal.aborted) throw err;
-      if (stuck) throw new AiError('server', stuck);
+      if (stuck) throw new AiError('patience', stuck);
       throw this.unreachable(err);
     }
     if (!res.ok) {
-      window.clearInterval(watch);
+      stopWatching();
       signal.removeEventListener('abort', relay);
       waitingForFirst = false;
       setLive(null);
@@ -409,6 +433,7 @@ export class OpenAiCompatProvider implements ModelProvider {
       throw fail(res.status, message);
     }
 
+    lastSign = performance.now();
     // The answer arrives word by word (server-sent events); every piece is a real sign of life.
     let text = '';
     let finish = '';
@@ -431,6 +456,7 @@ export class OpenAiCompatProvider implements ModelProvider {
       }
       if (choice.finish_reason) finish = choice.finish_reason;
       words++;
+      lastSign = performance.now();
       waitingForFirst = false;
       if (!askedWindow) {
         askedWindow = true;
@@ -494,9 +520,10 @@ export class OpenAiCompatProvider implements ModelProvider {
       }
     } catch (err) {
       if (signal.aborted || err instanceof AiError) throw err;
+      if (stuck) throw new AiError('patience', stuck);
       throw new AiError('network', `The answer was cut off after ${text.length} characters: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
-      window.clearInterval(watch);
+      stopWatching();
       signal.removeEventListener('abort', relay);
       waitingForFirst = false;
       if (timings) setLastRun(describeTimings(timings));
@@ -689,6 +716,8 @@ export function friendly(err: unknown): string {
         return `The AI said no: ${err.message} (a grown-up can check the key in the settings ⚙).`;
       case 'network':
         return err.message;
+      case 'patience':
+        return `${err.message} The model may still be working on its computer. To wait longer, raise "Wait this long before asking" in the settings ⚙ (Memory of the chat); to see what Ollama is doing, run it with OLLAMA_DEBUG=1 (journalctl -u ollama -f).`;
       case 'blocked':
         return err.message;
       default:

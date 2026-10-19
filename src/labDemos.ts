@@ -1223,7 +1223,7 @@ span(7, 3)
 // A recipe that keeps only the first line of a text.
 const first = (text) => String(text).split('\n')[0]
 
-// at('/board/A12') is the board's cell A12 (the red/blue piece counter).
+// at('/board/A12') is the board's cell A12 (the random player).
 const a12 = at('/board/A12')
 
 // The board's path-tour cell A15 prints several lines; we want its first.

@@ -566,9 +566,25 @@ export function buildApi(
     return arr;
   };
 
+  /** Blue taken over by this run of this cell: handed back to the built-in player when the cell stops, is edited or runs again. */
+  let blueHeld: { release: () => void; forget: () => void } | null = null;
+  const giveBackBlue = (): void => {
+    const held = blueHeld;
+    if (!held) return;
+    blueHeld = null;
+    held.forget();
+    held.release();
+  };
+
   const game = {
     get phase() {
       return view.game.phase;
+    },
+    get busy() {
+      return view.isBusy();
+    },
+    get bluePlayer() {
+      return view.bluePlayer;
     },
     get turn() {
       return view.game.turn;
@@ -602,9 +618,16 @@ export function buildApi(
       if (!pos) return [];
       return view.game.legalMoves(pos).map((to) => ({ from: view.addrOf(pos), to: view.addrOf(to) }));
     },
-    move(from: string, to: string) {
-      return view.codeMove(String(from).toUpperCase(), String(to).toUpperCase());
+    move(from: string, to: string, color: 'red' | 'blue' = 'red') {
+      if (color !== 'red' && color !== 'blue') throw new Error(`game.move: the colour is 'red' or 'blue', not "${String(color)}"`);
+      return view.codeMove(String(from).toUpperCase(), String(to).toUpperCase(), color);
     },
+    takeOverBlue() {
+      ctx.guard();
+      if (blueHeld) return;
+      blueHeld = { release: view.takeOverBlue(), forget: ctx.addTask(giveBackBlue) };
+    },
+    giveBackBlue,
     say(text: string) {
       hud.say(String(text), 'info');
     },
@@ -622,9 +645,11 @@ export function buildApi(
 
   // Any access to `game.*` is treated as a read of the synthetic __game__ node, since aggregate
   // state (phase/turn/winner/history) isn't tied to one address.
+  // Doing something (moving, taking Blue over) is not reading the game: a cell that only plays must not re-run after every move.
+  const ACTIONS = new Set<string | symbol>(['move', 'say', 'takeOverBlue', 'giveBackBlue']);
   const trackedGame = new Proxy(game, {
     get(target, prop, receiver) {
-      track(GAME_NODE);
+      if (!ACTIONS.has(prop)) track(GAME_NODE);
       return Reflect.get(target, prop, receiver);
     },
   });
