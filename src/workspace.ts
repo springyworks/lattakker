@@ -104,6 +104,7 @@ export class Workspace {
     const bump = (): void => this.cellsChanged();
     tab.sheet.onContentMoved(bump);
     tab.sheet.onRowsInserted(bump);
+    tab.sheet.onColumnsInserted(bump);
     tab.sheet.onRoomMade(bump);
     tab.sheet.onCodeChanged(bump);
   }

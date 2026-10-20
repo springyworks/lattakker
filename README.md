@@ -864,13 +864,14 @@ on('I18', 'size',  (box) => show('I18 is now ' + box.cols + '×' + box.rows))  /
 on('E21', 'code',  (c)   => show('E21 was edited or moved'))                    // its code changed
 on('I21', 'click', ()    => print('clicked!'))                                  // clicked on the sheet
 on('sheet', 'rows', () => show('a row was inserted'))
+on('sheet', 'cols', () => show('a column was inserted'))
 on('sheet', 'mode', (s) => show('mode is ' + s.mode))                           // run or view
 ```
 
 So a cell can react when a child resizes a merged cell (right-click →
 **Size**), edits another cell's code by hand, or clicks a "button" cell.
 These are also readable at the top level of a cell, which makes the cell
-re-run on its own: `cell.cols`, `cell.rows`, `at('X').code`, `sheet.rows` and
+re-run on its own: `cell.cols`, `cell.rows`, `at('X').code`, `sheet.rows`, `sheet.cols` and
 `sheet.mode`. (Calling `span(4, 2)` to *set* a size is not a read.)
 
 Two more tools make such cells behave:
@@ -994,7 +995,7 @@ show('board A12 says: ' + at('/board/A12').text)
 | Following a cell over MCP: `mcp.watch(path, fn)` | yes (the news is an MCP notification, a little later than `at()`) |
 | The game: `game.*` and `on('game', fn)` | yes: there is one game and every tab is woken when it changes |
 | Writing another tab's cell (`print`, `show`, `color`, `span`) | no, read-only; send a signal or use an MCP tool instead |
-| `range()`, `on('sheet', 'rows' \| 'mode')` | the tab the code is in only |
+| `range()`, `on('sheet', 'rows' \| 'cols' \| 'mode')` | the tab the code is in only |
 | Which tab is in front, where the pointer is | not available to cells (yet) |
 | Order between tabs | none: a change in one tab reaches the other a moment later |
 
@@ -1495,6 +1496,23 @@ every('1s', async () => { await system.read(); plot(system.series('cpu', 60)) })
 `source` says where the numbers come from: `'dev-server'` (measured, see
 [6.5](#65-your-own-tabs-and-the-monitor)) or `'browser'` (only what a browser tells; the rest is
 `null`). `series()` fills while somebody calls `read()`. Over MCP: server `system`, tools `read`, `history`.
+
+**Teletype paper for a cell.** `paper()` prints a cell's text like an ASR-33: the TTY fonts (TTY33MA, TTY28R, TTY35D, SIL OFL, in `public/fonts/`) hold only ink and its smudges, no paper. The paper is the cell's own plain fill (`#f5f4ef`, no yellowing; `paper({tint})` changes it), drawn by maxGraph, and the text is an ordinary maxGraph SVG label, not HTML. The newest line stays at the bottom like a paper roll; when there is more text than fits, the mouse wheel winds the roll back and forth (`src/sheet/paper.ts`). The paper has a fine grain (dark and pale specks and short fibres, drawn as three vector paths and fixed per cell, so it never shimmers). Typing keeps the pace of the real machine: 10 characters a second, a line feed costing two character times, and at every line feed the paper glides up one line in about 200 ms (`feedMs`). `paper({speed: n})` sets the characters per second (`0` prints at once). The small speaker in the cell's lower right corner switches the printer sound on or off, off by default and remembered per cell in this browser. The Lab has a permanent demo at R41. `paper({wear: 0..1})` sets how pale the ink is; by default it fades a little with every printed line, and `clear()` makes it fresh. `paper({font: 'tty28'})` picks another font, `paper(false)` turns it off.
+
+**Teletype sounds for a cell.** `teletype.key(char?)` is one soft key clack (give the letter you print and it always sounds the same, a hair different from the others, as in the chat), `teletype.cr()` the carriage return at the end of a line and
+`teletype.bell()` the bell: the same quiet ASR-33 recordings as in the AI chat, muted by the same speaker button. Browsers keep
+quiet until the page was touched, so start the sound from a click. A cell that prints like the real machine (about 10 letters a second)
+is one `every('100ms', ...)` that adds a letter and calls `teletype.key()`.
+`teletype.print(char)` does more: it makes the whole machine sound as in ttyemu. The motor starts (with its own start-up sound and a hum
+that joins about 1.5 seconds later), a recording of a line being printed plays while letters come and a recording of spaces while spaces come,
+a `'\n'` is the carriage return (and starts the print recordings again so the next line begins in step), and `'\x07'` rings the bell. Letters wait
+in a queue and are sounded 10 a second, like the real machine. 8 seconds after the last letter the motor stops with its run-down sound.
+`teletype.key()`, `teletype.cr()` and `teletype.bell()` also start the motor and keep it running for those 8 seconds. A cell whose timers were stopped
+makes no more sound (the motor then runs down by itself).
+
+**Which cell is that sound?** Every cell that calls `teletype` is noted. Hover the 🔊 button in the AI chat: its tooltip lists the cells that
+made sound in the last 30 seconds and they flash once. The same list is `mms.sounds()` (and the MCP tool `list_sounds`):
+`{ muted, motorRunning, sources: [{ path, secondsAgo, calls }] }`. To silence a cell use its menu *Stop timers & watchers*, or edit its code.
 
 ### 8.17 Making tabs from code: the tabs global
 
@@ -2485,6 +2503,28 @@ returns `{ before, after, changed }` (outside callers need the same tick as for
 instead of overwriting what you typed. A second chat tool, `put_in_input`, puts a rewrite
 or translation in the box without correcting anything.
 
+**The teletype bell.** When an answer comes after you have waited 20 seconds or more
+(a big model on a small computer can take minutes), the chat rings the bell of an
+ASR-33 teletype, once, softly, so you can look away from the screen and still know it
+is there. The tiny 🔊 above the ✏ button (in both question boxes) mutes it (🔇) and
+turns it on again; pressing it to turn the bell on rings it once so you hear how loud
+it is. The same 🔊 switch also controls the typing: every character you type in a
+question box clacks like a key of the teletype (Backspace too), and Enter or Shift+Enter
+is the carriage return. Under the clacks the whole machine runs as in ttyemu: the motor starts when you
+begin to type, a hum and a recording of a line being printed (or of spaces) play under the keys, and
+8 seconds after you stop the motor winds down. The key sounds are very soft. Every character has its own small
+character, always the same: the place of the key on the keyboard sets the pitch (left a little
+lower, right a little higher, about 3 % in all) and the row the loudness (about 1.5 dB), the finger
+picks one of the recordings, and the space bar and Backspace sound a bit lower. The differences are
+kept just above what an ear notices, so you learn the keyboard by ear without anything standing out.
+When you paste text into a question box (and the 🔊 is on) it is typed out like the real machine
+did: ten characters a second, one clack per character and a longer carriage return at each line end.
+The first 150 characters are typed out, the rest follows at once; any key, a click or leaving the box
+puts all of it in immediately.
+Shortcuts such as Ctrl+A stay silent. The choice is remembered on this computer. Browsers
+only allow sound after you have clicked or typed in the page, so the sound is made ready
+when you click into the box or press Ask.
+
 **The second brain.** When the main helper is Gemini and a model on your own
 computer is also set up (⚙, "Second brain"; Ollama or LM Studio) and answering, the
 chat header says "🧠 second brain: …" and Gemini gets three more tools:
@@ -2742,6 +2782,16 @@ is rewritten automatically to still point at the same logical cell after
 the shift. The rules are the same as for moved cells, see
 [6.1](#61-code-follows-the-cells-it-names).
 
+**Columns too.** Right-click a column letter and choose *Insert a column left of X* or
+*right of X*: every cell to the right moves one column over and every address in code
+is rewritten (`at('C3')` becomes `at('D3')`; a range that spans the new column grows with it,
+`range('A1:D1')` becomes `range('A1:E1')`; `Z` becomes `AA`). A sheet holds up to 52 columns.
+Two tabs keep their own arrangement: on the game board columns can only be added to the right of
+the panel (after column Q, the board and its panel keep their places) and the Examples tab
+(a notebook of blocks) takes none. Code can watch it with the reactive `sheet.cols` or
+`on('sheet', 'cols', fn)`. An AI helper uses `mms.insertColumn('C', 'right' | 'left', tab?)`; over MCP every tab
+server has the tool `insert_column` (`column`, `side`).
+
 ## 13 Project layout
 
 [↑ Contents](#contents)
@@ -2774,6 +2824,8 @@ scripts/          make-piece-svgs.mjs writes resources/pieces/; mcp-bridge.ts is
 [↑ Contents](#contents)
 
 Code: MIT, see `LICENSE`. All artwork (piece tiles, insignia symbols, bomb and flag drawings) is original or plain Unicode text; no third-party game artwork or names are used. Dependencies (maxGraph, Monaco, Vite, TypeScript) keep their own licences.
+
+The teletype bell (`src/aichat/asr33-bell.mp3`) is a recording of a real ASR-33 by Hugh Pyle, taken from [ttyemu](https://github.com/hughpyle/ttyemu) (`sounds/down-bell.wav`, converted to mono MP3), and so are the sounds in `src/aichat/keys/`: the key clacks (`sounds/down-key-01..07.wav`), the carriage returns (`up-cr-01..02.wav`, lid open) and the machine itself, the motor hum, the print and space loops and the motor start and stop (`up-hum`, `up-print-chars`, `up-print-spaces`, `up-motor-on`, `up-motor-off`). The playing follows ttyemu's `sounds.py`. It is licensed under [Creative Commons Attribution–ShareAlike 4.0 International](http://creativecommons.org/licenses/by-sa/4.0/); that licence applies to these sound files, not to the MIT-licensed code.
 
 ## 15 Technology
 

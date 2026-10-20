@@ -302,6 +302,19 @@ export function rowInsertRewrite(fromRow1Based: number, by: number): RefRewrite 
   };
 }
 
+/** Like a spreadsheet column insert: every column at or right of `fromCol` (0-based) moves right by `by` (ranges stretch). */
+export function colInsertRewrite(fromCol: number, by: number): RefRewrite {
+  return (ends) => {
+    let changed = false;
+    const moved = ends.map((e) => {
+      if (e.col < fromCol) return e;
+      changed = true;
+      return { col: e.col + by, row: e.row };
+    });
+    return changed ? moved : null;
+  };
+}
+
 export interface BlockMove {
   from: RangePos;
   to: RangePos;

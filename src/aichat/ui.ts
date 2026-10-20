@@ -13,6 +13,7 @@ import { describeModel } from './modelInfo';
 import { ammo, gaugeText } from './ammo';
 import { diagnose } from './diagnose';
 import { getLive, onLiveChange } from './ollamaLoad';
+import { bellOn, onBellChange, primeBell, ringBell, setBell, soundSources, typewriterSounds } from './bell';
 import { answerCheckpoint, checkpoints, EXTENSIONS, minutesText, onCheckpointChange } from './patience';
 import { memoryFileState } from './memorySync';
 import { GeminiProvider, OpenAiCompatProvider, friendly, makeProvider, type ModelProvider } from './providers';
@@ -204,7 +205,7 @@ export class AiChatUi {
     });
     const sent = el('div', { className: 'ai-sent' });
     sent.dataset.role = 'sent';
-    const form = el('div', { className: 'ai-form' }, this.sideInput, this.spellFixButton(this.sideInput), send);
+    const form = el('div', { className: 'ai-form' }, this.sideInput, this.fixColumn(this.sideInput), send);
     this.sideBody.append(this.sideLog);
     this.side.append(this.makeGrip(), head, modelLine(), liveLine(), this.sideBody, sent, form);
     this.applyWidth(loadWidth());
@@ -334,7 +335,7 @@ export class AiChatUi {
     send.onclick = () => this.submit(this.miniInput, () => this.miniCtx);
     const sent = el('div', { className: 'ai-sent' });
     sent.dataset.role = 'sent';
-    this.mini.append(head, modelLine(), liveLine(), this.miniLog, sent, el('div', { className: 'ai-form' }, this.miniInput, this.spellFixButton(this.miniInput), send));
+    this.mini.append(head, modelLine(), liveLine(), this.miniLog, sent, el('div', { className: 'ai-form' }, this.miniInput, this.fixColumn(this.miniInput), send));
   }
 
   /** The little chat can be moved: press on its header (not on a button) and drag. It stays inside the window. */
@@ -387,6 +388,40 @@ export class AiChatUi {
   }
 
   // ------------------------------------------------------------ asking
+
+  /** The fix button with the tiny loudspeaker above it: the switch of the teletype bell that rings when a slow answer arrives. */
+  private fixColumn(input: HTMLTextAreaElement): HTMLElement {
+    typewriterSounds(input);
+    const speaker = el('button', { className: 'ai-speaker', type: 'button' });
+    const paint = (): void => {
+      const on = bellOn();
+      speaker.textContent = on ? '🔊' : '🔇';
+      speaker.setAttribute('aria-pressed', String(on));
+      speaker.setAttribute('aria-label', on ? 'Teletype bell on' : 'Teletype bell muted');
+      speaker.title = on ? 'The ASR-33 teletype sounds are on: the machine hums and clacks as you type, and a bell when a slow answer arrives. Click to mute.' : 'The teletype bell is muted. Click to turn it on (it rings once, softly, so you can hear how loud it is).';
+    };
+    // Hovering lists the cells that made sound lately and flashes them: the way to find a cell that is clacking somewhere out of sight.
+    speaker.onmouseenter = () => {
+      const sources = soundSources();
+      paint();
+      if (!sources.length) return;
+      speaker.title += `\n\nCells making sound now: ${sources.map((s) => s.path).join(', ')}`;
+      for (const src of sources) {
+        const hit = workspace.resolve(src.path);
+        if (!('error' in hit)) hit.tab.sheet.flash(hit.address);
+      }
+    };
+    speaker.onclick = () => {
+      setBell(!bellOn());
+      if (bellOn()) {
+        primeBell();
+        void ringBell();
+      }
+    };
+    onBellChange(paint);
+    paint();
+    return el('div', { className: 'ai-fixcol' }, speaker, this.spellFixButton(input));
+  }
 
   /**
    * The "fix my spelling" button: everything typed so far goes to a model (the second brain when it answers,
@@ -493,6 +528,7 @@ export class AiChatUi {
       return;
     }
     this.activeBox = input;
+    primeBell();
     input.value = '';
     // Pressing the Ask button takes the cursor away from the box; give it back.
     input.focus();

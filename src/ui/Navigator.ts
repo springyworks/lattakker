@@ -71,6 +71,7 @@ export class Navigator {
     sheet.container.addEventListener('scroll', () => this.placeWindow());
     sheet.onCodeChanged(() => this.queueDraw());
     sheet.onRowsInserted(() => this.queueDraw());
+    sheet.onColumnsInserted(() => this.queueDraw());
     sheet.onAfterRun(() => this.queueDraw());
     new ResizeObserver(() => this.queueDraw()).observe(this.track);
     window.addEventListener('resize', () => this.queueDraw());

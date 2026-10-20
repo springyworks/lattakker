@@ -76,6 +76,8 @@ interface CellRef {
   view(text: string): CellRef;
   /** Background colour, e.g. '#ffd6d6' or 'lightgreen'. */
   color(fill: string): CellRef;
+  /** Print this cell's text like an old teletype on a roll of paper: a TTY font (the font is only ink), plain unyellowed roll paper as the cell's own fill, and the newest lines at the bottom; when the text is longer than the cell the mouse wheel winds the paper back. The paper has a faint grain and the text is typed at the pace of the real machine: 10 characters a second, a line feed takes two (speed: 0 shows it at once). A small speaker in the cell's corner switches the ASR-33 sound on (it is off until somebody clicks it). The ink gets paler the more lines are printed (clear() makes it fresh). paper({font:'tty33'|'tty28'|'tty35', tint:'#f5f4ef', wear:0..1, speed:10}); paper(false) turns it off. Like color(), call it in the code that prints. */
+  paper(options?: { font?: 'tty33' | 'tty28' | 'tty35'; tint?: string; wear?: number; speed?: number } | boolean): CellRef;
   /** Text colour. */
   textColor(color: string): CellRef;
   /** The size this cell wants by default: merge it over cols x rows neighbours (not over the board). Leave one out to keep it. No arguments: just read the size. If the person resizes the block (green handles) or makes it from picked cells, their size is kept and a plain "span(4, 2)" line is rewritten to match; change the numbers in the code and the code's size wins again. With no span() at all the block keeps the shape it has (1x1 for a new cell). */
@@ -498,7 +500,7 @@ interface Mcp {
   read(path: string): Promise<McpCell>;
   /** The cells of a tab that hold code. */
   list(tab: string): Promise<any[]>;
-  /** Ask a tab to do something. Tools: list_cells, get_cell, run_cell, set_code, click, flash, signal. */
+  /** Ask a tab to do something. Tools: list_cells, get_cell, run_cell, set_code, click, insert_column, flash, zoom, signal. */
   tool(tab: string, name: string, args?: object): Promise<any>;
   /** Trigger a cell's click event from anywhere, as if it had been clicked: mcp.click('/lab/J24'). */
   click(path: string): Promise<any>;
@@ -709,6 +711,16 @@ interface SystemInfo {
  * Measured when the dev server runs; on the published page only browser facts (cores, fps, battery) are there.
  * every('1s', async () => { const s = await system.read(); plot(system.series('cpu')) })
  */
+interface TeletypeApi {
+  /** One key of the teletype clacks, softly. Give the letter you print and that letter always sounds the same, a little different from the others (like the AI chat's keys). The motor starts and keeps running for a while (8 s). Does nothing when the speaker is muted or sound is not allowed yet (a click on the cell allows it). */
+  key(char?: string): void;
+  /** The carriage return at the end of a line. */
+  cr(): void;
+  /** The machine prints one letter, with the real recorded sound of an ASR-33: the motor hums, the print head chatters while letters come (spaces are quieter), and "\n" is the carriage return. Letters wait in a queue, because the real machine printed 10 a second at most; the motor stops by itself a few seconds after the last letter. Does nothing when muted. */
+  print(char: string): void;
+  /** The bell, once, softly. */
+  bell(): void;
+}
 interface SystemApi {
   /** Measures now: await system.read(). */
   read(): Promise<SystemInfo>;
@@ -891,6 +903,8 @@ declare function print(...values: unknown[]): void;
 declare function view(text: string): void;
 /** Short for cell.color(fill) */
 declare function color(fill: string): void;
+/** Short for cell.paper(options): print this cell's text like a teletype on old paper (fonts 'tty33', 'tty28', 'tty35'; wear 0..1 grows with the lines printed; speed in characters a second, default 10, 0 = at once). */
+declare function paper(options?: { font?: 'tty33' | 'tty28' | 'tty35'; tint?: string; wear?: number; speed?: number } | boolean): void;
 /** Short for cell.span(cols, rows): the size this cell wants by default. span(4) keeps the rows; span() just returns the current size. A size the person gave the block by hand wins until you change these numbers. */
 declare function span(cols?: number, rows?: number): { cols: number; rows: number };
 /**
@@ -934,7 +948,7 @@ type CellEventName = 'change' | 'size' | 'code' | 'click';
  * on('B7', 'code', (b7) => ...)    someone edited B7's code, or moved code in or out of it
  * on('B7', 'click', (b7) => ...)   B7 was clicked (a range works too: on('A20:C20', 'click', ...))
  * on('game', (g) => ...)           anything in the game changed
- * on('sheet', 'rows', (s) => ...)  a row was inserted      on('sheet', 'mode', (s) => ...)  Show code / Show output was pressed
+ * on('sheet', 'rows', (s) => ...)  a row was inserted      on('sheet', 'cols', (s) => ...)  a column was inserted      on('sheet', 'mode', (s) => ...)  Show code / Show output was pressed
  */
 declare function on(target: string | CellRef, fn: (changed: CellRef) => unknown): () => void;
 declare function on(target: string | CellRef, event: CellEventName, fn: (changed: CellRef) => unknown): () => void;
@@ -944,7 +958,7 @@ declare function on(target: Grid, event: 'key', fn: (key: string, info: GridKeyI
 /** The grid got or lost the keyboard (a click elsewhere takes it away). */
 declare function on(target: Grid, event: 'focus' | 'blur', fn: () => unknown): () => void;
 declare function on(target: 'game', fn: (game: GameApi) => unknown): () => void;
-declare function on(target: 'sheet', event: 'rows' | 'mode', fn: (sheet: SheetApi) => unknown): () => void;
+declare function on(target: 'sheet', event: 'rows' | 'cols' | 'mode', fn: (sheet: SheetApi) => unknown): () => void;
 /** How an animation moves: linear, in (slow start), out (slow end), inOut (the default), bounce, elastic, back. */
 type SvgEase = 'linear' | 'in' | 'out' | 'inOut' | 'bounce' | 'elastic' | 'back';
 interface SvgAnimateOptions {
@@ -1127,6 +1141,11 @@ declare const weather: WeatherApi;
 declare const tabs: TabsApi;
 /** How this computer is doing: await system.read() (CPU, memory, temperatures, graphics card); system.series('cpu') to plot. */
 declare const system: SystemApi;
+/**
+ * The sounds of an ASR-33 teletype, as quiet as in the AI chat (same speaker button). A printing cell calls teletype.print(letter) for
+ * every letter (and teletype.print('\n') at the end of a line); teletype.key(letter) is a single key of the keyboard; the real machine printed about 10 letters a second.
+ */
+declare const teletype: TeletypeApi;
 /** The model on this computer (Ollama). await ollama.ask('...'); await ollama.status() says what is missing. */
 declare const ollama: OllamaApi;
 /** Answers from the person: await input.ask('Name?'), input.slider(...), input.button(...), input.onKey(...). */

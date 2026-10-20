@@ -14,6 +14,7 @@ import { RULES, docUrls, standingDirectives } from './docs';
 import { bibleFor } from '../ai/bible';
 import { goalPrompt, MAX_PLAY_NUDGES, MAX_PLAY_ROUNDS, playGoalFrom, type PlayGoal } from './playGoal';
 import { markOriented } from '../ai/orientation';
+import { bellForAnswer } from './bell';
 
 const MAX_ROUNDS = 6;
 /** When the helper works on its own it may go round more often: write, check, run, read, fix, again. */
@@ -227,6 +228,7 @@ export class Conversation {
     this.messages.push({ role: 'user', text: `[Asked from ${ctx.address ? `${workspace.pathOf(ctx.tab, ctx.address)}${ctx.line ? `, line ${ctx.line} of its code` : ''}` : `the ${ctx.tab} tab`}]${hints}\n${question}${focus ? `\n${focus}` : ''}${picked}` });
     this.trim();
     this.busy = true;
+    const askedAt = performance.now();
     this.abort = new AbortController();
     // The seconds of "last sign of life" are re-drawn once a second; they are measured, not invented (see jobs.ts).
     this.ticker = window.setInterval(() => this.changed(), 1000);
@@ -317,6 +319,7 @@ export class Conversation {
       if (this.playGoal && !this.stillToPlay()) this.playGoal = null;
       if (!answer) answer = 'I do not have an answer for that one. Could you ask it in another way?';
       this.entries.push({ kind: 'ai', text: answer, via: info.short });
+      bellForAnswer(performance.now() - askedAt);
       // If the helper's own code still does not run, say it in calm words: the person should not be left guessing.
       const mine = this.entries.slice(turnStart).filter((e): e is Extract<Entry, { kind: 'wrote' }> => e.kind === 'wrote');
       const last = mine[mine.length - 1];

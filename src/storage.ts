@@ -74,6 +74,7 @@ export function startAutoSave(game: Game, sheet: Sheet): () => void {
   };
   sheet.onCodeChanged(schedule);
   sheet.onRowsInserted(schedule);
+  sheet.onColumnsInserted(schedule);
   sheet.onContentMoved(schedule);
   sheet.onRoomMade(schedule);
   sheet.onModeChange(schedule);
@@ -130,6 +131,7 @@ function startSheetAutoSave(key: string, sheet: Sheet): () => void {
   };
   sheet.onCodeChanged(schedule);
   sheet.onRowsInserted(schedule);
+  sheet.onColumnsInserted(schedule);
   sheet.onContentMoved(schedule);
   sheet.onRoomMade(schedule);
   sheet.onModeChange(schedule);

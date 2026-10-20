@@ -16,12 +16,14 @@ export const sizeNode = (address: string): string => `size:${address}`;
 export const codeNode = (address: string): string => `code:${address}`;
 export const clickNode = (address: string): string => `click:${address}`;
 export const ROWS_NODE = 'sheet:rows';
+export const COLS_NODE = 'sheet:cols';
 export const MODE_NODE = 'sheet:mode';
 
 /** A node name in words, for popups and cell.reads: 'size:B2' becomes 'B2 size'. */
 export function describeNode(node: string): string {
   if (node === GAME_NODE) return 'game';
   if (node === ROWS_NODE) return 'sheet rows';
+  if (node === COLS_NODE) return 'sheet columns';
   if (node === MODE_NODE) return 'sheet mode';
   const i = node.indexOf(':');
   return i > 0 ? `${node.slice(i + 1)} ${node.slice(0, i)}` : node;

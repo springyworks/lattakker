@@ -1,8 +1,7 @@
 import type { Sheet, SheetCellData, TileGrid } from './Sheet';
-import { COLS } from './Sheet';
 import type { GameView } from '../game/GameView';
 import { isLake } from '../game/model';
-import { GAME_NODE, MODE_NODE, describeNode, ROWS_NODE, clickNode, codeNode, sizeNode } from './reactivity';
+import { GAME_NODE, MODE_NODE, describeNode, ROWS_NODE, COLS_NODE, clickNode, codeNode, sizeNode } from './reactivity';
 import { parseTilePath } from './address';
 import { blurTiles, focusTiles, listenTileKeys, tilesHaveFocus } from './tileKeys';
 import { workspace } from '../workspace';
@@ -18,9 +17,11 @@ import { buildCatalog } from '../mcp/routerServer';
 import { analyze as analyzeTraffic, ask as askTraffic, packets as trafficPackets } from '../mcp/analyze';
 import { findPlaces, forecast as weatherForecast, summary as weatherSummary, weatherNow, type PlaceInput } from '../services/weather';
 import { tabManager, type CreateTabOptions } from '../tabManager';
+import { clack, noteSource, printChar, ringBell, touchMotor } from '../aichat/bell';
 import { readSystem, summarize as systemSummary, systemSeries, type SeriesName } from '../services/system';
 import { ollamaAsk, ollamaChat, ollamaModels, ollamaStatus, type OllamaMessage, type OllamaOptions } from '../services/ollama';
 import { inputPanel, type ControlKind, type ControlSpec } from '../ui/InputPanel';
+import type { PaperOptions } from './paper';
 
 const MIN_INTERVAL_MS = 10;
 const MAX_OUTPUT_LINES = 300;
@@ -174,6 +175,7 @@ export function buildApi(
       view: readOnly,
       color: readOnly,
       textColor: readOnly,
+      paper: readOnly,
       flash: readOnly,
       toString() {
         return path;
@@ -271,6 +273,13 @@ export function buildApi(
       textColor(color: string) {
         markWrite(address);
         d.codeVisual = { ...d.codeVisual, fontColor: String(color) };
+        sheet.refreshSoon(address);
+        return ref;
+      },
+      paper(options?: PaperOptions | boolean) {
+        markWrite(address);
+        const { paper: _old, ...rest } = d.codeVisual;
+        d.codeVisual = options === false ? rest : { ...rest, paper: typeof options === 'object' && options ? { ...options } : {} };
         sheet.refreshSoon(address);
         return ref;
       },
@@ -638,6 +647,7 @@ export function buildApi(
     view(t: string): unknown;
     plot(d: unknown, o?: PlotOptions): unknown;
     color(f: string): unknown;
+    paper(o?: PaperOptions | boolean): unknown;
     span(c?: number, r?: number): { cols: number; rows: number };
     clear(): unknown;
     show(...v: unknown[]): unknown;
@@ -768,7 +778,10 @@ export function buildApi(
     },
     cell: at,
     range,
-    cols: COLS,
+    get cols() {
+      track(COLS_NODE);
+      return sheet.colCount;
+    },
     get rows() {
       track(ROWS_NODE);
       return sheet.rowCount;
@@ -824,8 +837,9 @@ export function buildApi(
     } else if (target === 'sheet') {
       label = 'sheet';
       if (event === 'rows') nodes = [ROWS_NODE];
+      else if (event === 'cols') nodes = [COLS_NODE];
       else if (event === 'mode') nodes = [MODE_NODE];
-      else throw new Error(`on('sheet', ...) understands 'rows' and 'mode', not '${event}'`);
+      else throw new Error(`on('sheet', ...) understands 'rows', 'cols' and 'mode', not '${event}'`);
     } else if (target === 'game') {
       label = 'game';
       if (event !== 'change') throw new Error("on('game', ...) only has the 'change' event");
@@ -876,7 +890,7 @@ export function buildApi(
         const blockData = sheet.dataAt(gridBlock);
         if (t && blockData?.tiles) void run(makeTile(blockData, t.x, t.y, () => blockData.tiles ?? newTiles(t.x + 1, t.y + 1)));
       } else if (node === GAME_NODE) void run(trackedGame);
-      else if (node === ROWS_NODE || node === MODE_NODE) void run(sheetApi);
+      else if (node === ROWS_NODE || node === COLS_NODE || node === MODE_NODE) void run(sheetApi);
       else {
         const watched = node.includes(':') ? node.slice(node.indexOf(':') + 1) : node;
         void run(owner === sheet ? makeRef(watched) : makeForeignRef(owner, watched));
@@ -1109,6 +1123,24 @@ export function buildApi(
     text: () => cancellable(async () => systemSummary(await readSystem())),
   };
 
+  /** A stopped cell (its timers were stopped) makes no more sound; every call is noted, so "which cell is that?" has an answer. */
+  const heard = (): boolean => {
+    if (ctx.cancelled) return false;
+    noteSource(workspace.pathOf(sheet.id, data.address));
+    return true;
+  };
+
+  const teletype = {
+    /** One key of the teletype clacks (soft). Silent when the speaker is muted or the browser has not allowed sound yet (a click allows it). */
+    key: (char?: string) => heard() && (void clack('key', char), touchMotor()),
+    /** The carriage return at the end of a line. */
+    cr: () => heard() && (void clack('cr'), touchMotor()),
+    /** The machine prints one letter: its motor hums, the print head chatters (a space is quieter), "\n" is the carriage return. */
+    print: (char: string) => heard() && printChar(char),
+    /** The bell, once and softly. */
+    bell: () => heard() && (void ringBell(), touchMotor()),
+  };
+
   const tabs = {
     /** The tabs, left to right: { id, title, icon, builtin, active, cells }. */
     list: () => tabManager().list(),
@@ -1227,6 +1259,7 @@ export function buildApi(
     view: (text: string) => void self.view(text),
     plot: (data: unknown, options?: PlotOptions) => void self.plot(data, options),
     color: (fill: string) => void self.color(fill),
+    paper: (options?: PaperOptions | boolean) => void self.paper(options),
     clear: () => void self.clear(),
     show: (...values: unknown[]) => void self.show(...values),
     span: (cols?: number, rows?: number) => self.span(cols, rows),
@@ -1236,6 +1269,7 @@ export function buildApi(
     mcp,
     weather,
     system,
+    teletype,
     tabs,
     ollama,
     input,

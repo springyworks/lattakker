@@ -1531,4 +1531,207 @@ input.button('show my own WebP or GIF', async () => {
   mine.play()
 })`,
   ],
+  [
+    'R41',
+    String.raw`// AN ASR-33 TELETYPE. Output on a roll of paper, typed one letter at a time, like in 1965.
+// paper() gives this cell plain roll paper (with a very faint grain) and a typewriter
+// font that carries only ink. The real machine typed 10 letters a second and a new line
+// made the paper jump up one line, so that is what you see here.
+// The little speaker in the corner of the cell switches the machine's sound on.
+// It is off until you click it. Scroll the mouse wheel over the paper to wind it back.
+span(9, 8)
+
+// font: 'tty33' (ASR-33), 'tty28' or 'tty35'. speed: letters a second (0 = all at once).
+paper({ font: 'tty33', speed: 10 })
+
+// A few sentences for the machine to type (the ASR-33 only knew capital letters).
+const lines = [
+  'THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG 0123456789',
+  '10 PRINT "HELLO, WORLD"',
+  '20 GOTO 10',
+  'READY.',
+  'A BOX OF MY RED WINE BEAT A QUICK FEW GREEN JUGS',
+]
+
+// clear() starts a fresh roll: the ink is dark again and the typing begins at the top.
+clear()
+print('LATTAKKER  ASR-33  TELETYPE  READY')
+print('')
+
+// every() types one more line again and again. Every third line is a reading of this computer.
+let n = 0
+every('8s', async () => {
+  const time = new Date().toTimeString().slice(0, 8)
+  let text = lines[n % lines.length]
+  if (n % 3 === 2) {
+    try {
+      text = (await system.text()).replace(/\s+/g, ' ')
+    } catch {
+      text = 'NO READING FROM THE COMPUTER'
+    }
+  }
+  n++
+  print(time + '  ' + text.toUpperCase())
+})`,
+  ],
+  [
+    'R50',
+    String.raw`// AN ASR-33 TERMINAL YOU CAN TALK TO. Click the paper, type after the prompt, press Enter.
+// R41 above only prints; this one also listens. input.onKey() hears the keyboard while the paper
+// has it (click the paper to take it, Esc to give it back). Type H for the list of commands.
+// Everything the machine can do is the table called "commands": a name, one line of help and a
+// function. Add a row and the help list grows by itself, nothing else to change.
+// The ASR-33 only knew capital letters, and its rubout key printed a backslash.
+span(9, 8)
+paper({ font: 'tty33', speed: 20 })
+
+const PROMPT = '>> '
+const ROLL = 4000
+const WORDS = ['THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG 0123456789', '10 PRINT "HELLO, WORLD"', '20 GOTO 10', 'READY.']
+
+// text is everything on the roll. put() adds to it; show() prints the whole roll, and the paper
+// only types what is new, because the roll only ever grows.
+let text = ''
+const put = (more: string): void => {
+  text += more
+  show(text)
+}
+
+type Command = { help: string; run: (arg: string) => string | Promise<string> }
+
+// The model can hold a conversation: chatting is the talk so far (null when it is not on).
+let chatting: Array<{ role: 'user' | 'assistant'; content: string }> | null = null
+
+const hits = async (word: string): Promise<string[]> => {
+  const found: string[] = []
+  for (const t of tabs.list()) {
+    try {
+      for (const c of await mcp.list(t.id)) if ((c.code + ' ' + c.text).toLowerCase().includes(word.toLowerCase())) found.push(c.path)
+    } catch {
+      // a tab that cannot be listed is simply skipped
+    }
+  }
+  return found
+}
+
+const commands: Record<string, Command> = {
+  H: { help: 'THIS LIST', run: () => helpText() },
+  STATUS: {
+    help: 'TABS, ROUTER, MODEL',
+    run: async () => {
+      const t = tabs.list()
+      const s = mcp.stats()
+      const o = await ollama.status()
+      return [
+        'TABS     ' + t.map((x) => x.id + ':' + x.cells).join(' '),
+        'ROUTER   ' + s.messages + ' MSGS, ' + s.errors + ' ERRORS, ' + s.ratePerSecond.toFixed(1) + '/S',
+        'SERVERS  ' + s.serverCount + ', LISTENERS ' + s.listeners,
+        'MODEL    ' + (o.running ? o.selected : 'NOT RUNNING'),
+        'UP       ' + Math.round(s.uptimeSeconds) + ' S',
+      ].join('\n')
+    },
+  },
+  MCP: { help: 'SERVERS AND THE BUSIEST', run: () => 'SERVERS ' + mcp.servers().join(' ') + '\nBUSIEST ' + mcp.stats().servers.slice(0, 3).map((x) => x.name + ' ' + x.requests).join(', ') },
+  SYSTEM: { help: 'CPU, MEMORY, TEMPERATURES', run: () => system.text() },
+  TIME: { help: 'THE TIME', run: () => new Date().toTimeString().slice(0, 8) + '  ' + new Date().toDateString() },
+  FIND: {
+    help: 'FIND <WORD> IN ALL CELLS',
+    run: async (word) => {
+      if (!word) return 'FIND WHAT?'
+      const found = await hits(word)
+      if (!found.length) return 'NOTHING FOUND'
+      return found.slice(0, 8).join('\n') + (found.length > 8 ? '\n+' + (found.length - 8) + ' MORE' : '') + '\nGO <PATH> TAKES YOU THERE'
+    },
+  },
+  GO: {
+    help: 'GO /LAB/R41  ZOOM TO A CELL',
+    run: async (path) => {
+      const m = /^\/?([a-z0-9-]+)\/([a-z]+\d+)$/i.exec(path.trim())
+      if (!m) return 'GO /LAB/R41'
+      tabs.select(m[1].toLowerCase())
+      await mcp.tool(m[1].toLowerCase(), 'zoom', { address: m[2].toUpperCase() })
+      return 'THERE: /' + m[1] + '/' + m[2]
+    },
+  },
+  ASK: {
+    help: 'ASK <QUESTION> OF THE MODEL',
+    run: async (question) => {
+      if (!question) return 'ASK WHAT?'
+      put('ONE MOMENT...\n')
+      return ollama.ask(question + ' (answer in at most three short lines)')
+    },
+  },
+  CHAT: { help: 'TALK WITH THE MODEL, BYE ENDS', run: () => { chatting = []; return 'LINE OPEN. TYPE BYE TO CLOSE IT.' } },
+  DEMO: { help: 'WHAT THE MACHINE TYPES', run: () => WORDS.join('\n') },
+  CLEAR: { help: 'A FRESH ROLL', run: () => { clear(); text = ''; return 'NEW ROLL' } },
+}
+const alias: Record<string, string> = { HELP: 'H', '?': 'H' }
+
+// The help list is made from the table.
+const helpText = (): string => Object.entries(commands).map(([name, c]) => name.padEnd(7) + c.help).join('\n')
+
+// A line the person typed becomes an answer. A word the machine does not know gets the list of what it does know.
+const answer = async (line: string): Promise<string> => {
+  if (!line) return ''
+  if (chatting) {
+    if (/^(bye|exit|quit)$/i.test(line)) {
+      chatting = null
+      return 'LINE CLOSED.'
+    }
+    chatting.push({ role: 'user', content: line })
+    const said = await ollama.chat(chatting)
+    chatting.push({ role: 'assistant', content: said })
+    return said
+  }
+  const [word, ...rest] = line.split(/\s+/)
+  const command = commands[alias[word.toUpperCase()] ?? word.toUpperCase()]
+  if (!command) return '?? ' + word.toUpperCase() + '  WHAT? I KNOW:\n' + helpText()
+  return command.run(rest.join(' '))
+}
+
+// The keyboard. Every typed letter is echoed on the paper at once and kept in buf until Enter.
+let keys = false
+let busy = false
+let buf = ''
+const enter = async (): Promise<void> => {
+  const line = buf.trim()
+  buf = ''
+  put('\n')
+  busy = true
+  try {
+    const said = await answer(line)
+    if (said) put(said.toUpperCase() + '\n')
+  } catch (e) {
+    put('?? ' + String((e as Error).message ?? e).toUpperCase() + '\n')
+  }
+  busy = false
+  if (text.length > ROLL) {
+    clear()
+    text = 'NEW ROLL\n'
+  }
+  put(PROMPT)
+}
+
+on(cell, 'click', () => {
+  if (!keys) teletype.bell()
+  keys = true
+})
+input.onKey(async (key, info) => {
+  if (!keys || busy || info.ctrl || info.alt) return
+  if (key === 'Escape') keys = false
+  else if (key === 'Enter') await enter()
+  else if (key === 'Backspace') {
+    if (buf) put('\\')
+    buf = buf.slice(0, -1)
+  } else {
+    const ch = key === 'Space' ? ' ' : key.length === 1 ? (info.shift ? key.toUpperCase() : key) : ''
+    if (!ch) return
+    buf += ch
+    put(ch.toUpperCase())
+  }
+})
+
+clear()
+put('LATTAKKER  ASR-33  TERMINAL\nCLICK THE PAPER, THEN TYPE.  H = HELP.  ESC = KEYBOARD OFF.\n\n' + PROMPT)`,
+  ],
 ];

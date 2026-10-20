@@ -29,15 +29,19 @@ import {
   parseAddress,
   parseRange,
   rowInsertRewrite,
+  colInsertRewrite,
 } from './address';
 import { THEME } from '../theme';
-import { DependencyGraph, MODE_NODE, ROWS_NODE, codeNode, sizeNode } from './reactivity';
+import { DependencyGraph, MODE_NODE, ROWS_NODE, COLS_NODE, codeNode, sizeNode } from './reactivity';
 import { CancelError, RunContext } from './tasks';
 import { Spring } from './spring';
 import { decideSpan, emptyShape, readSpanCall, rewriteSpanCall, type ShapeState, type Size } from './shape';
 import { SheetCellHandler } from './cellHandler';
 import { Overlays } from './overlays';
 import { plotSvg, tilesSvg, type PlotSpec } from './plot';
+import { advance, feedMs, paperFontReady, paperLayout, paperSpeed, paperStyle, printStep, settle, type PaperLayout, type PaperOptions, type PrintState } from './paper';
+import { registerPaperShape } from './paperShape';
+import { bellOn, primeBell, printChar, setBell } from '../aichat/bell';
 import type { SvgScene } from './svgScene';
 
 /** A cell that takes longer than this is moved to the background so the others can run. */
@@ -47,6 +51,8 @@ export const COLS = 26;
 export const ROWS = 60;
 /** Hard ceilings for auto-grow: addresses stay at most two letters and three digits (ZZ999-style). */
 export const MAX_COLS = 52;
+/** On the board tab, the last column of the game panel (Q): code shifted with columns must stay clear of it. */
+const BOARD_LAST_COL = 16;
 export const MAX_ROWS = 999;
 export const CW = 60;
 export const CH = 60;
@@ -69,6 +75,8 @@ export interface CellVisual {
   label?: string;
   align?: 'left' | 'center' | 'right';
   verticalAlign?: 'top' | 'middle' | 'bottom';
+  /** Print the text like a teletype on old paper (set by `paper()` in cell code). */
+  paper?: PaperOptions;
 }
 
 /** What a move, swap or row insert did to the addresses written inside code. */
@@ -217,6 +225,34 @@ export function svgUri(svg: string): string {
   return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
 }
 
+const PAPER_SOUND_KEY = 'lattakker:paper-sound';
+
+function loadPaperSound(): Set<string> {
+  try {
+    const list: unknown = JSON.parse(localStorage.getItem(PAPER_SOUND_KEY) ?? '[]');
+    return new Set(Array.isArray(list) ? list.filter((k): k is string => typeof k === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function savePaperSound(keys: Set<string>): void {
+  try {
+    localStorage.setItem(PAPER_SOUND_KEY, JSON.stringify([...keys]));
+  } catch {
+    // storage blocked: the choice lasts until the page is closed
+  }
+}
+
+/** The little speaker on a paper cell: waves when the sound is on, a cross when it is off. */
+function speakerSvg(on: boolean): string {
+  const ink = on ? '#2b2b30' : '#77767a';
+  const mark = on
+    ? `<path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" fill="none" stroke="${ink}" stroke-width="1.7" stroke-linecap="round"/>`
+    : `<path d="M16 9.5l5 5M21 9.5l-5 5" fill="none" stroke="${ink}" stroke-width="1.7" stroke-linecap="round"/>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"><rect x="0.5" y="0.5" width="23" height="23" rx="5" fill="#f5f4ef" fill-opacity="0.88" stroke="#c8c6bd"/><path d="M4 9.5v5h3.5l4.5 3.5V6L7.5 9.5H4z" fill="${ink}"/>${mark}</svg>`;
+}
+
 export function newUid(): string {
   const words = crypto.getRandomValues(new Uint32Array(1));
   return 'c-' + words[0].toString(16).padStart(8, '0');
@@ -267,6 +303,7 @@ export class Sheet {
   private runTimer: number | null = null;
   private modeChangeHandlers: Array<(mode: Mode) => void> = [];
   private rowsInsertedHandlers: Array<(afterRowIndex: number) => void> = [];
+  private colsInsertedHandlers: Array<(afterColIndex: number) => void> = [];
   private roomMadeHandlers: Array<(info: RoomInfo) => void> = [];
   private contentMovedHandlers: Array<(from: string, to: string) => void> = [];
   /** The cells the person picked (a click, a rubber band, Shift/Ctrl-click): the address of each block's owner. */
@@ -296,24 +333,38 @@ export class Sheet {
   /** cell id -> a live DOM node to host as that cell's label (e.g. the Monaco editor frame). */
   private nodeLabels = new Map<string, HTMLElement>();
   private refreshQueue = new Set<string>();
+  /** How far each teletype paper is wound back (lines from the newest), and how many lines it had when last drawn. */
+  private paperView = new Map<string, { back: number; total: number }>();
+  /** How much each teletype paper has typed so far (it types at the pace of the real machine), and the timer for the next letters. */
+  private paperPrint = new Map<string, { state: PrintState; timer: number }>();
+  /** Paper cells in the middle of a line feed: when it began, how long it takes, and how far the slide has got (0..1). */
+  private paperFeed = new Map<string, { start: number; ms: number; t: number }>();
+  /** The little speaker on a paper cell: the cell it sits on and whether it shows "on". */
+  private paperIcons = new Map<string, { cell: Cell; overlay: CellOverlay; on: boolean }>();
+  /** Which paper cells have their ASR-33 sound switched on (off unless somebody clicked the speaker). Kept in this browser. */
+  private paperSound = loadPaperSound();
   private foreignRewriter: ((rewrite: RefRewrite) => void) | null = null;
   private lastTileClick: { address: string; x: number; y: number; time: number } | null = null;
 
   /** Only the main tab has the Lattakker board (A1:J10) and the reserved rows below it. */
   private readonly board: boolean;
+  /** A tab that lays its own columns out (the Examples notebook) does not take inserted columns. */
+  private readonly fixedColumns: boolean;
   /** Names this sheet apart from the others ('' for the game board's sheet): it scopes the editor models. */
   readonly id: string;
   private suspended = false;
   private pendingRefresh = new Set<string>();
 
-  constructor(container: HTMLElement, options: { board?: boolean; id?: string } = {}) {
+  constructor(container: HTMLElement, options: { board?: boolean; id?: string; fixedColumns?: boolean } = {}) {
     this.container = container;
+    this.fixedColumns = options.fixedColumns ?? false;
     this.board = options.board ?? false;
     this.id = options.id ?? '';
     // SelectionCellsHandler must be registered before SelectionHandler: mouse listeners fire in
     // plugin-registration order, and VertexHandler's resize-handle hit-test (owned by
     // SelectionCellsHandler) needs first refusal on a mousedown, or SelectionHandler consumes it
     // as a plain cell-move before the handle ever gets a look (matches maxGraph's own default order).
+    registerPaperShape();
     this.graph = new Graph(container, undefined, [TooltipHandler, SelectionCellsHandler, SelectionHandler, PanningHandler, PopupMenuHandler]);
     const graph = this.graph;
     const model = graph.getDataModel();
@@ -354,6 +405,12 @@ export class Sheet {
         return p && p.row > after ? formatAddress(p.col, p.row + 1) : a;
       }),
     );
+    this.onColumnsInserted((after) =>
+      this.remapPicked((a) => {
+        const p = parseAddress(a);
+        return p && p.col > after ? formatAddress(p.col + 1, p.row) : a;
+      }),
+    );
     this.onRoomMade((info) => {
       const to = new Map(info.shifts.map((s) => [s.from, s.to]));
       this.remapPicked((a) => to.get(a) ?? a);
@@ -372,7 +429,8 @@ export class Sheet {
     graph.getLabel = (cell?: Cell | null) => this.labelFor(cell ?? null);
     graph.isHtmlLabel = (cell: Cell) => {
       const id = cell.getId() ?? '';
-      return id.startsWith('sheet:') || id.startsWith('hud:') || id.startsWith('btn:') || id.startsWith('ed:') || id.startsWith('help:') || id.startsWith('ctx:live:');
+      if (id.startsWith('sheet:')) return !this.paperOf(id.slice(6));
+      return id.startsWith('hud:') || id.startsWith('btn:') || id.startsWith('ed:') || id.startsWith('help:') || id.startsWith('ctx:live:');
     };
     graph.getCursorForCell = (cell: Cell) => {
       const id = cell.getId() ?? '';
@@ -406,6 +464,20 @@ export class Sheet {
       this.buildHeaders();
     });
 
+    // The wheel winds a teletype paper back and forth while it has lines to show; otherwise the sheet scrolls as usual.
+    container.addEventListener(
+      'wheel',
+      (e: WheelEvent) => {
+        if (e.ctrlKey || e.metaKey || !e.deltaY) return;
+        const rect = container.getBoundingClientRect();
+        const hit = graph.getCellAt(e.clientX - rect.left + container.scrollLeft, e.clientY - rect.top + container.scrollTop);
+        const id = hit?.getId() ?? '';
+        if (!id.startsWith('sheet:')) return;
+        const lines = Math.sign(-e.deltaY) * Math.max(1, Math.round(Math.abs(e.deltaY) / 40));
+        if (this.scrollPaper(id.slice(6), lines)) e.preventDefault();
+      },
+      { passive: false },
+    );
     graph.addListener(InternalEvent.CLICK, (_sender: unknown, evt: EventObject) => {
       const cell = evt.getProperty('cell') as Cell | null | undefined;
       const me = evt.getProperty('event') as MouseEvent;
@@ -719,6 +791,10 @@ export class Sheet {
     this.rowsInsertedHandlers.push(handler);
   }
 
+  onColumnsInserted(handler: (afterColIndex: number) => void): void {
+    this.colsInsertedHandlers.push(handler);
+  }
+
   /** Fired whenever an address's .code changes (direct edit, drag-move, or row insertion shift). */
   onCodeChanged(handler: (address: string) => void): void {
     this.codeChangedHandlers.push(handler);
@@ -825,17 +901,43 @@ export class Sheet {
     paint();
   }
 
-  /** Scrolls so that the row (and column, if given) is on screen; does nothing when it already is. */
-  reveal(rowIndex: number, colIndex?: number, smooth = true): void {
+  /** Fades a coloured band down a whole column (0-based), header included, so a new column is hard to miss. */
+  highlightColumn(colIndex: number, ms = 500, rgb: [number, number, number] = [143, 209, 163]): void {
+    if (colIndex < 0 || colIndex >= this.colCount) return;
+    const steps = 10;
+    const model = this.graph.getDataModel();
+    const header = model.getCell(`hdr:c${colIndex}`);
+    let step = 0;
+    const paint = (): void => {
+      const t = step / steps;
+      const color = '#' + rgb.map((v) => Math.round(v + (255 - v) * t).toString(16).padStart(2, '0')).join('');
+      this.graph.batchUpdate(() => {
+        for (let r = 0; r < this.rowCount; r++) {
+          const address = formatAddress(colIndex, r);
+          if (step >= steps) this.flashVisual.delete(address);
+          else this.flashVisual.set(address, { fill: color });
+          this.applyStyle(address);
+        }
+        if (header) model.setStyle(header, step >= steps ? { baseStyleNames: ['header'] } : { baseStyleNames: ['header'], fillColor: color });
+      });
+      if (step++ < steps) window.setTimeout(paint, ms / steps);
+    };
+    paint();
+  }
+
+  /** Scrolls so that the row (and column, if given) is on screen; does nothing when it already is. A null row leaves the vertical scroll alone. */
+  reveal(rowIndex: number | null, colIndex?: number, smooth = true): void {
     const view = this.graph.getView();
     const s = view.getScale();
     const t = view.getTranslate();
     const c = this.container;
-    const top = (ORIGIN_Y + rowIndex * CH + t.y) * s;
-    const h = CH * s;
     const options: ScrollToOptions = { behavior: smooth ? 'smooth' : 'auto' };
-    if (top - HDR_H * s < c.scrollTop || top + h > c.scrollTop + c.clientHeight) {
-      options.top = Math.max(0, top - c.clientHeight / 2 + h / 2);
+    if (rowIndex !== null) {
+      const top = (ORIGIN_Y + rowIndex * CH + t.y) * s;
+      const h = CH * s;
+      if (top - HDR_H * s < c.scrollTop || top + h > c.scrollTop + c.clientHeight) {
+        options.top = Math.max(0, top - c.clientHeight / 2 + h / 2);
+      }
     }
     if (colIndex !== undefined) {
       const left = (ORIGIN_X + colIndex * CW + t.x) * s;
@@ -889,6 +991,8 @@ export class Sheet {
     if (id.startsWith('sheet:')) {
       const d = this.data.get(id.slice(6));
       if (!d) return '';
+      const paper = this.paperOf(d.address);
+      if (paper) return this.paperLayoutOf(d.address)?.label ?? '';
       // A drawing is a live DOM node (its animations keep running in it); everything else is drawn from text.
       if (d.scene && !d.error && !(d.code && this.mode === 'view')) {
         d.scene.setCaption(d.output.join('\n'));
@@ -994,8 +1098,17 @@ export class Sheet {
     const flash = this.flashVisual.get(address) ?? {};
     // A picked cell wears the amber frame; in a group, the empty ones are tinted too, so the whole area reads as one.
     const pick: CellVisual = this.picked.has(address) ? { stroke: THEME.select, strokeWidth: 3, ...(this.picked.size > 1 && !d.code ? { fill: THEME.pickFill } : {}) } : {};
-    const style: CellStyle = { baseStyleNames: ['sheet'] };
-    const merged: CellVisual = { ...base, ...code, ...pick, ...sel, ...flash };
+    const paper = this.paperOf(address);
+    let scrolled = 0;
+    if (paper) {
+      const lay = this.paperLayoutOf(address);
+      const feed = this.paperFeed.get(address)?.t;
+      if (lay) scrolled = lay.total - lay.back - (feed === undefined || lay.back > 0 ? 0 : 1 - feed);
+    }
+    const style: CellStyle = { baseStyleNames: ['sheet'], ...(paper ? paperStyle(paper, d.output.length, this.paperFeed.get(address)?.t, scrolled) : {}) };
+    // The paper brings its own fill and ink; only what the code or the pointer chose on top of it is kept.
+    const under: CellVisual = paper ? { ...base, fill: undefined, fontColor: undefined, fontSize: undefined, align: undefined, verticalAlign: undefined } : base;
+    const merged: CellVisual = { ...under, ...code, ...pick, ...sel, ...flash };
     if (merged.fill) style.fillColor = merged.fill;
     if (merged.stroke) style.strokeColor = merged.stroke;
     if (merged.strokeWidth) style.strokeWidth = merged.strokeWidth;
@@ -1009,8 +1122,136 @@ export class Sheet {
       style.fillColor = THEME.errorFill;
       style.fontColor = THEME.errorInk;
     }
-    if (d.code && !merged.fill && !d.error) style.fillColor = THEME.codeFill;
+    if (d.code && !merged.fill && !d.error && !paper) style.fillColor = THEME.codeFill;
     this.graph.getDataModel().setStyle(cell, style);
+    this.syncPaperIcon(address, !!paper);
+  }
+
+  private paperSoundKey(address: string): string {
+    return `${this.id}/${this.data.get(address)?.uid || address}`;
+  }
+
+  private paperSoundOn(address: string): boolean {
+    return this.paperSound.has(this.paperSoundKey(address));
+  }
+
+  /** The speaker on a paper cell: there while the cell prints on paper, drawn "on" or "off". */
+  private syncPaperIcon(address: string, onPaper: boolean): void {
+    const cell = this.cells.get(address);
+    const have = this.paperIcons.get(address);
+    const on = onPaper ? this.paperSoundOn(address) : null;
+    if (have && (!cell || on === null || have.cell !== cell || have.on !== on)) {
+      this.graph.removeCellOverlay(have.cell, have.overlay);
+      this.paperIcons.delete(address);
+    } else if (have) return;
+    if (!cell || on === null) return;
+    const tip = on ? 'ASR-33 sound is on. Click to switch it off.' : 'ASR-33 sound is off. Click to switch it on.';
+    const overlay = new CellOverlay(new ImageBox(svgUri(speakerSvg(on)), 20, 20), tip, 'right', 'bottom', new Point(-14, -9), 'pointer');
+    overlay.addListener(InternalEvent.CLICK, () => this.togglePaperSound(address));
+    this.graph.addCellOverlay(cell, overlay);
+    this.paperIcons.set(address, { cell, overlay, on });
+  }
+
+  /** The speaker was clicked: switches this paper's ASR-33 sound. A click is also what lets the browser play sound at all. */
+  togglePaperSound(address: string): void {
+    const key = this.paperSoundKey(address);
+    const on = !this.paperSound.has(key);
+    if (on) this.paperSound.add(key);
+    else this.paperSound.delete(key);
+    savePaperSound(this.paperSound);
+    if (on) {
+      primeBell();
+      if (!bellOn()) setBell(true);
+    }
+    this.applyStyle(address);
+  }
+
+  /** The part of the text the printer has typed so far. While there is more to type, a timer carries on at the pace of the real machine. */
+  private paperTyped(address: string, paper: PaperOptions, full: string): string {
+    const entry = this.paperPrint.get(address) ?? { state: { shown: 0, head: '' }, timer: 0 };
+    const known = this.paperPrint.has(address);
+    entry.state = settle(known ? entry.state : undefined, full, paperSpeed(paper) <= 0);
+    this.paperPrint.set(address, entry);
+    if (entry.state.shown < full.length && !entry.timer) {
+      const step = printStep(full, entry.state.shown, paperSpeed(paper), this.paperSoundOn(address) && bellOn());
+      entry.timer = window.setTimeout(() => this.typeMore(address), step.wait);
+    }
+    return full.slice(0, entry.state.shown);
+  }
+
+  private typeMore(address: string): void {
+    const entry = this.paperPrint.get(address);
+    if (!entry) return;
+    entry.timer = 0;
+    const d = this.data.get(address);
+    const paper = this.paperOf(address);
+    if (!d || !paper) {
+      this.paperPrint.delete(address);
+      return;
+    }
+    const full = d.output.join('\n');
+    const state = settle(entry.state, full, paperSpeed(paper) <= 0 || this.suspended);
+    const sound = this.paperSoundOn(address) && bellOn() && !this.suspended;
+    const step = printStep(full, state.shown, paperSpeed(paper), sound);
+    const shown = Math.min(full.length, state.shown + step.take);
+    if (sound) for (const ch of full.slice(state.shown, shown)) printChar(ch);
+    entry.state = advance(full, shown);
+    const feeding = !this.suspended && paperSpeed(paper) > 0 && full.slice(state.shown, shown).includes('\n') && (this.paperView.get(address)?.back ?? 0) === 0;
+    if (feeding) this.startFeed(address, feedMs(paperSpeed(paper)));
+    this.refreshCell(address);
+  }
+
+  /** A line feed: the paper slides up one line over a short time instead of jumping. */
+  private startFeed(address: string, ms: number): void {
+    const running = this.paperFeed.has(address);
+    this.paperFeed.set(address, { start: performance.now(), ms, t: 0 });
+    if (running) return;
+    const tick = (): void => {
+      const f = this.paperFeed.get(address);
+      if (!f) return;
+      f.t = Math.min(1, (performance.now() - f.start) / f.ms);
+      if (f.t >= 1) this.paperFeed.delete(address);
+      this.refreshCell(address);
+      if (this.paperFeed.has(address)) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+
+  /** The paper options when this cell prints like a teletype right now (text output, not code view, not an error), else null. */
+  private paperOf(address: string): PaperOptions | null {
+    const d = this.data.get(address);
+    const o = d?.codeVisual.paper;
+    if (!d || !o || d.error || d.plot || d.tiles || d.scene || (d.code && this.mode === 'view')) return null;
+    return o;
+  }
+
+  /** What is in view on a paper cell, keeping a wound-back sheet where it is while new lines are printed. */
+  private paperLayoutOf(address: string): PaperLayout | null {
+    const d = this.data.get(address);
+    const paper = this.paperOf(address);
+    const geo = this.cells.get(address)?.getGeometry();
+    if (!d || !paper || !geo) return null;
+    if (!paperFontReady(paper, () => this.refreshSoon(address))) return null;
+    const seen = this.paperView.get(address) ?? { back: 0, total: 0 };
+    const text = this.paperTyped(address, paper, d.output.join('\n'));
+    const extra = this.paperFeed.has(address) && seen.back === 0 ? 1 : 0;
+    const first = paperLayout(text, geo.width, geo.height, paper, seen.back, extra);
+    const grown = first.total - seen.total;
+    const back = grown > 0 && seen.back > 0 ? seen.back + grown : grown < 0 ? 0 : seen.back;
+    const layout = grown === 0 ? first : paperLayout(text, geo.width, geo.height, paper, back, extra);
+    this.paperView.set(address, { back: layout.back, total: layout.total });
+    return layout;
+  }
+
+  /** Winds a paper cell's roll by whole lines (positive = towards older lines). Returns false when there was nowhere to go. */
+  scrollPaper(address: string, lines: number): boolean {
+    const layout = this.paperLayoutOf(address);
+    if (!layout) return false;
+    const next = Math.max(0, Math.min(layout.maxBack, layout.back + lines));
+    if (next === layout.back) return false;
+    this.paperView.set(address, { back: next, total: layout.total });
+    this.refreshCell(address);
+    return true;
   }
 
   /** A sheet on a hidden tab keeps running but does not redraw its cells until it is shown again. */
@@ -2139,6 +2380,109 @@ export class Sheet {
     this.rowsInsertedHandlers.forEach((h) => h(afterRowIndex));
     this.announceReferences(references);
     this.requestRun();
+  }
+
+  // ----------------------------------------------------------- column insert
+
+  /** Why a column cannot go after `afterColIndex` (0-based; -1 is before column A), or null when it can. */
+  columnInsertProblem(afterColIndex: number): string | null {
+    if (this.fixedColumns) return 'This tab arranges its own columns, so none can be inserted here. Try the Lab or a sheet of your own.';
+    if (this.colCount >= MAX_COLS) return `The sheet is already ${MAX_COLS} columns wide (${colToLetters(MAX_COLS - 1)}).`;
+    // On the board tab the board (A-J) and the panel (L-Q) sit on rows that code never shifts with, so only columns to their right may be added.
+    if (this.board && afterColIndex < BOARD_LAST_COL) return `On the board tab columns can only be added to the right of the panel (after column ${colToLetters(BOARD_LAST_COL)}).`;
+    return null;
+  }
+
+  /**
+   * Inserts a blank column right after `afterColIndex` (0-based), like a spreadsheet: everything from
+   * that point right shifts right by one column, the sheet grows by one column on the right, and every
+   * code cell's address-literal references are rewritten to match (see colInsertRewrite).
+   */
+  insertColumn(afterColIndex: number): boolean {
+    if (this.columnInsertProblem(afterColIndex)) return false;
+    const newColIndex = this.colCount;
+    const references = this.rewriteReferences(colInsertRewrite(afterColIndex + 1, 1), (a) => {
+      const p = this.data.get(a)!;
+      return p.col > afterColIndex ? formatAddress(p.col + 1, p.row) : a;
+    });
+
+    this.graph.batchUpdate(() => {
+      for (let r = 0; r < this.rowCount; r++) this.makeCell(newColIndex, r);
+      this.colCount += 1;
+      const cg = this.colHeaderGroup.getGeometry()!;
+      this.graph.getDataModel().setGeometry(this.colHeaderGroup, new Geometry(cg.x, cg.y, cg.width + CW, cg.height));
+      this.graph.insertVertex({
+        parent: this.colHeaderGroup,
+        id: `hdr:c${newColIndex}`,
+        value: colToLetters(newColIndex),
+        position: [ORIGIN_X + newColIndex * CW, 0],
+        size: [CW, HDR_H],
+        style: { baseStyleNames: ['header'] },
+      });
+
+      for (let c = newColIndex; c > afterColIndex + 1; c--) {
+        for (let r = 0; r < this.rowCount; r++) {
+          const dst = this.data.get(formatAddress(c, r))!;
+          const src = this.data.get(formatAddress(c - 1, r))!;
+          dst.code = src.code;
+          dst.uid = src.uid;
+          dst.memory = src.memory;
+          dst.shape = src.shape;
+          dst.runCount = src.runCount;
+        }
+      }
+      for (let r = 0; r < this.rowCount; r++) {
+        const fresh = this.data.get(formatAddress(afterColIndex + 1, r))!;
+        fresh.code = '';
+        fresh.uid = '';
+        fresh.memory = {};
+        fresh.shape = emptyShape();
+        fresh.runCount = 0;
+      }
+
+      for (let c = afterColIndex + 1; c <= newColIndex; c++) {
+        for (let r = 0; r < this.rowCount; r++) {
+          const addr = formatAddress(c, r);
+          const d = this.data.get(addr)!;
+          d.output = [];
+          d.plot = null;
+          d.tiles = null;
+          d.scene = null;
+          d.viewText = null;
+          d.codeVisual = {};
+          d.span = { cols: 1, rows: 1 };
+          d.error = null;
+          this.baseVisual.delete(addr);
+          this.selectionVisual.delete(addr);
+          this.flashVisual.delete(addr);
+          const cell = this.cells.get(addr);
+          if (cell) this.graph.getDataModel().setVisible(cell, true);
+        }
+      }
+      for (const [covered, owner] of [...this.coveredBy]) {
+        const coveredCol = this.data.get(covered)?.col ?? -1;
+        const ownerCol = this.data.get(owner)?.col ?? -1;
+        if (coveredCol > afterColIndex || ownerCol > afterColIndex) this.coveredBy.delete(covered);
+      }
+      for (let c = afterColIndex + 1; c <= newColIndex; c++) {
+        for (let r = 0; r < this.rowCount; r++) this.applyStyle(formatAddress(c, r));
+      }
+    });
+    this.raiseHeaders();
+
+    for (let c = afterColIndex + 1; c < this.colCount; c++) {
+      for (let r = 0; r < this.rowCount; r++) {
+        const addr = formatAddress(c, r);
+        this.depGraph.markDirty(addr);
+        if (this.data.get(addr)?.code) this.nextReason.set(addr, 'moved');
+        this.codeChangedHandlers.forEach((h) => h(addr));
+      }
+    }
+    this.depGraph.markDirty(COLS_NODE);
+    this.colsInsertedHandlers.forEach((h) => h(afterColIndex));
+    this.announceReferences(references);
+    this.requestRun();
+    return true;
   }
 
   // ------------------------------------------------------------------- code

@@ -345,7 +345,7 @@ export class SheetPane {
         } else if (id.startsWith('hdr:c')) {
           const col = Number(id.slice(5));
           for (let r = 0; r < sheet.rowCount; r++) sheet.flash(formatAddress(col, r), THEME.flash, 400);
-          hooks.say(`Column ${colToLetters(col)} — cells ${colToLetters(col)}1 to ${colToLetters(col)}${sheet.rowCount}.`, 'info');
+          hooks.say(`Column ${colToLetters(col)} — cells ${colToLetters(col)}1 to ${colToLetters(col)}${sheet.rowCount}. Right-click the letter to insert a column.`, 'info');
         } else if (id.startsWith('hdr:r')) {
           const row = Number(id.slice(5));
           for (let c = 0; c < sheet.colCount; c++) sheet.flash(formatAddress(c, row), THEME.flash, 400);
@@ -354,6 +354,7 @@ export class SheetPane {
       },
       tooltipFor: (id) => {
         if (id === 'hdr:corner') return hooks.tooltipFor?.(id) ?? 'Click here to jump back to the top-left';
+        if (/^hdr:c\d+$/.test(id)) return 'Right-click: insert a column here, pick, fit, restart…';
         if (id.startsWith('ctx:row:')) return 'Rest here ½ second to peek · click to jump there';
         if (id.startsWith('ctx:livebar:')) return 'A live copy — edits here are real. Click to go to the cell.';
         return hooks.tooltipFor?.(id) ?? null;
@@ -374,6 +375,20 @@ export class SheetPane {
       if (this.editor.isOpen && this.editor.address) {
         const p = parseAddress(this.editor.address);
         if (p && p.row > afterRowIndex) this.editor.close(false);
+      }
+    });
+
+    sheet.onColumnsInserted((afterColIndex) => {
+      const remap = (addr: string): string => {
+        const p = parseAddress(addr);
+        if (!p || p.col <= afterColIndex) return addr;
+        return formatAddress(p.col + 1, p.row);
+      };
+      if (this.selectedCodeCell) this.selectedCodeCell = remap(this.selectedCodeCell);
+      this.lastSheetCell = remap(this.lastSheetCell);
+      if (this.editor.isOpen && this.editor.address) {
+        const p = parseAddress(this.editor.address);
+        if (p && p.col > afterColIndex) this.editor.close(false);
       }
     });
 
@@ -549,6 +564,11 @@ export class SheetPane {
       menu.addItem(`Insert a row above ${index + 1}`, null, () => this.insertRowAfter(index - 1), undefined, undefined, index - 1 >= firstFree);
       menu.addItem(`Insert a row below ${index + 1}`, null, () => this.insertRowAfter(index), undefined, undefined, index >= firstFree);
       menu.addSeparator();
+    } else {
+      const letter = colToLetters(index);
+      menu.addItem(`Insert a column left of ${letter}`, null, () => this.insertColumnAfter(index - 1), undefined, undefined, !sheet.columnInsertProblem(index - 1));
+      menu.addItem(`Insert a column right of ${letter}`, null, () => this.insertColumnAfter(index), undefined, undefined, !sheet.columnInsertProblem(index));
+      menu.addSeparator();
     }
     const go = menu.addItem('Go to', null, () => {});
     if (isRow) {
@@ -567,6 +587,19 @@ export class SheetPane {
     this.sheet.reveal(rowIndex + 1);
     this.sheet.highlightRow(rowIndex + 1);
     this.hooks.say(`Inserted a new row ${rowIndex + 2}. Everything below moved down one; references in code are updated.`, 'good');
+  }
+
+  insertColumnAfter(colIndex: number): boolean {
+    const why = this.sheet.columnInsertProblem(colIndex);
+    if (why) {
+      this.hooks.say(why, 'bad');
+      return false;
+    }
+    this.sheet.insertColumn(colIndex);
+    this.sheet.reveal(null, colIndex + 1);
+    this.sheet.highlightColumn(colIndex + 1);
+    this.hooks.say(`Inserted a new column ${colToLetters(colIndex + 1)}. Everything to the right moved one column over; references in code are updated.`, 'good');
+    return true;
   }
 
   private resize(address: string, cols: number, rows: number): void {

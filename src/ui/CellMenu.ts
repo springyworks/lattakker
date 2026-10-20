@@ -117,6 +117,7 @@ export class CellMenu {
     sheet.onModeChange(relayout);
     sheet.onCodeChanged(() => this.syncBadges());
     sheet.onRowsInserted(() => this.syncBadges());
+    sheet.onColumnsInserted(() => this.syncBadges());
   }
 
   /** Tiny ids in the corner of every cell that holds code. */

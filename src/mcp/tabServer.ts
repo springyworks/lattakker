@@ -1,3 +1,4 @@
+import { colToLetters, lettersToCol } from '../sheet/address';
 import { clickNode } from '../sheet/reactivity';
 import { parsePath, workspace, type WorkspaceTab } from '../workspace';
 import { ERR, McpError, type Json, type McpRouter, type McpServer, type Trace } from './router';
@@ -15,6 +16,7 @@ import { ERR, McpError, type Json, type McpRouter, type McpServer, type Trace } 
  *   tools/call set_code | run_cell       change a cell / run it again
  *   tools/call click                     trigger the cell's click event (wakes its on(cell, 'click') handlers)
  *   tools/call flash                     make a cell blink
+ *   tools/call zoom                      fly the view: to a cell's block, back out, fit to content, or to a scale
  *   tools/call signal                    tell every listener in the page something (a custom event)
  */
 
@@ -46,7 +48,17 @@ const TOOLS: ToolSpec[] = [
     description: "Trigger a cell's click event, as if it had been clicked: every on(cell, 'click', fn) of that cell wakes up.",
     inputSchema: { type: 'object', properties: { address }, required: ['address'] },
   },
+  {
+    name: 'insert_column',
+    description: 'Insert a blank column next to a column letter, like a spreadsheet: the cells to the right move over and the addresses written in code are rewritten.',
+    inputSchema: { type: 'object', properties: { column: { type: 'string', description: "A column letter like 'C'" }, side: { type: 'string', enum: ['left', 'right'], description: "Default 'right'" } }, required: ['column'] },
+  },
   { name: 'flash', description: 'Make a cell blink so a person sees which one is meant.', inputSchema: { type: 'object', properties: { address, color: { type: 'string' } }, required: ['address'] } },
+  {
+    name: 'zoom',
+    description: "Move the view of this tab, with a short flight. With an address: zoom in on that cell's block. With out: true, back to where the view was before the last zoom in. With fit: true: zoom to fit the content of the sheet. With scale (the sheet clamps it to its limits, at most 2.5): that zoom around the middle of the window.",
+    inputSchema: { type: 'object', properties: { address, out: { type: 'boolean' }, fit: { type: 'boolean' }, scale: { type: 'number' } } },
+  },
   {
     name: 'signal',
     description: 'Tell every listener in the page something: a named event with some data. Cells hear it with mcp.on(name, fn).',
@@ -189,10 +201,34 @@ export class TabServer implements McpServer {
           sheet.flash(addr, '#f2e4bd', 500);
           return reply({ path: workspace.pathOf(this.tab.id, addr), clicked: true, by: from });
         }
+        case 'insert_column': {
+          if (typeof args.column !== 'string' || !/^[a-z]{1,2}$/i.test(args.column.trim())) return failure("column must be a letter like 'C'");
+          const col = lettersToCol(args.column.trim());
+          if (col >= sheet.colCount) return failure(`${args.column.toUpperCase()} is beyond the last column (${colToLetters(sheet.colCount - 1)})`);
+          const after = args.side === 'left' ? col - 1 : col;
+          const why = sheet.columnInsertProblem(after);
+          if (why) return failure(why);
+          sheet.insertColumn(after);
+          sheet.highlightColumn(after + 1);
+          this.router.noteChange(trace, { subject: `${this.tab.id}/columns`, action: 'insert_column', before: `${sheet.colCount - 1} columns`, after: `${sheet.colCount} columns, new ${colToLetters(after + 1)}` });
+          return reply({ tab: this.tab.id, inserted: colToLetters(after + 1), columns: sheet.colCount });
+        }
         case 'flash': {
           const addr = this.cellOf(args.address);
           sheet.flash(addr, typeof args.color === 'string' ? args.color : undefined, 700);
           return reply({ path: workspace.pathOf(this.tab.id, addr), flashed: true });
+        }
+        case 'zoom': {
+          if (typeof args.address === 'string') {
+            const addr = this.cellOf(args.address);
+            void sheet.zoomInOn(addr);
+          } else if (args.out === true) void sheet.zoomOut();
+          else if (args.fit === true) void sheet.fitToView(null);
+          else if (typeof args.scale === 'number' && args.scale > 0) {
+            const r = sheet.container.getBoundingClientRect();
+            sheet.zoomAround(args.scale / sheet.viewState().scale, r.left + r.width / 2, r.top + r.height / 2);
+          } else return failure('zoom needs an address, out: true, fit: true or a scale');
+          return reply({ tab: this.tab.id, flying: true });
         }
         case 'signal': {
           if (typeof args.name !== 'string' || !args.name || args.name.length > 60) return failure('a signal needs a short name');

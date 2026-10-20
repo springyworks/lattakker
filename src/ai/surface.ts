@@ -8,11 +8,13 @@ import { isAnswered, replyBlock, requestAt } from './requests';
 import { BOARD_COLS, BOARD_ROWS, isLake, rankGlyph, type Piece } from '../game/model';
 import { installMcpBridge } from './bridge';
 import { workspace, type WorkspaceTab } from '../workspace';
+import { colToLetters, lettersToCol } from '../sheet/address';
 import { McpError, router } from '../mcp/router';
 import { callers, currentCaller, outsideTrace, participant, throughChannel } from './entry';
 import { showSubtitle } from '../ui/subtitles';
 import { README_URL, isOriented, markOriented, orientation, readReadme } from './orientation';
 import { docUrls, askRules } from '../aichat/docs';
+import { bellOn, machineRunning, soundSources } from '../aichat/bell';
 
 /**
  * Makes the page usable by external AI agents: a visually-hidden text mirror of the game, window.mms,
@@ -73,6 +75,7 @@ READ
   mms.askRules('a few words')   the sections of the rules that answer your words, with the owner's standing directives (each with its strength); no words = the whole rules text
   mms.findTools('a few words')   (async) the best few MCP tools for your words, over all servers: server, tool, a sentence, and the mcp_request to copy. Ask it when you do not know which tool does what
   mms.mcp('lab', 'resources/list' | 'tools/call' ..., params) (async)   send an MCP request to a tab's server through the page's router; mms.mcpLog(20) shows the last messages that crossed it
+  mms.sounds()               { muted, motorRunning, sources: [{ path, secondsAgo, calls }] } which cells made teletype sound lately (they flash once)
   mms.tabs()                 { current, tabs: [{ id, title, path, mode, codeCells, rows, columns }], paths } the tabs that hold code cells and which one the player sees
   mms.state()                { phase: 'setup'|'play'|'over', turn, winner, moveCount, lastMove, message, busy, bluePlayer: 'builtin'|'virtual', redPieces, bluePieces }
   mms.board('red'|'blue')    { rows: [10 strings, row 1 first], legend, text }. As Red (default) hidden Blue pieces stay hidden (B?); as Blue (after takeOverBlue) your Blue pieces are shown and Red's are hidden (R?).
@@ -96,6 +99,7 @@ ACT
   mms.runCell('A12' | '/lab/J24') (async) re-run a cell, wait. Success { ok: true, address, uid, output, text }; failure { ok: false, error, address, uid, output }.
                              error is a plain string: "line 6: '}' expected." for the first syntax error, just the message for a runtime error, never an object or code.
   mms.clearCell('A12')       empty a cell
+  mms.insertColumn('C', 'right' | 'left', tab?)   insert a blank column next to C, like a spreadsheet: cells to the right move over and the addresses in code are rewritten (the board tab only grows to the right of the panel)
   mms.setMode('run'|'view')  cells show output (run) or their code (view)
   mms.say('Nice move!')      show a message to the player in the speech bubble
   mms.subtitle('Now Red moves', 4)   a subtitle at the bottom of the screen for a screen recording (0 = until the next; '' removes it)
@@ -113,6 +117,7 @@ The page also keeps an accessible text mirror in #mms-text (board grid, captured
 CELL CODE (TypeScript, async allowed, re-runs when things it reads change)
   print(...values)   add a line of output           view(text)      text shown in view mode
   color('#ecdcd8')   cell background                span(cols,rows) merge cells (not over the board)
+  paper()            print like a teletype on a roll of plain paper with a faint grain, typed at 10 characters a second (newest line at the bottom, mouse wheel winds back; a speaker icon in the cell switches the ASR-33 sound on, default off); paper({font:'tty33'|'tty28'|'tty35', tint, wear:0..1, speed}), paper(false) off
   at('B7')           another cell: .text .code .piece .color(c) .print(...) .flash()
   range('A1:J10')    array of cells with .color(c) and .print(...)
   game.phase game.turn game.winner game.moveCount game.lastMove game.history
@@ -123,12 +128,13 @@ CELL CODE (TypeScript, async allowed, re-runs when things it reads change)
   plot(Math.sin, {from:0,to:6.28,title:'wave'})  XY plot as output; also plot([1,4,9]), plot([[0,1],[1,3]]), plot({a: f, b: g})
   grid(10, 8) tiles inside this block (after span(10, 8)): g.at(x,y).color('#3f8f5a') .show('7'), g.paint((x,y) => colour|null), g.fill(c), on(g,'click', tile => ...); tiles use their own x,y from 0, other cells read at('A16/3,4').fill. More: g.box(x,y,w,h,colour), g.text(x,y,'words',{ink,fill,bold,align,snap,mono,w}) (snap: one letter per tile, a terminal), tile.ink(colour), tile.bold(), grid(80,20,{lines:false}); a grid takes the keyboard with g.focus() (from a click handler) and on(g,'key',(key,info)=>...), also on(g,'focus'|'blur',fn)
   every('1s', n => ...)  after('5s', fn)  on('B7' | 'A1:J10' | 'game', fn)  stop()   (timers die when the cell re-runs)
-  on('I18', 'size' | 'code' | 'click', fn)  on('sheet', 'rows' | 'mode', fn)   events; also cell.cols/rows, at(x).code, sheet.rows/mode are reactive when read at top level
+  on('I18', 'size' | 'code' | 'click', fn)  on('sheet', 'rows' | 'cols' | 'mode', fn)   events; also cell.cols/rows, at(x).code, sheet.rows/cols/mode are reactive when read at top level
   memory (notebook that survives re-runs)  run.reason ('edit'|'moved'|'update')  run.count
   mcp.catalog() / mcp.tools(server) / mcp.stats() / mcp.recent(n)   what the MCP ecosystem offers, and the router's counters (perSecond is ready for plot)
   mcp.packets(filter, n) / mcp.analyze(filter) / mcp.ask('any errors?') / mcp.callers()   the traffic by type with a display filter, counted, and answered in words
   await weather.now('Amsterdam') / weather.forecast(place, days) / weather.find(name)   weather from open-meteo.com (also the MCP server 'weather')
   await ollama.status() (never throws, says what is missing) / ollama.ask(prompt) / ollama.models()   the model on this computer (also the MCP server 'ollama')
+  teletype.print(char) / teletype.key(char?) / teletype.cr() / teletype.bell()   the soft ASR-33 sounds: print(letter) is the machine printing (hum + print head, '\n' = carriage return), key() one keyboard clack, the bell (muted by the chat's speaker button; a click allows sound)
   await input.ask(q) / input.confirm(q) / input.choose(q, options); input.slider(label,{min,max,value},fn) .number .text .checkbox .select .button; input.onKey((key) => ...)
   cell.usedBy / cell.reads  addresses that read this cell / that this cell read
   Moving, swapping or inserting rows rewrites address literals in all code ('B7', 'A1:B3', 'C32-55') so they follow their cells; a range split by a move is only reported. Keep addresses as plain literals ('E' + n is not followed).
@@ -568,6 +574,16 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
         paths: "A cell is named /tab/ADDRESS, e.g. /lab/J24, or /tab/ADDRESS/x,y for tile x,y of the grid inside that cell. @c-1a2b3c4d names a cell by its identity from any tab. A plain address like J24 means the board tab unless a `tab` argument says otherwise.",
       }),
 
+    /** Which cells made the teletype sound lately (the culprits of a sound nobody can place); they flash once so you can see them. */
+    sounds: (): Result => {
+      const sources = soundSources();
+      for (const src of sources) {
+        const hit = workspace.resolve(src.path);
+        if (!('error' in hit)) hit.tab.sheet.flash(hit.address);
+      }
+      return ok({ muted: !bellOn(), motorRunning: machineRunning(), sources, note: 'Cells that used teletype.print/key/cr/bell in the last 30 seconds, newest first. Stop one with its cell menu "Stop timers & watchers", or edit its code.' });
+    },
+
     resolve(addressOrUid: unknown, tab?: unknown): Result {
       const a = validCodeAddress(addressOrUid, tab);
       if ('error' in a) return fail(a.error);
@@ -692,6 +708,25 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
       a.sheet.setCode(a.address, '');
       flush();
       return ok({ tab: a.tab.id, address: a.address, path: a.path });
+    },
+
+    insertColumn(column: unknown, side: unknown = 'right', tab?: unknown): Result {
+      if (typeof column !== 'string' || !/^[a-z]{1,2}$/i.test(column.trim())) return fail('column must be a column letter like "C"');
+      if (side !== 'left' && side !== 'right') return fail("side must be 'left' or 'right' of that column");
+      const found = workspace.get(typeof tab === 'string' && tab.trim() ? tab.trim().toLowerCase() : 'board');
+      if (!found) return fail(`There is no tab "${String(tab)}".`);
+      const col = lettersToCol(column.trim());
+      if (col >= found.sheet.colCount) return fail(`${column.toUpperCase()} is beyond the last column (${colToLetters(found.sheet.colCount - 1)}) of ${found.id}.`);
+      const after = side === 'left' ? col - 1 : col;
+      const why = found.sheet.columnInsertProblem(after);
+      if (why) return fail(why);
+      found.select();
+      found.sheet.insertColumn(after);
+      found.sheet.reveal(null, after + 1, false);
+      found.sheet.highlightColumn(after + 1);
+      hud.say(`A new column ${colToLetters(after + 1)} was inserted. Everything to the right moved over; references in code are updated.`, 'good');
+      flush();
+      return ok({ tab: found.id, inserted: colToLetters(after + 1), columns: found.sheet.colCount, note: 'Cells from the old column onward moved one column right; address literals in code were rewritten.' });
     },
 
     setMode(mode: unknown): Result {
@@ -910,6 +945,13 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
       run: () => api.tabs(),
     },
     {
+      name: 'list_sounds',
+      description: 'Which cells made the ASR-33 teletype sound in the last 30 seconds (cells that call teletype.print, key, cr or bell), whether the motor runs and whether the speaker is muted. The cells flash once on screen. Use it to find the cell behind a sound.',
+      inputSchema: obj({}),
+      readOnly: true,
+      run: () => api.sounds(),
+    },
+    {
       name: 'list_cells',
       description:
         "List the spreadsheet cells that contain TypeScript code, with tab, address, absolute path, uid, code, printed output and error message (if any). Use this to see what the child has written and why it may be failing. By default only the board tab is listed; pass tab 'lab' for the Lab's demos or 'all' for every tab.",
@@ -1047,7 +1089,7 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
     {
       name: 'mcp_request',
       description:
-        "Send an MCP request to one of the page's tab servers (they are named like the tabs: 'board', 'lab') through the page's router. Tabs: board, lab and examples. Methods: initialize, resources/list, resources/read {uri}, resources/subscribe, tools/list, tools/call {name, arguments}. Tools of a tab: list_cells, get_cell, run_cell, set_code, click (triggers a cell's click event), flash, signal. Example: server 'lab', method 'tools/call', params { name: 'click', arguments: { address: 'J24' } }.",
+        "Send an MCP request to one of the page's tab servers (they are named like the tabs: 'board', 'lab') through the page's router. Tabs: board, lab and examples. Methods: initialize, resources/list, resources/read {uri}, resources/subscribe, tools/list, tools/call {name, arguments}. Tools of a tab: list_cells, get_cell, run_cell, set_code, click (triggers a cell's click event), flash, zoom (address | out | fit | scale), signal. Example: server 'lab', method 'tools/call', params { name: 'click', arguments: { address: 'J24' } }.",
       inputSchema: obj({ server: str("'board', 'lab' or 'examples'"), method: str('The MCP method, for example resources/read or tools/call'), params: { type: 'object', description: 'The parameters of the method', additionalProperties: true } }, ['server', 'method']),
       readOnly: false,
       run: (a) => api.mcp(a.server, a.method, a.params),

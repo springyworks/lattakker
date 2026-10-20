@@ -146,7 +146,7 @@ export function createNotebook(view: GameView, board: NotebookBoard, examples: R
   root.append(bar, container);
   document.getElementById('app')!.after(root);
 
-  const sheet = new Sheet(container, { board: false, id: 'examples' });
+  const sheet = new Sheet(container, { board: false, id: 'examples', fixedColumns: true });
   let sayTimer = 0;
   const speak = (text: string, tone: Tone = 'info'): void => {
     say.textContent = text;
