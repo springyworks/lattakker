@@ -43,6 +43,8 @@ export interface KeyInfo {
   ctrl: boolean;
   alt: boolean;
   repeat: boolean;
+  /** The character as the keyboard made it, with its case (Shift and Caps Lock counted); '' for keys that type nothing. */
+  text: string;
 }
 
 export const MAX_CONTROLS_PER_CELL = 24;
@@ -108,6 +110,30 @@ class InputPanel {
   private readonly down = new Set<string>();
   private readonly keyListeners = new Set<(key: string, info: KeyInfo) => void>();
   private keysInstalled = false;
+  /** Cells that took the keyboard (input.claimKeys), each with what to tell it when the keyboard is taken away again. While there is one, the typing keys do not reach the sheet's own shortcuts. */
+  private readonly claims = new Set<() => void>();
+  /** Cells that take pasted text into their own input (a terminal), found by tab and address. */
+  private readonly pasters = new Set<{ tab: string; address: () => string; fn: (text: string) => void }>();
+
+  onPaste(tab: string, address: () => string, fn: (text: string) => void): () => void {
+    const entry = { tab, address, fn };
+    this.pasters.add(entry);
+    return () => void this.pasters.delete(entry);
+  }
+
+  hasPaste(tab: string, address: string): boolean {
+    return [...this.pasters].some((p) => p.tab === tab && p.address() === address);
+  }
+
+  /** Hands the text to the cell's input; false when the cell has none. */
+  pasteTo(tab: string, address: string, text: string): boolean {
+    const found = [...this.pasters].filter((p) => p.tab === tab && p.address() === address);
+    for (const p of found) p.fn(text);
+    return found.length > 0;
+  }
+
+  /** Claims that a click does not take away: the mouse is over the cell, which is enough. */
+  private readonly steady = new Set<() => void>();
 
   // ---------------------------------------------------------------- controls
 
@@ -380,13 +406,41 @@ class InputPanel {
       const node = target as HTMLElement | null;
       return !!node && (/^(INPUT|TEXTAREA|SELECT)$/.test(node.tagName) || node.isContentEditable || !!node.closest?.('.monaco-editor, .ai-side, .input-card'));
     };
-    window.addEventListener('keydown', (e) => {
-      if (typing(e.target)) return;
+    const handled = new WeakSet<Event>();
+    const hear = (e: KeyboardEvent): void => {
+      if (handled.has(e) || typing(e.target)) return;
+      handled.add(e);
       const key = keyName(e.key);
       this.down.add(key);
-      const info: KeyInfo = { shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey, alt: e.altKey, repeat: e.repeat };
+      const info: KeyInfo = { shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey, alt: e.altKey, repeat: e.repeat, text: e.key.length === 1 ? e.key : '' };
       for (const listener of [...this.keyListeners]) listener(key, info);
-    });
+    };
+    // A cell that took the keyboard hears the typing keys first, and nothing else on the page (Enter opening the editor, Delete clearing a cell, Space scrolling) gets them.
+    window.addEventListener(
+      'keydown',
+      (e) => {
+        if (!this.claims.size || e.altKey || e.metaKey || typing(e.target)) return;
+        // Shift + Enter stays the sheet's: it opens the editor of the cell.
+        if (e.key === 'Enter' && e.shiftKey) return;
+        // A terminal also gets Ctrl-C and Ctrl-D (the browser would copy, or bookmark the page).
+        const control = e.ctrlKey && !e.shiftKey && /^[cd]$/i.test(e.key);
+        if (e.ctrlKey && !control) return;
+        if (!control && !(e.key.length === 1 || /^(Enter|Backspace|Delete|Arrow(Up|Down|Left|Right)|Home|End|PageUp|PageDown)$/.test(e.key))) return;
+        hear(e);
+        e.preventDefault();
+        e.stopPropagation();
+      },
+      true,
+    );
+    window.addEventListener('keydown', hear);
+    // A click anywhere takes the keyboard away, like it does from a tile grid; a cell that wants it back asks again in its own click.
+    window.addEventListener(
+      'pointerdown',
+      () => {
+        for (const lost of [...this.claims]) if (!this.steady.has(lost)) lost();
+      },
+      true,
+    );
     window.addEventListener('keyup', (e) => this.down.delete(keyName(e.key)));
     window.addEventListener('blur', () => this.down.clear());
   }
@@ -398,6 +452,22 @@ class InputPanel {
     return () => {
       this.keyListeners.delete(listener);
     };
+  }
+
+  /** Takes the typing keys for a cell (a terminal): Enter, Delete, Space, arrows and letters no longer reach the sheet's shortcuts. Any click on the page takes them away again (`lost` is told), unless `steady` (a hover claim: the cell lets go itself); so does the returned function. */
+  claimKeys(lost?: () => void, options?: { steady?: boolean }): () => void {
+    this.installKeys();
+    const release = (): void => {
+      this.claims.delete(drop);
+      this.steady.delete(drop);
+    };
+    const drop = (): void => {
+      release();
+      lost?.();
+    };
+    this.claims.add(drop);
+    if (options?.steady) this.steady.add(drop);
+    return release;
   }
 
   isDown(key: string): boolean {

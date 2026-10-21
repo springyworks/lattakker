@@ -22,6 +22,10 @@ const FAMILIES: Record<NonNullable<PaperOptions['font']>, string> = {
 export const PAPER_SHAPE = 'paperroll';
 /** The style key that tells the paper shape how far the roll has moved. */
 export const PAPER_SCROLL = 'paperScroll';
+/** The style key that tells the paper shape where the print head stands: px from the left edge at 100%, or -1 when it is out of view. */
+export const PAPER_HEAD = 'paperHead';
+/** The width of the print head's block, in px at 100% (one character), under the key PAPER_HEAD_W. */
+export const PAPER_HEAD_W = 'paperHeadW';
 /** An ASR-33 types 10 characters a second (110 baud). */
 export const PAPER_CPS = 10;
 export const PAPER_FONT_SIZE = 12;
@@ -72,13 +76,15 @@ function charWidth(fam: string): number {
 }
 
 /** How a paper cell looks, as plain maxGraph style: the fill is the paper, the font is the ink. */
-export function paperStyle(o: PaperOptions, printedLines: number, feed?: number, scrollLines = 0): CellStyle {
+export function paperStyle(o: PaperOptions, printedLines: number, feed?: number, scrollLines = 0, headCol = -1): CellStyle {
   const wear = Math.max(0, Math.min(1, o.wear ?? Math.min(0.9, 0.08 + printedLines / 120)));
   const tint = o.tint && /^#[0-9a-fA-F]{3,8}$/.test(o.tint) ? o.tint : '#f5f4ef';
   return {
     shape: PAPER_SHAPE,
     // How far the roll has travelled up, in px at 100%: the grain of the paper moves with the text.
     ...({ [PAPER_SCROLL]: Math.max(0, scrollLines) * PAPER_LINE_PX } as CellStyle),
+    // The print head: a block on the line being typed, at the column the next letter will strike (-1: not in view).
+    ...({ [PAPER_HEAD]: headCol < 0 ? -1 : PAD_X + headCol * charWidth(family(o)), [PAPER_HEAD_W]: charWidth(family(o)) } as CellStyle),
     fillColor: tint,
     strokeColor: '#c8c6bd',
     fontFamily: family(o),
@@ -89,6 +95,8 @@ export function paperStyle(o: PaperOptions, printedLines: number, feed?: number,
     verticalAlign: 'bottom',
     whiteSpace: 'nowrap',
     overflow: 'hidden',
+    // The sheet's own label padding (spacing: 3) is switched off, or the text would stand 3px right of and above where the print head thinks it is.
+    spacing: 0,
     spacingLeft: PAD_X,
     spacingTop: PAD_Y,
     // During a line feed the paper sits lower by what is left of one line, and slides up as `feed` goes from 0 to 1.
@@ -108,24 +116,76 @@ export interface PaperLayout {
   maxBack: number;
   /** The wind-back actually shown, clamped to 0..maxBack. */
   back: number;
+  /** The column the print head stands at (0 = the left margin) on the last line, where the next letter will be struck. */
+  col: number;
 }
+
+/** The control characters the machine obeys itself: carriage return, backspace, and a line feed without a return. */
+const MOVES = /[\r\b\v\f]/;
+
+/**
+ * What is on the paper once the machine has obeyed the text. A newline is a carriage return and a line feed in one, as the
+ * terminal driver of a Unix machine made it. The raw movements are separate, like on the real machine: "\r" brings the head back
+ * to the left margin without feeding the paper (the next letters strike over the old ones), "\b" moves it one column back, and
+ * "\v" (or "\f") feeds the paper one line but leaves the head where it is. A space moves the head without striking, so it leaves
+ * old ink alone; a letter struck on top of another one replaces it in the picture (the paper cannot show both). A line that
+ * gets longer than the paper is wide carries on at the left margin of the next line.
+ */
+export function roll(text: string, cols: number): { lines: string[]; col: number } {
+  const source = text.split('\n');
+  const kept = source.length > MAX_SOURCE_LINES ? source.slice(-MAX_SOURCE_LINES) : source;
+  if (!MOVES.test(text)) {
+    const lines: string[] = [];
+    for (const raw of kept) {
+      const line = raw.replace(/\t/g, '    ');
+      if (line.length <= cols) lines.push(line);
+      else for (let i = 0; i < line.length; i += cols) lines.push(line.slice(i, i + cols));
+    }
+    const last = lines[lines.length - 1] ?? '';
+    return { lines, col: Math.min(last.length, cols - 1) };
+  }
+  const rows: string[][] = [[]];
+  let col = 0;
+  const strike = (ch: string): void => {
+    if (col >= cols) {
+      rows.push([]);
+      col = 0;
+    }
+    const row = rows[rows.length - 1];
+    while (row.length < col) row.push(' ');
+    if (ch !== ' ' || row[col] === undefined) row[col] = ch;
+    col++;
+  };
+  for (const ch of kept.join('\n')) {
+    if (ch === '\n') {
+      rows.push([]);
+      col = 0;
+    } else if (ch === '\v' || ch === '\f') rows.push([]);
+    else if (ch === '\r') col = 0;
+    else if (ch === '\b') col = Math.max(0, col - 1);
+    else if (ch === '\t') for (let i = 0; i < 4; i++) strike(' ');
+    else if (ch >= ' ') strike(ch);
+  }
+  return { lines: rows.map((r) => r.join('')), col: Math.min(col, cols - 1) };
+}
+
+/**
+ * maxGraph trims every line of an SVG label and the browser folds runs of spaces into one, which would pull the letters away from
+ * the columns the print head counts. Hard spaces keep every column, and an invisible zero-width mark in front stops a line that
+ * starts with spaces from being trimmed.
+ */
+const solid = (line: string): string => (line.startsWith(' ') ? '\u200b' : '') + line.replace(/ /g, '\u00a0');
 
 /** Wraps the text to the width of the cell and keeps the lines in view when the paper is `back` lines wound back from the newest (`extra` more lines above, for a line feed in progress). */
 export function paperLayout(text: string, width: number, height: number, o: PaperOptions, back: number, extra = 0): PaperLayout {
   const fam = family(o);
   const cols = Math.max(4, Math.floor((width - 2 * PAD_X - 2) / charWidth(fam)));
   const fit = Math.max(1, Math.floor((height - 2 * PAD_Y) / (PAPER_FONT_SIZE * LINE)));
-  const source = text.split('\n');
-  const lines: string[] = [];
-  for (const raw of source.length > MAX_SOURCE_LINES ? source.slice(-MAX_SOURCE_LINES) : source) {
-    const line = raw.replace(/\t/g, '    ').replace(/\r/g, '');
-    if (line.length <= cols) lines.push(line);
-    else for (let i = 0; i < line.length; i += cols) lines.push(line.slice(i, i + cols));
-  }
+  const { lines, col } = roll(text, cols);
   const maxBack = Math.max(0, lines.length - fit);
   const b = Math.max(0, Math.min(maxBack, Math.floor(back)));
   const end = lines.length - b;
-  return { label: lines.slice(Math.max(0, end - fit - extra), end).join('\n'), total: lines.length, fit, maxBack, back: b };
+  return { label: lines.slice(Math.max(0, end - fit - extra), end).map(solid).join('\n'), total: lines.length, fit, maxBack, back: b, col };
 }
 
 /** Characters per second this paper types at; 0 means the text is there at once. */

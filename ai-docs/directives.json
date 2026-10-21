@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "next": 2,
+  "next": 4,
   "directives": [
     {
       "number": 1,
@@ -9,6 +9,24 @@
       "strength": 70,
       "endOfLife": null,
       "text": "When you play with or demonstrate code, do it in a scratch tab: use the tab named \"scratch\" and create it if it is not there, then put your demonstration in it. It is the place for trying out new things, so nobody's own work is touched. Alternative, mostly for lazy people who just want to see a new code example: use the Lab tab for the demonstration.",
+      "history": []
+    },
+    {
+      "number": 2,
+      "created": "2026-10-21T13:58:38",
+      "updated": "2026-10-21T13:58:38",
+      "strength": 90,
+      "endOfLife": null,
+      "text": "When your work is done, show the result to the developer in the VS Code integrated browser (the running app, for example http://127.0.0.1:5178/#lab): open or reload the page there, and go to the place that changed. Never rework a cell that works in place: use the \"scratch\" tab, and keep the last working version safe in git.",
+      "history": []
+    },
+    {
+      "number": 3,
+      "created": "2026-10-21T13:58:39",
+      "updated": "2026-10-21T13:58:39",
+      "strength": 90,
+      "endOfLife": null,
+      "text": "Avoid screenshots: they are very expensive for the person who pays. Look with cheap means first (page text, the cell list, the DOM, tests) and take a screenshot only when the look itself is the question, and then only one.",
       "history": []
     }
   ]

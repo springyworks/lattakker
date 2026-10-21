@@ -76,8 +76,10 @@ interface CellRef {
   view(text: string): CellRef;
   /** Background colour, e.g. '#ffd6d6' or 'lightgreen'. */
   color(fill: string): CellRef;
-  /** Print this cell's text like an old teletype on a roll of paper: a TTY font (the font is only ink), plain unyellowed roll paper as the cell's own fill, and the newest lines at the bottom; when the text is longer than the cell the mouse wheel winds the paper back. The paper has a faint grain and the text is typed at the pace of the real machine: 10 characters a second, a line feed takes two (speed: 0 shows it at once). A small speaker in the cell's corner switches the ASR-33 sound on (it is off until somebody clicks it). The ink gets paler the more lines are printed (clear() makes it fresh). paper({font:'tty33'|'tty28'|'tty35', tint:'#f5f4ef', wear:0..1, speed:10}); paper(false) turns it off. Like color(), call it in the code that prints. */
+  /** Print this cell's text like an old teletype on a roll of paper: a TTY font (the font is only ink), plain unyellowed roll paper as the cell's own fill, and the newest lines at the bottom; when the text is longer than the cell the mouse wheel winds the paper back. The paper has a faint grain and the text is typed at the pace of the real machine: 10 characters a second, a line feed takes two (speed: 0 shows it at once). A print head (a pale block) shows the column where the next letter is struck. A newline is carriage return and line feed in one; \\r is a carriage return alone (the head goes back to the left margin and what follows strikes over the old text), \\b moves the head one column back, \\v (or \\f) feeds the paper one line and keeps the column. A small speaker in the cell's corner switches the ASR-33 sound on (it is off until somebody clicks it). The ink gets paler the more lines are printed (clear() makes it fresh). paper({font:'tty33'|'tty28'|'tty35', tint:'#f5f4ef', wear:0..1, speed:10}); paper(false) turns it off. Like color(), call it in the code that prints. */
   paper(options?: { font?: 'tty33' | 'tty28' | 'tty35'; tint?: string; wear?: number; speed?: number } | boolean): CellRef;
+  /** The teletype paper types everything that is still waiting at once and goes quiet (what Ctrl-C does to a long printout). */
+  skipPaper(): CellRef;
   /** Text colour. */
   textColor(color: string): CellRef;
   /** The size this cell wants by default: merge it over cols x rows neighbours (not over the board). Leave one out to keep it. No arguments: just read the size. If the person resizes the block (green handles) or makes it from picked cells, their size is kept and a plain "span(4, 2)" line is rewritten to match; change the numbers in the code and the code's size wins again. With no span() at all the block keeps the shape it has (1x1 for a new cell). */
@@ -856,6 +858,7 @@ interface InputControl<T> {
  * const speed = input.slider('speed', { min: 1, max: 10, value: 3 }, (v) => print('speed', v))
  * input.button('reset', () => seed())
  * input.onKey((key) => { if (key === 'ArrowLeft') ... })           keys, while not typing in a box or the editor
+ * const give = input.claimKeys(() => print('keys lost'))         a terminal takes Enter, Delete, Space, the letters and Ctrl-C / Ctrl-D for itself
  */
 interface InputApi {
   /** Shows a question card with a text box and returns what the person typed, or null when they cancelled: const name = await input.ask('Your name?'). */
@@ -876,8 +879,12 @@ interface InputApi {
   select(label: string, options: string[], fn?: (value: string) => unknown): InputControl<string>;
   /** A button in the Inputs panel; fn() runs when it is pressed. */
   button(label: string, fn: () => unknown): InputControl<undefined>;
-  /** fn(key, { shift, ctrl, alt, repeat }): keys are named 'a', 'ArrowLeft', 'Enter', 'Space'. Returns a stop function. */
-  onKey(fn: (key: string, info: { shift: boolean; ctrl: boolean; alt: boolean; repeat: boolean }) => unknown): () => void;
+  /** fn(key, { shift, ctrl, alt, repeat, text }): keys are named 'a', 'ArrowLeft', 'Enter', 'Space'; text is the typed character with its case ('A' with Caps Lock). Returns a stop function. */
+  onKey(fn: (key: string, info: { shift: boolean; ctrl: boolean; alt: boolean; repeat: boolean; text: string }) => unknown): () => void;
+  /** fn(text) runs when text is pasted into this cell's input: the cell menu's Paste item sends the clipboard here (not into the code) for a cell that has this, like a terminal. Returns a stop function. */
+  onPaste(fn: (text: string) => unknown): () => void;
+  /** Takes the typing keys for this cell, like a terminal: Enter, Delete, Space, arrows and letters stop reaching the sheet's shortcuts (Enter no longer opens the editor). A click anywhere takes them away and calls lost(), unless { steady: true } (the cell holds them while the mouse is over it and lets go itself, on(cell, 'leave', ...)). Shift+Enter stays the sheet's. Returns a function that gives them back. Use it together with onKey. */
+  claimKeys(lost?: () => unknown, options?: { steady?: boolean }): () => void;
   /** Is this key held down right now? */
   isDown(key: string): boolean;
 }
@@ -905,6 +912,8 @@ declare function view(text: string): void;
 declare function color(fill: string): void;
 /** Short for cell.paper(options): print this cell's text like a teletype on old paper (fonts 'tty33', 'tty28', 'tty35'; wear 0..1 grows with the lines printed; speed in characters a second, default 10, 0 = at once). */
 declare function paper(options?: { font?: 'tty33' | 'tty28' | 'tty35'; tint?: string; wear?: number; speed?: number } | boolean): void;
+/** Short for cell.skipPaper(): the teletype paper types all that is waiting at once. */
+declare function skipPaper(): void;
 /** Short for cell.span(cols, rows): the size this cell wants by default. span(4) keeps the rows; span() just returns the current size. A size the person gave the block by hand wins until you change these numbers. */
 declare function span(cols?: number, rows?: number): { cols: number; rows: number };
 /**
@@ -940,12 +949,13 @@ declare function every(fn: (count: number) => unknown): () => void;
 declare function after(interval: Interval, fn: () => unknown): () => void;
 declare function after(fn: () => unknown): () => void;
 /** What happened: the cell (or range member) that woke the handler. */
-type CellEventName = 'change' | 'size' | 'code' | 'click';
+type CellEventName = 'change' | 'size' | 'code' | 'click' | 'enter' | 'leave';
 /**
  * Watch something: fn runs after it happens. Returns a stop function. Stops by itself when the cell runs again.
  * on('B7', (b7) => ...)            B7's text or piece changed
  * on('B7', 'size', (b7) => ...)    B7 was merged or resized (b7.cols, b7.rows)
  * on('B7', 'code', (b7) => ...)    someone edited B7's code, or moved code in or out of it
+ * on('B7', 'enter', (b7) => ...)   the mouse came over B7 ('leave': it went off again)
  * on('B7', 'click', (b7) => ...)   B7 was clicked (a range works too: on('A20:C20', 'click', ...))
  * on('game', (g) => ...)           anything in the game changed
  * on('sheet', 'rows', (s) => ...)  a row was inserted      on('sheet', 'cols', (s) => ...)  a column was inserted      on('sheet', 'mode', (s) => ...)  Show code / Show output was pressed
@@ -1178,6 +1188,8 @@ declare const game: GameApi;
 declare const mode: 'run' | 'view';
 /** Wait a bit: await sleep(500) or await sleep('2s'). Other cells keep running meanwhile. */
 declare function sleep(time?: Interval): Promise<void>;
+/** A TypeScript read-eval-print loop that keeps its variables between lines. const ts = repl(); await ts('const x = 6 * 7'); await ts('x + 1') gives '43'. Every line is compiled by the editor's own compiler, so it is TypeScript, and the cell API (print, at, mcp ...) is in reach. Expressions give their value (as text; errors start with '??'; the optional object replaces names of the cell API, repl({ print: (...v) => paper.add(v) }), so print can go somewhere else); const, let, var, function and class declarations stay for the next lines. */
+declare function repl(overrides?: Record<string, unknown>): (line: string) => Promise<string>;
 /** console.log that also shows up in the cell */
 declare function log(...values: unknown[]): void;
 `;

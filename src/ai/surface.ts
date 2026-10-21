@@ -117,25 +117,26 @@ The page also keeps an accessible text mirror in #mms-text (board grid, captured
 CELL CODE (TypeScript, async allowed, re-runs when things it reads change)
   print(...values)   add a line of output           view(text)      text shown in view mode
   color('#ecdcd8')   cell background                span(cols,rows) merge cells (not over the board)
-  paper()            print like a teletype on a roll of plain paper with a faint grain, typed at 10 characters a second (newest line at the bottom, mouse wheel winds back; a speaker icon in the cell switches the ASR-33 sound on, default off); paper({font:'tty33'|'tty28'|'tty35', tint, wear:0..1, speed}), paper(false) off
+  paper()            print like a teletype on a roll of plain paper with a faint grain, typed at 10 characters a second (newest line at the bottom, mouse wheel winds back; a speaker icon in the cell switches the ASR-33 sound on, default off); a moving print head shows the column; in text \\n is CR+LF, \\r returns the head without feeding (overstrike), \\b backs it one column, \\v feeds without returning; paper({font:'tty33'|'tty28'|'tty35', tint, wear:0..1, speed}), paper(false) off; skipPaper() types all that still waits at once
   at('B7')           another cell: .text .code .piece .color(c) .print(...) .flash()
   range('A1:J10')    array of cells with .color(c) and .print(...)
   game.phase game.turn game.winner game.moveCount game.lastMove game.history
   game.pieces('red') game.captured('blue') game.pieceAt('B7') game.legalMoves('B7'|'red'|'blue')
   game.move('B7','B6') game.move('B4','B5','blue') game.say('hi')   game.busy game.bluePlayer game.takeOverBlue() game.giveBackBlue()
   sheet.mode sheet.cols sheet.rows   mode   sleep(ms|'2s')   log(...)
+  repl()             a TypeScript REPL that keeps its variables: const ts = repl(); await ts('const x = 6 * 7'); await ts('x + 1') -> '43' (errors start with '??')
   show(...) replace output   clear()   span() read size, span(4) keep rows
   plot(Math.sin, {from:0,to:6.28,title:'wave'})  XY plot as output; also plot([1,4,9]), plot([[0,1],[1,3]]), plot({a: f, b: g})
   grid(10, 8) tiles inside this block (after span(10, 8)): g.at(x,y).color('#3f8f5a') .show('7'), g.paint((x,y) => colour|null), g.fill(c), on(g,'click', tile => ...); tiles use their own x,y from 0, other cells read at('A16/3,4').fill. More: g.box(x,y,w,h,colour), g.text(x,y,'words',{ink,fill,bold,align,snap,mono,w}) (snap: one letter per tile, a terminal), tile.ink(colour), tile.bold(), grid(80,20,{lines:false}); a grid takes the keyboard with g.focus() (from a click handler) and on(g,'key',(key,info)=>...), also on(g,'focus'|'blur',fn)
   every('1s', n => ...)  after('5s', fn)  on('B7' | 'A1:J10' | 'game', fn)  stop()   (timers die when the cell re-runs)
-  on('I18', 'size' | 'code' | 'click', fn)  on('sheet', 'rows' | 'cols' | 'mode', fn)   events; also cell.cols/rows, at(x).code, sheet.rows/cols/mode are reactive when read at top level
+  on('I18', 'size' | 'code' | 'click' | 'enter' | 'leave', fn)  on('sheet', 'rows' | 'cols' | 'mode', fn)   events; also cell.cols/rows, at(x).code, sheet.rows/cols/mode are reactive when read at top level
   memory (notebook that survives re-runs)  run.reason ('edit'|'moved'|'update')  run.count
   mcp.catalog() / mcp.tools(server) / mcp.stats() / mcp.recent(n)   what the MCP ecosystem offers, and the router's counters (perSecond is ready for plot)
   mcp.packets(filter, n) / mcp.analyze(filter) / mcp.ask('any errors?') / mcp.callers()   the traffic by type with a display filter, counted, and answered in words
   await weather.now('Amsterdam') / weather.forecast(place, days) / weather.find(name)   weather from open-meteo.com (also the MCP server 'weather')
   await ollama.status() (never throws, says what is missing) / ollama.ask(prompt) / ollama.models()   the model on this computer (also the MCP server 'ollama')
   teletype.print(char) / teletype.key(char?) / teletype.cr() / teletype.bell()   the soft ASR-33 sounds: print(letter) is the machine printing (hum + print head, '\n' = carriage return), key() one keyboard clack, the bell (muted by the chat's speaker button; a click allows sound)
-  await input.ask(q) / input.confirm(q) / input.choose(q, options); input.slider(label,{min,max,value},fn) .number .text .checkbox .select .button; input.onKey((key) => ...)
+  await input.ask(q) / input.confirm(q) / input.choose(q, options); input.slider(label,{min,max,value},fn) .number .text .checkbox .select .button; input.onKey((key) => ...); input.onPaste((text) => ...) takes what the cell menu's Paste sends to a cell with its own input (a terminal) instead of making it the cell's code; input.claimKeys(lost?) keeps Enter/Delete/letters/Ctrl-C/Ctrl-D from the sheet's shortcuts for a terminal cell
   cell.usedBy / cell.reads  addresses that read this cell / that this cell read
   Moving, swapping or inserting rows rewrites address literals in all code ('B7', 'A1:B3', 'C32-55') so they follow their cells; a range split by a move is only reported. Keep addresses as plain literals ('E' + n is not followed).
   Hidden Blue pieces have rank '?'. Board squares are A1:J10; put code in A12 or below.

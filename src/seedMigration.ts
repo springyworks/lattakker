@@ -54,9 +54,11 @@ export function refreshSeeded(sheet: Sheet, tab: string, seed: ReadonlyArray<rea
     const data = sheet.dataAt(address);
     if (!data || !data.code.trim()) continue;
     const have = fingerprint(data.code);
-    if (have === shipped) {
+    // Blank lines around the code (a cell written through the editor or the MCP bridge) do not make it another version.
+    const bare = fingerprint(data.code.trim());
+    if (have === shipped || bare === shipped) {
       seeds[address] = shipped;
-    } else if (seeds[address] === have || olderVersions[address]?.includes(have)) {
+    } else if (seeds[address] === have || olderVersions[address]?.some((print) => print === have || print === bare)) {
       sheet.setCode(address, code);
       seeds[address] = shipped;
       updated++;

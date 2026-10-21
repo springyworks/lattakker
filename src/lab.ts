@@ -1,6 +1,7 @@
 import type { GameView } from './game/GameView';
-import { LAB_DEMOS } from './labDemos';
-import { loadLabSaved, startLabAutoSave } from './storage';
+import { LAB_DEMOS, TERMINAL_DEMOS } from './labDemos';
+import { upgradeLabStorage } from './labLayout';
+import { loadLabSaved, saveLabSaved, startLabAutoSave } from './storage';
 import { createSheetTab, type SheetTab } from './sheetTab';
 
 export type Lab = SheetTab & {
@@ -23,7 +24,9 @@ export function createLab(view: GameView, smallScreen: boolean): Lab {
     restoreHint: 'Put every demo back as it was written (your own cells stay)',
     containerId: 'lab',
     panelId: 'lab-panel',
-    load: loadLabSaved,
+    // The terminal at A1 before it learned input.onPaste, before Ctrl-C skipped the slow typing, and before the AI command.
+    olderVersions: { A1: ['a408c3cb', 'ae1b9f14', '7b4a89e0'] },
+    load: () => upgradeLabStorage(loadLabSaved(), TERMINAL_DEMOS[0][1], saveLabSaved),
     startSave: startLabAutoSave,
   });
   return Object.assign(tab, { restoreDemos: tab.restoreSeed });

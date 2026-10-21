@@ -15,6 +15,8 @@ export const GAME_NODE = '__game__';
 export const sizeNode = (address: string): string => `size:${address}`;
 export const codeNode = (address: string): string => `code:${address}`;
 export const clickNode = (address: string): string => `click:${address}`;
+export const enterNode = (address: string): string => `enter:${address}`;
+export const leaveNode = (address: string): string => `leave:${address}`;
 export const ROWS_NODE = 'sheet:rows';
 export const COLS_NODE = 'sheet:cols';
 export const MODE_NODE = 'sheet:mode';

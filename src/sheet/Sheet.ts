@@ -32,14 +32,14 @@ import {
   colInsertRewrite,
 } from './address';
 import { THEME } from '../theme';
-import { DependencyGraph, MODE_NODE, ROWS_NODE, COLS_NODE, codeNode, sizeNode } from './reactivity';
+import { DependencyGraph, MODE_NODE, ROWS_NODE, COLS_NODE, codeNode, enterNode, leaveNode, sizeNode } from './reactivity';
 import { CancelError, RunContext } from './tasks';
 import { Spring } from './spring';
 import { decideSpan, emptyShape, readSpanCall, rewriteSpanCall, type ShapeState, type Size } from './shape';
 import { SheetCellHandler } from './cellHandler';
 import { Overlays } from './overlays';
 import { plotSvg, tilesSvg, type PlotSpec } from './plot';
-import { advance, feedMs, paperFontReady, paperLayout, paperSpeed, paperStyle, printStep, settle, type PaperLayout, type PaperOptions, type PrintState } from './paper';
+import { advance, feedMs, PAPER_CPS, paperFontReady, paperLayout, paperSpeed, paperStyle, printStep, settle, type PaperLayout, type PaperOptions, type PrintState } from './paper';
 import { registerPaperShape } from './paperShape';
 import { bellOn, primeBell, printChar, setBell } from '../aichat/bell';
 import type { SvgScene } from './svgScene';
@@ -520,6 +520,7 @@ export class Sheet {
     const contentDragListener: MouseListenerSet = {
       mouseDown: (_sender, me) => this.onContentMouseDown(me),
       mouseMove: (_sender, me) => {
+        this.hoverOn(me.getCell()?.getId() ?? '');
         this.onRubberMove(me);
         this.onContentMouseMove(me);
       },
@@ -528,6 +529,23 @@ export class Sheet {
     graph.addMouseListener(contentDragListener);
     // A touch that the browser takes over for scrolling ends in pointercancel; maxGraph ignores that,
     // which would leave a half-finished drag hanging.
+    container.addEventListener('pointerleave', () => this.hoverOn(''));
+    // The speaker switches on the press, not on the click: while a paper types, its cell is redrawn all the time, and a click needs the same element at the press and at the release.
+    container.addEventListener(
+      'pointerdown',
+      (e: PointerEvent) => {
+        if (e.button !== 0 || !(e.target instanceof Node)) return;
+        for (const [address, icon] of this.paperIcons) {
+          const node = this.graph.getView().getState(icon.cell)?.overlays.get(icon.overlay)?.node;
+          if (!node || !node.contains(e.target)) continue;
+          e.preventDefault();
+          e.stopPropagation();
+          this.togglePaperSound(address);
+          return;
+        }
+      },
+      true,
+    );
     container.addEventListener('pointercancel', () => {
       this.cancelContentDrag();
       this.cancelRubber();
@@ -1100,12 +1118,14 @@ export class Sheet {
     const pick: CellVisual = this.picked.has(address) ? { stroke: THEME.select, strokeWidth: 3, ...(this.picked.size > 1 && !d.code ? { fill: THEME.pickFill } : {}) } : {};
     const paper = this.paperOf(address);
     let scrolled = 0;
+    let headCol = -1;
     if (paper) {
       const lay = this.paperLayoutOf(address);
       const feed = this.paperFeed.get(address)?.t;
       if (lay) scrolled = lay.total - lay.back - (feed === undefined || lay.back > 0 ? 0 : 1 - feed);
+      if (lay && lay.back === 0) headCol = lay.col;
     }
-    const style: CellStyle = { baseStyleNames: ['sheet'], ...(paper ? paperStyle(paper, d.output.length, this.paperFeed.get(address)?.t, scrolled) : {}) };
+    const style: CellStyle = { baseStyleNames: ['sheet'], ...(paper ? paperStyle(paper, d.output.length, this.paperFeed.get(address)?.t, scrolled, headCol) : {}) };
     // The paper brings its own fill and ink; only what the code or the pointer chose on top of it is kept.
     const under: CellVisual = paper ? { ...base, fill: undefined, fontColor: undefined, fontSize: undefined, align: undefined, verticalAlign: undefined } : base;
     const merged: CellVisual = { ...under, ...code, ...pick, ...sel, ...flash };
@@ -1147,7 +1167,6 @@ export class Sheet {
     if (!cell || on === null) return;
     const tip = on ? 'ASR-33 sound is on. Click to switch it off.' : 'ASR-33 sound is off. Click to switch it on.';
     const overlay = new CellOverlay(new ImageBox(svgUri(speakerSvg(on)), 20, 20), tip, 'right', 'bottom', new Point(-14, -9), 'pointer');
-    overlay.addListener(InternalEvent.CLICK, () => this.togglePaperSound(address));
     this.graph.addCellOverlay(cell, overlay);
     this.paperIcons.set(address, { cell, overlay, on });
   }
@@ -1173,7 +1192,8 @@ export class Sheet {
     entry.state = settle(known ? entry.state : undefined, full, paperSpeed(paper) <= 0);
     this.paperPrint.set(address, entry);
     if (entry.state.shown < full.length && !entry.timer) {
-      const step = printStep(full, entry.state.shown, paperSpeed(paper), this.paperSoundOn(address) && bellOn());
+      const sound = this.paperSoundOn(address) && bellOn();
+      const step = printStep(full, entry.state.shown, sound ? Math.min(PAPER_CPS, paperSpeed(paper)) : paperSpeed(paper), sound);
       entry.timer = window.setTimeout(() => this.typeMore(address), step.wait);
     }
     return full.slice(0, entry.state.shown);
@@ -1192,12 +1212,25 @@ export class Sheet {
     const full = d.output.join('\n');
     const state = settle(entry.state, full, paperSpeed(paper) <= 0 || this.suspended);
     const sound = this.paperSoundOn(address) && bellOn() && !this.suspended;
-    const step = printStep(full, state.shown, paperSpeed(paper), sound);
+    // The sound plays at the pace of the real machine (10 letters a second) however fast the cell asks to type, so the paper keeps to it too and stops when the sound does.
+    const step = printStep(full, state.shown, sound ? Math.min(PAPER_CPS, paperSpeed(paper)) : paperSpeed(paper), sound);
     const shown = Math.min(full.length, state.shown + step.take);
     if (sound) for (const ch of full.slice(state.shown, shown)) printChar(ch);
     entry.state = advance(full, shown);
     const feeding = !this.suspended && paperSpeed(paper) > 0 && full.slice(state.shown, shown).includes('\n') && (this.paperView.get(address)?.back ?? 0) === 0;
     if (feeding) this.startFeed(address, feedMs(paperSpeed(paper)));
+    this.refreshCell(address);
+  }
+
+  /** The paper types everything that is waiting at once (and so goes quiet): what Ctrl-C does to a long printout. */
+  skipTyping(address: string): void {
+    const entry = this.paperPrint.get(address);
+    const d = this.data.get(address);
+    if (!entry || !d) return;
+    window.clearTimeout(entry.timer);
+    entry.timer = 0;
+    entry.state = advance(d.output.join('\n'), d.output.join('\n').length);
+    this.paperFeed.delete(address);
     this.refreshCell(address);
   }
 
@@ -2603,6 +2636,23 @@ export class Sheet {
     this.depGraph.markDirty(MODE_NODE);
     this.requestRun();
     this.modeChangeHandlers.forEach((h) => h(mode));
+  }
+
+  private hovered = '';
+
+  /** The address of the cell the mouse is over, '' when none. */
+  get hoveredAddress(): string {
+    return this.hovered;
+  }
+
+  /** The mouse is over the cell with this id (or over none): watchers of enter/leave on a cell hear it. */
+  private hoverOn(id: string): void {
+    const address = id.startsWith('sheet:') ? id.slice(6) : '';
+    if (address === this.hovered) return;
+    const was = this.hovered;
+    this.hovered = address;
+    if (was) this.pulse(leaveNode(was));
+    if (address) this.pulse(enterNode(address));
   }
 
   /** Announces that something happened (a click on a cell, say); watchers of `node` wake up. */

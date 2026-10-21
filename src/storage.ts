@@ -190,6 +190,13 @@ export function saveTabNow(id: string, sheet: Sheet): void {
 }
 
 export const loadLabSaved = (): SavedLab | null => loadSheetSaved(LAB_KEY);
+export function saveLabSaved(saved: SavedLab): void {
+  try {
+    localStorage.setItem(LAB_KEY, JSON.stringify(saved));
+  } catch {
+    // storage full or blocked
+  }
+}
 export const startLabAutoSave = (sheet: Sheet): void => void startSheetAutoSave(LAB_KEY, sheet);
 export const loadExamplesSaved = (): SavedLab | null => loadSheetSaved(EXAMPLES_KEY);
 export const startExamplesAutoSave = (sheet: Sheet): void => void startSheetAutoSave(EXAMPLES_KEY, sheet);

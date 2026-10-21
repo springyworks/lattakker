@@ -10,13 +10,14 @@ export type ApiFactory = (data: SheetCellData, ctx: RunContext) => Record<string
 export type Transpiler = (address: string, source: string) => Promise<TranspileResult>;
 
 /** Names that joined the cell API after cells already existed. */
-const OPTIONAL_NAMES = new Set(['weather', 'ollama', 'input', 'svg', 'system', 'tabs', 'anim', 'teletype']);
+const OPTIONAL_NAMES = new Set(['weather', 'ollama', 'input', 'svg', 'system', 'tabs', 'anim', 'teletype', 'repl']);
 
 /** Runs one cell: transpile its TypeScript, then execute it with the cell API in scope. */
 export async function runCell(data: SheetCellData, ctx: RunContext, makeApi: ApiFactory, transpile: Transpiler): Promise<void> {
   const source = data.code;
   if (!source.trim()) return;
   let js = source;
+  let engineError: unknown = null;
   try {
     const result = await transpile(data.address, source);
     if (result.errors.length) {
@@ -27,6 +28,7 @@ export async function runCell(data: SheetCellData, ctx: RunContext, makeApi: Api
   } catch (err) {
     // Transpiler unavailable: try to run the source as plain JavaScript.
     console.warn('transpile failed, running as JS', err);
+    engineError = err;
   }
   if (ctx.cancelled) return;
   const api = makeApi(data, ctx);
@@ -44,7 +46,10 @@ export async function runCell(data: SheetCellData, ctx: RunContext, makeApi: Api
         names = names.filter((n) => n !== clash);
         continue;
       }
-      data.error = message;
+      // Without the compiler the TypeScript could not be turned into JavaScript: say that, not what the JavaScript parser made of it.
+      data.error = engineError
+        ? `The code engine is not answering, so this TypeScript could not be compiled (${engineError instanceof Error ? engineError.message : String(engineError)}). Press F5 to reload the page.`
+        : message;
       return;
     }
   }

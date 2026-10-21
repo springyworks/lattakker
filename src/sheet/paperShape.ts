@@ -1,5 +1,5 @@
 import { RectangleShape, ShapeRegistry, type AbstractCanvas2D } from '@maxgraph/core';
-import { PAPER_SCROLL, PAPER_SHAPE } from './paper';
+import { PAPER_HEAD, PAPER_HEAD_W, PAPER_LINE_PX, PAPER_SCROLL, PAPER_SHAPE } from './paper';
 
 /** A small repeatable random generator: the same cell always gets the same grain, so it never shimmers when redrawn. */
 function seeded(text: string): () => number {
@@ -69,6 +69,38 @@ class PaperRollShape extends RectangleShape {
       c.lineTo(px + Math.cos(angle) * len, py + Math.sin(angle) * len);
     }
     c.stroke();
+    c.restore();
+    this.paintHead(c, x, y, w, h, s);
+  }
+
+  /** The print head: a pale block on the line being typed, over the column the next letter strikes, with a dark pointer under it. It stays at the bottom of the cell: the paper moves, not the head. */
+  private paintHead(c: AbstractCanvas2D, x: number, y: number, w: number, h: number, s: number): void {
+    const style = this.style as Record<string, unknown> | undefined;
+    const at = Number(style?.[PAPER_HEAD]);
+    if (!Number.isFinite(at) || at < 0) return;
+    const bw = Math.max(2, Number(style?.[PAPER_HEAD_W]) || 7) * s;
+    const bh = PAPER_LINE_PX * s;
+    const bx = x + at * s;
+    const by = y + h - 4 * s - bh;
+    if (bx + bw > x + w) return;
+    c.save();
+    c.setFillColor('#2b6cb0');
+    c.setFillAlpha(0.18);
+    c.begin();
+    c.moveTo(bx, by);
+    c.lineTo(bx + bw, by);
+    c.lineTo(bx + bw, by + bh);
+    c.lineTo(bx, by + bh);
+    c.close();
+    c.fill();
+    c.setFillColor('#16161a');
+    c.setFillAlpha(0.75);
+    c.begin();
+    c.moveTo(bx, by + bh + 1.5 * s);
+    c.lineTo(bx + bw, by + bh + 1.5 * s);
+    c.lineTo(bx + bw / 2, by + bh - 1 * s);
+    c.close();
+    c.fill();
     c.restore();
   }
 }

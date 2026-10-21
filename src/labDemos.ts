@@ -1,9 +1,11 @@
+import { movedForTerminal } from './labLayout';
+
 /**
  * The Lab: a second sheet of live demo cells. Every block is real TypeScript, exactly like the cells on the game
  * board's sheet; the plots animate by calling plot() again from every(). Code is raw text (String.raw), so
  * "\n" below is the two characters backslash-n inside the demo's own strings.
  */
-export const LAB_DEMOS: Array<[string, string]> = [
+const LIVE_DEMOS: Array<[string, string]> = [
   [
     'A1',
     String.raw`// Welcome to the Lab! This sheet works exactly like the one under the game board.
@@ -1531,61 +1533,30 @@ input.button('show my own WebP or GIF', async () => {
   mine.play()
 })`,
   ],
+];
+
+/** The ASR-33: a teletype terminal you can talk to (and a TypeScript REPL). One block at A1, the top left corner of the Lab. */
+export const TERMINAL_DEMOS: Array<[string, string]> = [
   [
-    'R41',
-    String.raw`// AN ASR-33 TELETYPE. Output on a roll of paper, typed one letter at a time, like in 1965.
-// paper() gives this cell plain roll paper (with a very faint grain) and a typewriter
-// font that carries only ink. The real machine typed 10 letters a second and a new line
-// made the paper jump up one line, so that is what you see here.
-// The little speaker in the corner of the cell switches the machine's sound on.
-// It is off until you click it. Scroll the mouse wheel over the paper to wind it back.
-span(9, 8)
-
-// font: 'tty33' (ASR-33), 'tty28' or 'tty35'. speed: letters a second (0 = all at once).
-paper({ font: 'tty33', speed: 10 })
-
-// A few sentences for the machine to type (the ASR-33 only knew capital letters).
-const lines = [
-  'THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG 0123456789',
-  '10 PRINT "HELLO, WORLD"',
-  '20 GOTO 10',
-  'READY.',
-  'A BOX OF MY RED WINE BEAT A QUICK FEW GREEN JUGS',
-]
-
-// clear() starts a fresh roll: the ink is dark again and the typing begins at the top.
-clear()
-print('LATTAKKER  ASR-33  TELETYPE  READY')
-print('')
-
-// every() types one more line again and again. Every third line is a reading of this computer.
-let n = 0
-every('8s', async () => {
-  const time = new Date().toTimeString().slice(0, 8)
-  let text = lines[n % lines.length]
-  if (n % 3 === 2) {
-    try {
-      text = (await system.text()).replace(/\s+/g, ' ')
-    } catch {
-      text = 'NO READING FROM THE COMPUTER'
-    }
-  }
-  n++
-  print(time + '  ' + text.toUpperCase())
-})`,
-  ],
-  [
-    'R50',
-    String.raw`// AN ASR-33 TERMINAL YOU CAN TALK TO. Click the paper, type after the prompt, press Enter.
-// R41 above only prints; this one also listens. input.onKey() hears the keyboard while the paper
-// has it (click the paper to take it, Esc to give it back). Type H for the list of commands.
+    'A1',
+    String.raw`// AN ASR-33 TERMINAL YOU CAN TALK TO. Put the mouse over the paper, type after the prompt, press Enter.
+// The paper is a roll of teletype paper that types one letter at a time. input.onKey() hears the keyboard while the paper
+// has it (while the mouse is over it; Esc gives it back, a click takes it again). Type H for the list of commands.
 // Everything the machine can do is the table called "commands": a name, one line of help and a
 // function. Add a row and the help list grows by itself, nothing else to change.
-// The ASR-33 only knew capital letters, and its rubout key printed a backslash.
+// The ASR-33 only knew capital letters. Watch the print head (the pale block): Backspace moves it one
+// column back and the next letter strikes over the old one; "\r" returns it to the left margin without
+// feeding the paper, "\n" does both, "\v" feeds the paper and keeps the column (try the TTY command).
 span(9, 8)
-paper({ font: 'tty33', speed: 20 })
+// The paper is a little darker while it does not have the keyboard: then Enter opens the editor like on any cell.
+const LIT = '#f5f4ef'
+const DIM = '#deddd5'
+paper({ font: 'tty33', speed: 20, tint: DIM })
 
 const PROMPT = '>> '
+// TS alone opens a TypeScript session with its own prompt (see tsMode); Ctrl-D or .exit leaves it.
+let tsMode = false
+const prompt = (): string => (tsMode ? 'TS> ' : PROMPT)
 const ROLL = 4000
 const WORDS = ['THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG 0123456789', '10 PRINT "HELLO, WORLD"', '20 GOTO 10', 'READY.']
 
@@ -1601,6 +1572,20 @@ type Command = { help: string; run: (arg: string) => string | Promise<string> }
 
 // The model can hold a conversation: chatting is the talk so far (null when it is not on).
 let chatting: Array<{ role: 'user' | 'assistant'; content: string }> | null = null
+// TS runs one line of TypeScript with the compiler of this editor, keeping its variables and its case.
+// Inside it print() and log() write on this paper instead of into the cell's own output.
+const say = (...values: unknown[]): void => put(values.map(String).join(' ') + '\n')
+// Ctrl-C works like SIGINT: the first one only asks (interrupted() turns true, so a loop in TS can stop itself:
+// while (!interrupted()) { ... }); the second one, soon after, is SIGKILL: the cell is run again from the top.
+let sigint = new AbortController()
+const ts = repl({ print: say, log: say, interrupted: () => sigint.signal.aborted })
+
+// What the model is told: it writes TypeScript for this very terminal, and the answer is run as it comes.
+const FENCE = String.fromCharCode(96).repeat(3)
+const AI_SYSTEM =
+  'You write TypeScript that runs in a small REPL inside a spreadsheet cell. Answer with the code only, in one code block, no explanation. ' +
+  'The last expression shows its value. print(...) writes a line on the paper. Keep it short. Available: at("A1").text (read a cell), mcp.servers(), tabs.list(), ' +
+  'system.text(), Date, Math. Do not use import, require or fetch. Do not change or delete cells.'
 
 const hits = async (word: string): Promise<string[]> => {
   const found: string[] = []
@@ -1644,10 +1629,10 @@ const commands: Record<string, Command> = {
     },
   },
   GO: {
-    help: 'GO /LAB/R41  ZOOM TO A CELL',
+    help: 'GO /LAB/A16  ZOOM TO A CELL',
     run: async (path) => {
       const m = /^\/?([a-z0-9-]+)\/([a-z]+\d+)$/i.exec(path.trim())
-      if (!m) return 'GO /LAB/R41'
+      if (!m) return 'GO /LAB/A16'
       tabs.select(m[1].toLowerCase())
       await mcp.tool(m[1].toLowerCase(), 'zoom', { address: m[2].toUpperCase() })
       return 'THERE: /' + m[1] + '/' + m[2]
@@ -1661,8 +1646,34 @@ const commands: Record<string, Command> = {
       return ollama.ask(question + ' (answer in at most three short lines)')
     },
   },
+  AI: {
+    help: 'AI <WISH>  THE MODEL WRITES TYPESCRIPT, IT RUNS AT ONCE',
+    run: async (wish) => {
+      if (!wish) return 'AI WHAT? FOR EXAMPLE: AI PRINT THE FIRST TEN SQUARES'
+      put('ASKING THE MODEL...\n')
+      const reply = await ollama.ask(wish, { system: AI_SYSTEM })
+      // Ctrl-C while the model was thinking: nothing it wrote is run.
+      if (sigint.signal.aborted) return ''
+      const parts = reply.split(FENCE)
+      const code = (parts.length >= 3 ? parts[1].replace(/^[a-z]*\n/i, '') : reply).trim()
+      if (!code) return 'THE MODEL SENT NO CODE.'
+      put(code + '\n--- RUNNING IT ---\n')
+      const out = await ts(code)
+      if (!sigint.signal.aborted) put((out || '(NO ANSWER)') + '\n')
+      return ''
+    },
+  },
   CHAT: { help: 'TALK WITH THE MODEL, BYE ENDS', run: () => { chatting = []; return 'LINE OPEN. TYPE BYE TO CLOSE IT.' } },
   DEMO: { help: 'WHAT THE MACHINE TYPES', run: () => WORDS.join('\n') },
+  TTY: { help: 'CR, LF, BACKSPACE AT WORK', run: () => 'LF ONLY, STEPS:\nA\vB\vC\vD\nCR ONLY, BB OVER AAAA:\nAAAA\rBB\nBACKSPACE, X OVER B:\nABC\b\bX' },
+  TS: {
+    help: 'TYPESCRIPT. TS <CODE> ONE LINE, TS ALONE STAYS',
+    run: (code) => {
+      if (code) return ts(code)
+      tsMode = true
+      return 'TYPESCRIPT, VARIABLES STAY. CTRL-D OR .EXIT LEAVES,\nCTRL-C CANCELS A LINE, TWICE KILLS. interrupted() IS TRUE AFTER ^C. CASE COUNTS.'
+    },
+  },
   CLEAR: { help: 'A FRESH ROLL', run: () => { clear(); text = ''; return 'NEW ROLL' } },
 }
 const alias: Record<string, string> = { HELP: 'H', '?': 'H' }
@@ -1673,6 +1684,14 @@ const helpText = (): string => Object.entries(commands).map(([name, c]) => name.
 // A line the person typed becomes an answer. A word the machine does not know gets the list of what it does know.
 const answer = async (line: string): Promise<string> => {
   if (!line) return ''
+  if (tsMode) {
+    if (/^\.?(exit|quit)$/i.test(line)) {
+      tsMode = false
+      return 'LEFT TYPESCRIPT.'
+    }
+    if (/^ai\s/i.test(line)) return commands.AI.run(line.slice(2).trim()) as Promise<string>
+    return ts(line)
+  }
   if (chatting) {
     if (/^(bye|exit|quit)$/i.test(line)) {
       chatting = null
@@ -1683,55 +1702,162 @@ const answer = async (line: string): Promise<string> => {
     chatting.push({ role: 'assistant', content: said })
     return said
   }
-  const [word, ...rest] = line.split(/\s+/)
+  const [word] = line.split(/\s+/)
   const command = commands[alias[word.toUpperCase()] ?? word.toUpperCase()]
   if (!command) return '?? ' + word.toUpperCase() + '  WHAT? I KNOW:\n' + helpText()
-  return command.run(rest.join(' '))
+  return command.run(line.slice(word.length).trim())
 }
 
-// The keyboard. Every typed letter is echoed on the paper at once and kept in buf until Enter.
+// The keyboard. Every typed letter is echoed on the paper at once (the font has lower case, so it is shown as typed) and kept in buf until Enter.
 let keys = false
 let busy = false
 let buf = ''
+// Counts the lines sent; Ctrl-C while a line is still running abandons it, and its late answer is thrown away.
+let turn = 0
 const enter = async (): Promise<void> => {
   const line = buf.trim()
   buf = ''
   put('\n')
   busy = true
+  sigint = new AbortController()
+  const mine = ++turn
+  // The machine shouts like an ASR-33, but what TypeScript answers keeps its case: print("Hello") must say Hello.
+  const inTs = tsMode || /^ts(\s|$)/i.test(line)
+  const loud = (t: string): string => (inTs ? t : t.toUpperCase())
   try {
     const said = await answer(line)
-    if (said) put(said.toUpperCase() + '\n')
+    if (mine !== turn) return
+    if (said) put(loud(said) + '\n')
   } catch (e) {
-    put('?? ' + String((e as Error).message ?? e).toUpperCase() + '\n')
+    if (mine !== turn) return
+    put('?? ' + loud(String((e as Error).message ?? e)) + '\n')
   }
   busy = false
   if (text.length > ROLL) {
     clear()
     text = 'NEW ROLL\n'
   }
-  put(PROMPT)
+  put(prompt())
 }
 
+// Ctrl-C and Ctrl-D as on a Unix terminal. Ctrl-C drops the line being typed (or abandons the running one) and gives
+// a fresh prompt; on an empty line it leaves TypeScript or the chat. Ctrl-D on an empty line leaves them too, or lets go of the keyboard.
+const leave = (): boolean => {
+  const was = tsMode || chatting !== null
+  tsMode = false
+  chatting = null
+  return was
+}
+let lastInt = 0
+// SIGKILL: nothing is asked, the cell starts over. That ends every loop, timer and watcher it made; the new run says so.
+const kill = async (): Promise<void> => {
+  try {
+    sessionStorage.setItem('lattakker:tty-killed', '1')
+  } catch {}
+  put('^C\nKILLED.\n')
+  skipPaper()
+  const m = /^\/([^/]+)\/(.+)$/.exec(cell.path)
+  if (m) await mcp.tool(m[1], 'run_cell', { address: m[2] })
+}
+// SIGINT: the running line is asked to stop and its late answer is thrown away. A second ^C within 3 s is the kill.
+const interrupt = (): void => {
+  const now = Date.now()
+  if (now - lastInt < 3000) {
+    lastInt = 0
+    void kill()
+    return
+  }
+  lastInt = now
+  const idle = !busy && !buf
+  sigint.abort()
+  turn++
+  busy = false
+  buf = ''
+  put('^C\n')
+  if (idle && leave()) put('LEFT.\n')
+  else if (!idle) put('INTERRUPTED. ^C AGAIN KILLS.\n')
+  put(prompt())
+  // The paper is slow: whatever it still has to type (the banner, a long answer) is struck at once, and the bell goes quiet.
+  skipPaper()
+}
+const endOfFile = (): void => {
+  if (buf) return
+  if (leave()) put('^D\nLEFT.\n' + prompt())
+  else {
+    put('^D\nKEYBOARD OFF.\n')
+    drop()
+  }
+}
+
+// While the mouse is over the paper, Enter and the other typing keys belong to it: claimKeys() keeps Enter from
+// opening the cell editor (Shift+Enter still does). Leaving the paper gives the keyboard back; a click grabs it
+// again after Esc or Ctrl-D. 'steady' means a click on the page (the sound icon, say) does not take it away.
+let give = (): void => {}
+const hold = (on: boolean): void => {
+  keys = on
+  paper({ font: 'tty33', speed: 20, tint: on ? LIT : DIM })
+}
+let held = false
+const grab = (): void => {
+  if (held) return
+  held = true
+  give()
+  give = input.claimKeys(() => {
+    held = false
+    hold(false)
+  }, { steady: true })
+  hold(true)
+}
+const drop = (): void => {
+  held = false
+  give()
+  hold(false)
+}
+on(cell, 'enter', grab)
+on(cell, 'leave', drop)
 on(cell, 'click', () => {
   if (!keys) teletype.bell()
-  keys = true
+  grab()
+})
+// The cell menu's Paste item lands here: the first line of the clipboard is typed after the prompt (Enter is left to the person).
+input.onPaste((pasted) => {
+  if (busy) return
+  const line = pasted.split(/\r?\n/).find((l) => l.trim()) ?? ''
+  buf += line
+  put(line)
 })
 input.onKey(async (key, info) => {
-  if (!keys || busy || info.ctrl || info.alt) return
-  if (key === 'Escape') keys = false
-  else if (key === 'Enter') await enter()
+  if (!keys || info.alt || (key === 'Enter' && info.shift)) return
+  if (info.ctrl) {
+    if (key.toLowerCase() === 'c') interrupt()
+    else if (key.toLowerCase() === 'd') endOfFile()
+    return
+  }
+  if (busy) return
+  if (key === 'Escape') {
+    drop()
+  } else if (key === 'Enter') await enter()
   else if (key === 'Backspace') {
-    if (buf) put('\\')
+    if (buf) put('\b')
     buf = buf.slice(0, -1)
   } else {
-    const ch = key === 'Space' ? ' ' : key.length === 1 ? (info.shift ? key.toUpperCase() : key) : ''
+    const ch = key === 'Space' ? ' ' : info.text
     if (!ch) return
     buf += ch
-    put(ch.toUpperCase())
+    put(ch)
   }
 })
 
 clear()
-put('LATTAKKER  ASR-33  TERMINAL\nCLICK THE PAPER, THEN TYPE.  H = HELP.  ESC = KEYBOARD OFF.\n\n' + PROMPT)`,
+let killed = false
+try {
+  killed = sessionStorage.getItem('lattakker:tty-killed') === '1'
+  sessionStorage.removeItem('lattakker:tty-killed')
+} catch {}
+if (killed) put('KILLED. STARTED AGAIN.\n\n')
+put('LATTAKKER  ASR-33  TERMINAL\nMOUSE OVER THE PAPER, THEN TYPE.  H = HELP.  ESC = KEYBOARD OFF (CLICK = ON).  DARK PAPER = NO KEYBOARD.\n\n' + prompt())`,
   ],
 ];
+
+/** The terminal first, then the live demos: the ones in its way sit elsewhere (see labLayout.ts). */
+export const LAB_DEMOS: Array<[string, string]> = [...TERMINAL_DEMOS, ...LIVE_DEMOS.map(([address, code]): [string, string] => [movedForTerminal(address), code])];

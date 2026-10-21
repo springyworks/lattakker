@@ -183,7 +183,7 @@ print(a12.uid ? '@id         ' + first(at('@' + a12.uid).text) : '@id         A1
 
 // 4. ANOTHER tab: the path starts with the tab's name. The Lab is full of demos.
 // at() READS the cell, and this cell runs again whenever the Lab cell changes.
-print('/lab/A1     ' + first(at('/lab/A1').text))
+print('/lab/J1     ' + first(at('/lab/J1').text))
 
 // The Lab's J24 is a rocket countdown: watch this line change when it runs.
 print('/lab/J24    ' + first(at('/lab/J24').text))

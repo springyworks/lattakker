@@ -1,7 +1,7 @@
 import type { Sheet, SheetCellData, TileGrid } from './Sheet';
 import type { GameView } from '../game/GameView';
 import { isLake } from '../game/model';
-import { GAME_NODE, MODE_NODE, describeNode, ROWS_NODE, COLS_NODE, clickNode, codeNode, sizeNode } from './reactivity';
+import { GAME_NODE, MODE_NODE, describeNode, ROWS_NODE, COLS_NODE, clickNode, codeNode, enterNode, leaveNode, sizeNode } from './reactivity';
 import { parseTilePath } from './address';
 import { blurTiles, focusTiles, listenTileKeys, tilesHaveFocus } from './tileKeys';
 import { workspace } from '../workspace';
@@ -22,6 +22,7 @@ import { readSystem, summarize as systemSummary, systemSeries, type SeriesName }
 import { ollamaAsk, ollamaChat, ollamaModels, ollamaStatus, type OllamaMessage, type OllamaOptions } from '../services/ollama';
 import { inputPanel, type ControlKind, type ControlSpec } from '../ui/InputPanel';
 import type { PaperOptions } from './paper';
+import { createRepl } from './repl';
 
 const MIN_INTERVAL_MS = 10;
 const MAX_OUTPUT_LINES = 300;
@@ -162,6 +163,10 @@ export function buildApi(
       },
       get isBoard() {
         return owner.isBoardAddress(address);
+      },
+      skipPaper() {
+        sheet.skipTyping(address);
+        return ref;
       },
       span(cols?: number, rows?: number) {
         if (cols !== undefined || rows !== undefined) readOnly();
@@ -648,6 +653,7 @@ export function buildApi(
     plot(d: unknown, o?: PlotOptions): unknown;
     color(f: string): unknown;
     paper(o?: PaperOptions | boolean): unknown;
+    skipPaper(): unknown;
     span(c?: number, r?: number): { cols: number; rows: number };
     clear(): unknown;
     show(...v: unknown[]): unknown;
@@ -793,9 +799,11 @@ export function buildApi(
     size: sizeNode,
     code: codeNode,
     click: clickNode,
+    enter: enterNode,
+    leave: leaveNode,
   };
 
-  /** on(target, fn) or on(target, event, fn); event is 'change' (default), 'size', 'code' or 'click'. */
+  /** on(target, fn) or on(target, event, fn); event is 'change' (default), 'size', 'code', 'click', 'enter' or 'leave' (the mouse came over the cell or went off it). */
   const on = (target: unknown, second: unknown, third?: unknown): (() => void) => {
     ctx.guard();
     const fn = typeof second === 'function' ? second : third;
@@ -848,7 +856,7 @@ export function buildApi(
       const text = typeof target === 'object' && target !== null ? String((target as { path?: string; address?: string }).path ?? (target as { address?: string }).address) : String(target);
       label = text;
       const nodeFor = EVENT_NODES[event];
-      if (!nodeFor) throw new Error(`Unknown event '${event}'. Try 'change', 'size', 'code' or 'click'`);
+      if (!nodeFor) throw new Error(`Unknown event '${event}'. Try 'change', 'size', 'code', 'click', 'enter' or 'leave'`);
       let addresses: string[] = [];
       if (isGlobalPath(text)) {
         const found = workspace.resolve(text, sheet.id);
@@ -897,6 +905,8 @@ export function buildApi(
       }
     });
     forget = ctx.addTask(stop);
+    // The mouse may already be over the cell (this run came from an edit or a restart): that counts as entering.
+    if (event === 'enter' && !gridBlock && nodes.includes(enterNode(owner.hoveredAddress))) owner.pulse(enterNode(owner.hoveredAddress));
     return stop;
   };
 
@@ -1230,8 +1240,8 @@ export function buildApi(
       return control('select', label, { options: options.map(String), value: options[0] }, fn);
     },
     button: (label: string, fn: unknown) => control('button', label, {}, fn),
-    /** fn(key, { shift, ctrl, alt, repeat }) runs when a key is pressed (not while typing in a box or the editor). Keys: 'a', 'ArrowLeft', 'Enter', 'Space'. */
-    onKey: (fn: (key: string, info: { shift: boolean; ctrl: boolean; alt: boolean; repeat: boolean }) => unknown): (() => void) => {
+    /** fn(key, { shift, ctrl, alt, repeat, text }) runs when a key is pressed (not while typing in a box or the editor). Keys: 'a', 'ArrowLeft', 'Enter', 'Space'. */
+    onKey: (fn: (key: string, info: { shift: boolean; ctrl: boolean; alt: boolean; repeat: boolean; text: string }) => unknown): (() => void) => {
       ctx.guard();
       if (typeof fn !== 'function') throw new Error('input.onKey needs a function: input.onKey((key) => { ... })');
       let forget = () => {};
@@ -1247,19 +1257,53 @@ export function buildApi(
       forget = ctx.addTask(stop);
       return stop;
     },
+    /** fn(text) runs when text is pasted into this cell's input: the menu item Paste on a cell that has this (a terminal) sends the clipboard here instead of making it the cell's code. Returns a stop function. */
+    onPaste: (fn: (text: string) => unknown): (() => void) => {
+      ctx.guard();
+      if (typeof fn !== 'function') throw new Error('input.onPaste needs a function: input.onPaste((text) => { ... })');
+      let forget = () => {};
+      let off = () => {};
+      const stop = (): void => {
+        off();
+        forget();
+      };
+      const run = callback(fn as (...args: unknown[]) => unknown, stop);
+      off = inputPanel.onPaste(sheet.id, () => data.address, (text) => {
+        if (!ctx.cancelled) void run(text);
+      });
+      forget = ctx.addTask(stop);
+      return stop;
+    },
+    /** Takes the typing keys for this cell, like a terminal: Enter, Delete, Space, arrows and letters stop reaching the sheet's shortcuts (Enter no longer opens the editor). A click anywhere takes them away (unless { steady: true }, for a cell that holds them while the mouse is over it); lost() is told. Shift+Enter stays the sheet's. Returns the way to give them back. */
+    claimKeys: (lost?: () => unknown, options?: { steady?: boolean }): (() => void) => {
+      ctx.guard();
+      let forget = () => {};
+      let off = () => {};
+      const stop = (): void => {
+        off();
+        forget();
+      };
+      const told = typeof lost === 'function' ? callback(lost as (...args: unknown[]) => unknown, stop) : null;
+      off = inputPanel.claimKeys(() => {
+        if (!ctx.cancelled && told) void told();
+      }, { steady: !!options?.steady });
+      forget = ctx.addTask(stop);
+      return stop;
+    },
     /** Is this key held down right now? input.isDown('ArrowLeft') */
     isDown: (key: string): boolean => inputPanel.isDown(key),
   };
 
   const runInfo = Object.freeze({ reason: data.runReason, count: data.runCount });
 
-  return {
+  const api: Record<string, unknown> = {
     cell: self,
     print: (...values: unknown[]) => void self.print(...values),
     view: (text: string) => void self.view(text),
     plot: (data: unknown, options?: PlotOptions) => void self.plot(data, options),
     color: (fill: string) => void self.color(fill),
     paper: (options?: PaperOptions | boolean) => void self.paper(options),
+    skipPaper: () => void self.skipPaper(),
     clear: () => void self.clear(),
     show: (...values: unknown[]) => void self.show(...values),
     span: (cols?: number, rows?: number) => self.span(cols, rows),
@@ -1300,5 +1344,12 @@ export function buildApi(
       console.log(`[${data.address}]`, ...values);
       self.print(...values);
     },
+    /** A TypeScript read-eval-print loop that keeps its variables: `const ts = repl()`, then `await ts('const x = 6 * 7')` and `await ts('x + 1')`. */
+    repl: (overrides: Record<string, unknown> = {}) =>
+      createRepl(
+        async (source) => (await import('../editor/monaco')).transpile(data.address, source, sheet.id),
+        () => ({ ...api, ...overrides }),
+      ),
   };
+  return api;
 }

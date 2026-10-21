@@ -133,7 +133,7 @@ function cellTopic(ctx: HelpContext): HTMLElement[] {
   const tab = at ? workspace.get(at.tab) : undefined;
   const d = at && tab ? tab.sheet.dataAt(at.address) : undefined;
   if (!at || !tab || !d) {
-    out.push(para('A cell is one square of the sheet. It can hold a small program that draws, prints, plays or reacts to the game.'), list(['Click a cell to pick it, then press F1 again: I will tell you what it does.', 'Double-click a cell to write code in it.', 'Drag over empty cells to pick a group, then press Enter: they become one block to write in.', 'Hover a cell and open its ⋮ menu for more.']));
+    out.push(para('A cell is one square of the sheet. It can hold a small program that draws, prints, plays or reacts to the game.'), list(['Click a cell to pick it, then press F1 again: I will tell you what it does.', 'Double-click a cell to write code in it.', 'Drag over empty cells to pick a group, then press Shift+Enter: they become one block to write in.', 'Hover a cell and open its ⋮ menu for more.']));
     return out;
   }
   const path = workspace.pathOf(at.tab, at.address);
@@ -264,7 +264,7 @@ const TOPICS: Record<string, Topic> = {
         ['Ctrl+drag', 'pan the view (the sheet, or the code inside an editor)'],
         ['Click, then press and hold', 'Morse: dit, dah-hold. Drag to pan the view'],
         ['Click, click, then press and hold', 'Morse: dit, dit, dah-hold. Drag up to zoom in, down to zoom out'],
-        ['Enter', 'edit the picked cell, or make one block of the picked cells'],
+        ['Shift+Enter', 'edit the picked cell, or make one block of the picked cells'],
         ['Delete', 'clear the picked cells (press twice)'],
         ['Ctrl+Enter', 'run a cell again'],
         ['Esc', 'let go of the picked cells, or run and close the editor'],

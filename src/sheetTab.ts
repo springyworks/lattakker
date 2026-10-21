@@ -1,5 +1,6 @@
 import { recordSeeds, refreshSeeded } from './seedMigration';
 import { Sheet, MAX_COLS } from './sheet/Sheet';
+import { parseAddress } from './sheet/address';
 import type { GameView } from './game/GameView';
 import { SheetPane, type Tone } from './ui/SheetPane';
 import { helpButton } from './ui/help';
@@ -125,6 +126,8 @@ export function createSheetTab(view: GameView, smallScreen: boolean, opts: Sheet
     // Seeds near the bottom need rows below them for their blocks.
     const lastRow = seed.reduce((m, [a]) => Math.max(m, Number(/\d+/.exec(a)?.[0] ?? 1)), 0);
     while (sheet.rowCount < lastRow + 8 && sheet.rowCount < 200) sheet.insertRow(sheet.rowCount - 1);
+    const lastCol = seed.reduce((m, [a]) => Math.max(m, (parseAddress(a)?.col ?? 0) + 1), 0);
+    if (sheet.colCount < lastCol + 5 && sheet.colCount < MAX_COLS) sheet.addColumns(Math.min(MAX_COLS, lastCol + 5) - sheet.colCount);
     for (const [address, code] of seed) sheet.setCode(address, code);
     recordSeeds(id, seed);
     return seed.length;

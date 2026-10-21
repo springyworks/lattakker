@@ -22,6 +22,12 @@ describe('refreshSeeded', () => {
     expect(cells).toEqual({ A1: seed[0][1], C2: seed[0][1] });
   });
 
+  it('still recognises an old version that has blank lines around it', () => {
+    const { sheet, cells } = fakeSheet({ A1: '\n' + OLD + '\n' });
+    refreshSeeded(sheet, 'test', seed, older);
+    expect(cells.A1).toBe(seed[0][1]);
+  });
+
   it('leaves a moved cell alone when a person changed it', () => {
     const { sheet, cells } = fakeSheet({ A1: seed[0][1], C2: OLD + ' // mine' });
     refreshSeeded(sheet, 'test', seed, older);

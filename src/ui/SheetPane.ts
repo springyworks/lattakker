@@ -8,6 +8,7 @@ import { colToLetters, formatAddress, parseAddress } from '../sheet/address';
 import { GAME_NODE, clickNode, codeNode, describeNode, sizeNode } from '../sheet/reactivity';
 import { buildApi } from '../sheet/api';
 import { runCell } from '../sheet/runtime';
+import { inputPanel } from './InputPanel';
 import { CellEditor } from '../editor/CellEditor';
 import { CellCodeView } from '../editor/CellCodeView';
 import { ContextPopups } from '../editor/ContextPopups';
@@ -194,7 +195,7 @@ export class SheetPane {
     const range = this.pickedRange();
     if (picked.length < 2 || !range) return;
     const withCode = picked.filter((a) => this.sheet.dataAt(a)?.code.trim()).length;
-    this.hooks.say(`${picked.length} cells picked (${range.text}, ${range.cols}×${range.rows}). Enter makes one block of them to write in${withCode ? `, Delete clears the ${withCode} with code` : ''}, Esc lets go.`, 'info');
+    this.hooks.say(`${picked.length} cells picked (${range.text}, ${range.cols}×${range.rows}). Shift+Enter makes one block of them to write in${withCode ? `, Delete clears the ${withCode} with code` : ''}, Esc lets go.`, 'info');
   }
 
   /** The picked cells become one block, as big as the pick, and the editor opens on it: the person decided its shape, the code can say more later. */
@@ -263,16 +264,18 @@ export class SheetPane {
     ];
   }
 
-  /** Enter, Delete and Esc act on the picked cells, when the keys are not meant for something else (a text box, the editor). */
+  /** Shift + Enter, Delete and Esc act on the picked cells, when the keys are not meant for something else (a text box, the editor). */
   private installKeys(): void {
     window.addEventListener('keydown', (e) => {
       if (workspace.current !== this.sheet.id || this.editor.isOpen || e.ctrlKey || e.metaKey || e.altKey) return;
       if ((e.target as HTMLElement | null)?.closest?.('input, textarea, select, [contenteditable="true"], .monaco-editor, .ai-side, .ai-mini, .help-card, .input-panel')) return;
-      const picked = this.sheet.getPicked();
+      let picked = this.sheet.getPicked();
+      // Shift + Enter on a cell the mouse is over, though nothing is picked, edits that cell.
+      if (!picked.length && e.key === 'Enter' && e.shiftKey && this.sheet.hoveredAddress) picked = [this.sheet.hoveredAddress];
       if (!picked.length) return;
       if (e.key === 'Escape' && picked.length > 1) {
         this.sheet.pick([]);
-      } else if (e.key === 'Enter') {
+      } else if (e.key === 'Enter' && e.shiftKey) {
         if (picked.length > 1) this.makeBlockFromPicked();
         else if (!this.hooks.mayEdit || this.hooks.mayEdit(picked[0])) this.editor.open(picked[0]);
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -457,6 +460,14 @@ export class SheetPane {
         if (!isBoard) {
           menu.addItem(`Edit ${address}`, null, () => this.editor.open(address));
           if (sheet.dataAt(address)?.code) menu.addItem(`Clear ${address}`, null, () => sheet.setCode(address, ''));
+          const copied = sheet.dataAt(address);
+          const copyMenu = menu.addItem('⧉ Copy', null, () => {});
+          const path = workspace.pathOf(sheet.id, address);
+          menu.addItem('Everything: path, code and output', null, () => this.copy(this.everythingOf(address), 'everything'), copyMenu, undefined, !!copied?.code || !!copied?.output.length);
+          menu.addItem('Code', null, () => this.copy(copied?.code ?? '', 'the code'), copyMenu, undefined, !!copied?.code);
+          menu.addItem('Output', null, () => this.copy(copied?.output.join('\n') ?? '', 'the output'), copyMenu, undefined, !!copied?.output.length);
+          menu.addItem(`Path  ${path}`, null, () => this.copy(path, 'the path'), copyMenu);
+          menu.addItem(inputPanel.hasPaste(sheet.id, address) ? `⧉ Paste into the input of ${address}` : `⧉ Paste code into ${address}`, null, () => void this.pasteInto(address));
           const tasks = sheet.taskCount(address);
           if (tasks > 0) {
             menu.addItem(`Stop timers & watchers in ${address} (${tasks})`, null, () => {
@@ -670,6 +681,44 @@ export class SheetPane {
     );
   }
 
+  /** Takes the code from the clipboard: what "Copy → everything" made (its code part), or any text, which then is the code. */
+  private async pasteInto(address: string): Promise<void> {
+    const { sheet, hooks } = this;
+    let text = '';
+    try {
+      text = await navigator.clipboard.readText();
+    } catch {
+      hooks.say('Could not read the clipboard (the browser said no). Open the editor and press Ctrl+V there.', 'bad');
+      return;
+    }
+    // A cell with an input of its own (a terminal) gets the text there; the others get it as their code.
+    if (inputPanel.hasPaste(sheet.id, address)) {
+      if (!text.trim()) hooks.say('The clipboard has no text to paste.', 'bad');
+      else inputPanel.pasteTo(sheet.id, address, text);
+      return;
+    }
+    if (hooks.mayEdit && !hooks.mayEdit(address)) return;
+    const marked = /^[^\n]*\n--- code ---\n([\s\S]*?)(?:\n--- output ---\n[\s\S]*)?$/.exec(text);
+    const code = (marked ? marked[1] : text).replace(/\r\n/g, '\n');
+    if (!code.trim()) {
+      hooks.say('The clipboard has no text to paste.', 'bad');
+      return;
+    }
+    const old = sheet.dataAt(address)?.code ?? '';
+    if (old.trim() && old !== code && !window.confirm(`Replace the code of ${address} with the ${code.split('\n').length} pasted lines?`)) return;
+    sheet.setCode(address, code);
+    hooks.say(`Pasted ${code.split('\n').length} lines into ${address} ▶ It runs now.`, 'good');
+  }
+
+  /** The path, the code and the output of a cell in one piece of text, to paste into a chat, a mail or a report. */
+  private everythingOf(address: string): string {
+    const d = this.sheet.dataAt(address);
+    const parts = [`${workspace.pathOf(this.sheet.id, address)}`];
+    if (d?.code) parts.push('--- code ---', d.code);
+    if (d?.output.length) parts.push('--- output ---', d.output.join('\n'));
+    return parts.join('\n');
+  }
+
   private restartCell(address: string): void {
     this.sheet.setCode(address, this.sheet.dataAt(address)?.code ?? '');
     this.hooks.say(`Started ${address} ▶ The code runs from the top, with its timers and watchers.`, 'info');
@@ -696,6 +745,7 @@ export class SheetPane {
       title: hasCode ? 'The id stays the same when the cell moves. Click to copy it.' : '',
       onSelect: hasCode ? () => this.copy(d.uid, 'the id') : undefined,
     });
+    items.push({ label: inputPanel.hasPaste(sheet.id, address) ? '⧉ Paste into the input' : hasCode ? '⧉ Paste code here…' : '⧉ Paste code here', title: 'The code on the clipboard (also what Copy → everything made) becomes the code of this cell', onSelect: () => void this.pasteInto(address) });
     items.push({ label: hasCode ? '✏️ Edit code…' : '✏️ Write TypeScript here…', onSelect: () => this.editor.open(address) });
     if (!hasCode) {
       items.push({
@@ -766,6 +816,7 @@ export class SheetPane {
         { label: `address  ${address}`, onSelect: () => this.copy(address, 'the address') },
         { label: `path  ${workspace.pathOf(sheet.id, address)}`, title: 'Works from every tab, for example at(\'/lab/J24\')', onSelect: () => this.copy(workspace.pathOf(sheet.id, address), 'the path') },
         { label: `id  ${hasCode ? '@' + d.uid : '(no code yet)'}`, title: 'Follows the code when the cell moves', disabled: !hasCode, onSelect: () => this.copy('@' + d.uid, 'the identity') },
+        { label: 'everything (path, code, output)', disabled: !hasCode && d.output.length === 0, title: 'All of it in one piece of text, to paste into a chat or a report', onSelect: () => this.copy(this.everythingOf(address), 'everything') },
         { label: 'code', disabled: !hasCode, onSelect: () => this.copy(d.code, 'the code') },
         { label: 'output', disabled: d.output.length === 0, title: 'What the cell printed, as text', onSelect: () => this.copy(d.output.join('\n'), 'the output') },
       ],

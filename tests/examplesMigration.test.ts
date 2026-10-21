@@ -62,6 +62,31 @@ describe('A12 is the random player', () => {
   });
 });
 
+describe('R41 was removed', () => {
+  const store = new Map<string, string>();
+  beforeEach(() => {
+    store.clear();
+    (globalThis as { localStorage?: unknown }).localStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) };
+  });
+  afterEach(() => void delete (globalThis as { localStorage?: unknown }).localStorage);
+
+  const shipped = "// comment\nspan(9, 8)\npaper({ font: 'tty33', speed: 10 })\nconst lines = [\n  'THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG 0123456789',\n  '10 PRINT \"HELLO, WORLD\"',\n  '20 GOTO 10',\n  'READY.',\n  'A BOX OF MY RED WINE BEAT A QUICK FEW GREEN JUGS',\n]\nclear()\nprint('LATTAKKER  ASR-33  TELETYPE  READY')\nprint('')\nlet n = 0\nevery('8s', async () => {\n  const time = new Date().toTimeString().slice(0, 8)\n  let text = lines[n % lines.length]\n  if (n % 3 === 2) {\n    try {\n      text = (await system.text()).replace(/\\s+/g, ' ')\n    } catch {\n      text = 'NO READING FROM THE COMPUTER'\n    }\n  }\n  n++\n  print(time + '  ' + text.toUpperCase())\n})";
+
+  it('empties an untouched saved R41', () => {
+    store.set('lattakker:examples-rev', '15');
+    const cells: Record<string, string> = { R41: shipped };
+    migrateExamples({ restored: true, board: fakeSheet({}), lab: fakeSheet(cells), examples: [], labDemos: [] });
+    expect(cells.R41).toBe('');
+  });
+
+  it('keeps an R41 that the person edited', () => {
+    store.set('lattakker:examples-rev', '15');
+    const cells: Record<string, string> = { R41: shipped + "\nprint('mine')" };
+    migrateExamples({ restored: true, board: fakeSheet({}), lab: fakeSheet(cells), examples: [], labDemos: [] });
+    expect(cells.R41).toContain("print('mine')");
+  });
+});
+
 describe('the examples type-check as strictly as the editor', () => {
   /** Runs the compiler with the same options Monaco uses for a cell (strict, each cell a module), plus the cell API declarations. */
   function problems(code: string): string[] {
