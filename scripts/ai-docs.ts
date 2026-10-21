@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
-import type { Plugin } from 'vite';
+import { transformWithOxc, type Plugin } from 'vite';
 import { parseDirectives, renderDirectives } from '../src/ai/directives';
+import { movedForTerminal } from '../src/labLayout';
 
 /**
  * Documents for AI helpers, published next to the page as ordinary files (and served by the dev server):
@@ -34,11 +35,14 @@ export interface AiDoc {
   body: string;
 }
 
-/** Reads `export const NAME ... = value` out of a TypeScript source file without compiling it (the sources are plain data). */
-function evalConst(path: string, name: string): unknown {
-  const text = readFileSync(path, 'utf8');
-  const code = text.replace(new RegExp(`export const ${name}\\s*(?::[^=]+)?=`), `const ${name} =`);
-  return runInNewContext(`${code}\n${name}`, {}, { timeout: 5000 });
+/** Imports the data sources may use (the Lab demos need the terminal's moves). */
+const IMPORTS: Record<string, unknown> = { movedForTerminal };
+
+/** Reads `export const NAME = value` out of a TypeScript source file: types are stripped, known imports are provided, nothing else is compiled. */
+async function evalConst(path: string, name: string): Promise<unknown> {
+  const { code: js } = await transformWithOxc(readFileSync(path, 'utf8'), path, { lang: 'ts' });
+  const code = js.replace(/^import\s[^;]*;?\s*$/gm, '').replace(/^export\s+(default\s+)?/gm, '');
+  return runInNewContext(`${code}\n${name}`, { ...IMPORTS }, { timeout: 5000 });
 }
 
 const FENCE = '````';
@@ -59,15 +63,15 @@ function cellsDoc(heading: string, intro: string, tab: string, cells: Array<[str
   return parts.join('\n');
 }
 
-export function buildDocs(root: string, site: string): AiDoc[] {
+export async function buildDocs(root: string, site: string): Promise<AiDoc[]> {
   const read = (p: string): string => readFileSync(join(root, p), 'utf8');
   // Links between these files: absolute on the published site, plain file names when read from the files themselves.
   const at = (file: string): string => (site ? `${site}ai/${file}` : file);
   const fill = (text: string): string => text.replaceAll('{{SITE}}ai/', site ? `${site}ai/` : '').replaceAll('{{GITHUB_README_RAW}}', `${RAW}README.md`).replaceAll('{{GITHUB_README}}', `${BLOB}README.md`);
-  const api = String(evalConst(join(root, 'src/sheet/apiTypes.ts'), 'CELL_API_DTS')).trim();
-  const examples = evalConst(join(root, 'src/examples.ts'), 'EXAMPLES') as Array<[string, string]>;
-  const demos = evalConst(join(root, 'src/labDemos.ts'), 'LAB_DEMOS') as Array<[string, string]>;
-  const monitor = evalConst(join(root, 'src/monitorDemos.ts'), 'MONITOR_DEMOS') as Array<[string, string]>;
+  const api = String(await evalConst(join(root, 'src/sheet/apiTypes.ts'), 'CELL_API_DTS')).trim();
+  const examples = (await evalConst(join(root, 'src/examples.ts'), 'EXAMPLES')) as Array<[string, string]>;
+  const demos = (await evalConst(join(root, 'src/labDemos.ts'), 'LAB_DEMOS')) as Array<[string, string]>;
+  const monitor = (await evalConst(join(root, 'src/monitorDemos.ts'), 'MONITOR_DEMOS')) as Array<[string, string]>;
   // The standing directives are part of the rules every AI reads first. The end dates stay in the text, so a copy that is read late can still be judged.
   const directives = renderDirectives(parseDirectives(JSON.parse(read('ai-docs/directives.json'))));
   const rules = fill(read('ai-docs/rules.md')) + (directives ? `\n\n## Standing directives\n\n${directives}\n` : '');
@@ -156,12 +160,12 @@ export function aiDocs(): Plugin {
     },
     // Made fresh at every request, so an edited example shows up without restarting the server.
     configureServer(server) {
-      server.middlewares.use((req, res, next) => {
+      server.middlewares.use(async (req, res, next) => {
         const path = (req.url ?? '').split('?')[0];
         const prefix = `${base.replace(/\/$/, '')}/ai/`;
         if (!path.startsWith(prefix)) return next();
         try {
-          const doc = buildDocs(root, site()).find((d) => d.file === decodeURIComponent(path.slice(prefix.length)));
+          const doc = (await buildDocs(root, site())).find((d) => d.file === decodeURIComponent(path.slice(prefix.length)));
           if (!doc) return next();
           res.setHeader('Content-Type', `${doc.type}; charset=utf-8`);
           res.setHeader('Cache-Control', 'no-store');
@@ -173,8 +177,8 @@ export function aiDocs(): Plugin {
         }
       });
     },
-    generateBundle() {
-      for (const doc of buildDocs(root, site())) this.emitFile({ type: 'asset', fileName: `ai/${doc.file}`, source: doc.body });
+    async generateBundle() {
+      for (const doc of await buildDocs(root, site())) this.emitFile({ type: 'asset', fileName: `ai/${doc.file}`, source: doc.body });
     },
   };
 }
