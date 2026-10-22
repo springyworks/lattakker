@@ -390,6 +390,94 @@ monaco.editor.onDidCreateModel((model) => {
   });
 });
 
+// ------------------------------------------------------------------ show where an imported name comes from
+
+const SOURCES_KEY = 'lattakker.showImportSources';
+let showSources = localStorage.getItem(SOURCES_KEY) !== 'off';
+const sourcesChanged = new monaco.Emitter<void>();
+
+/** Whether imported names show their cell (`./A4.add(2, 3)`) and, in the import line, their type. On by default. */
+export const importSourcesShown = (): boolean => showSources;
+
+export function setImportSourcesShown(on: boolean): void {
+  showSources = on;
+  localStorage.setItem(SOURCES_KEY, on ? 'on' : 'off');
+  sourcesChanged.fire();
+}
+
+interface ImportedName {
+  local: string;
+  address: string;
+  /** Offset just after the local name in the import line. */
+  end: number;
+}
+
+/** The names a cell imports from other cells, with where each stands in the import line, and the import lines' ranges. */
+function importedNames(code: string): { names: ImportedName[]; lines: Array<[number, number]> } {
+  const names: ImportedName[] = [];
+  const lines: Array<[number, number]> = [];
+  for (const m of code.matchAll(/^[ \t]*import\s+(?:type\s+)?([^'"\n;]*?)\s*from\s*['"]\.\/([A-Za-z]{1,3}\d{1,3})(?:\.ts)?['"]/gm)) {
+    const address = m[2].toUpperCase();
+    lines.push([m.index!, m.index! + m[0].length]);
+    const clause = m[1];
+    const clauseAt = m.index! + m[0].indexOf(clause);
+    const brace = clause.indexOf('{');
+    const dflt = /^([A-Za-z_$][\w$]*)\s*(?:,|$)/.exec(clause);
+    if (dflt) names.push({ local: dflt[1], address, end: clauseAt + dflt[0].replace(/\s*,$/, '').length });
+    if (brace < 0) continue;
+    let at = clauseAt + brace + 1;
+    for (const part of clause.slice(brace + 1, clause.indexOf('}', brace)).split(',')) {
+      const word = /([A-Za-z_$][\w$]*)\s*$/.exec(part);
+      if (word && !/^type\s*$/.test(part)) names.push({ local: word[1], address, end: at + word.index + word[1].length });
+      at += part.length + 1;
+    }
+  }
+  return { names, lines };
+}
+
+/** What the TypeScript worker says about the name at an offset, cut down to the part after the name: `(a: number): number`. */
+async function typeAfterName(model: monaco.editor.ITextModel, name: string, end: number): Promise<string> {
+  try {
+    const getWorker = await typescriptWorker();
+    const client = await getWorker(model.uri);
+    const info = await client.getQuickInfoAtPosition(model.uri.toString(), end - 1);
+    const first = (info?.displayParts ?? []).map((p: { text: string }) => p.text).join('').split('\n')[0];
+    const rest = first.replace(/^\(alias\)\s*/, '').replace(new RegExp(`^(?:[a-z]+\\s+)*${name.replace(/\$/g, '\\$')}`), '');
+    return rest.trim();
+  } catch {
+    return '';
+  }
+}
+
+monaco.languages.registerInlayHintsProvider('typescript', {
+  onDidChangeInlayHints: sourcesChanged.event,
+  async provideInlayHints(model, range) {
+    if (!showSources || !parseCellUri(model.uri)) return { hints: [], dispose() {} };
+    const code = model.getValue();
+    const { names, lines } = importedNames(code);
+    const hints: monaco.languages.InlayHint[] = [];
+    const byName = new Map(names.map((n) => [n.local, n]));
+    if (byName.size) {
+      const inImport = (offset: number): boolean => lines.some(([from, to]) => offset >= from && offset < to);
+      const word = new RegExp(`(?<![\\w$.'"\`])(?:${[...byName.keys()].map((n) => n.replace(/\$/g, '\\$')).join('|')})(?![\\w$'"\`:])`, 'g');
+      for (const m of code.matchAll(word)) {
+        const offset = m.index!;
+        const pos = model.getPositionAt(offset);
+        if (pos.lineNumber < range.startLineNumber || pos.lineNumber > range.endLineNumber || inImport(offset)) continue;
+        if (/\/\/|^\s*\*|\/\*/.test(model.getLineContent(pos.lineNumber).slice(0, pos.column - 1))) continue;
+        hints.push({ position: pos, label: `./${byName.get(m[0])!.address}.`, tooltip: `${m[0]} comes from the cell ${byName.get(m[0])!.address}` });
+      }
+    }
+    for (const n of names) {
+      const pos = model.getPositionAt(n.end);
+      if (pos.lineNumber < range.startLineNumber || pos.lineNumber > range.endLineNumber) continue;
+      const type = await typeAfterName(model, n.local, n.end);
+      if (type) hints.push({ position: pos, label: type.startsWith(':') ? type : ` ${type}`, paddingLeft: true, tooltip: `The type of ${n.local}, as the cell ${n.address} exports it` });
+    }
+    return { hints, dispose() {} };
+  },
+});
+
 /** Inside `from '|'` the cells of the same tab are offered, with what each one exports. */
 monaco.languages.registerCompletionItemProvider('typescript', {
   triggerCharacters: ["'", '"', '.', '/'],

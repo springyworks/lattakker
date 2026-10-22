@@ -3,7 +3,7 @@ import { HoverMenu, type MenuItem } from '../ui/HoverMenu';
 import { aiBridge } from '../aichat/bridge';
 import { showHelp } from '../ui/help';
 import type { AiContext } from '../aichat/tools';
-import { parseCellUri } from './monaco';
+import { importSourcesShown, parseCellUri, setImportSourcesShown } from './monaco';
 import { focusPoints } from './focusPoints';
 
 /**
@@ -142,6 +142,11 @@ function editorItems(editor: monaco.editor.ICodeEditor): MenuItem[] {
     action(editor, 'editor.action.goToReferences', 'Find all references', 'Shift+F12'),
     action(editor, 'editor.action.rename', 'Rename symbol', 'F2'),
     action(editor, 'editor.action.quickFix', 'Quick fix', 'Ctrl+.'),
+    {
+      label: importSourcesShown() ? '🙈 Hide the full path & type of imports' : '🧭 Show the full path & type of imports',
+      title: "Shows which cell an imported name comes from (add(2, 3) becomes ./A4.add(2, 3)) and its type in the import line. It is only drawn, the code stays as you wrote it",
+      onSelect: () => setImportSourcesShown(!importSourcesShown()),
+    },
     action(editor, 'editor.action.formatDocument', 'Format code', 'Shift+Alt+F'),
     action(editor, 'editor.action.quickCommand', 'All commands', 'F1'),
     { label: '❓ Help: the code editor', hint: 'Shift+F1', onSelect: () => showHelp('editor') },

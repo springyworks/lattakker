@@ -1822,6 +1822,7 @@ exported too (`import { type Point } from './A11'`); they cost nothing when the 
 - An exported function is the exporting cell's own: when it calls `show()` or `print()`, that appears in the exporting cell.
 - `import { x }` takes the value as it is when the importer runs; use `import * as a4 from './A4'` to read the latest value each time.
 - A cell cannot import itself, two cells cannot import each other, and a cell with an error or without code cannot be imported (the message says which).
+- The editor draws where a name comes from: `add(2, 3)` is shown as `./A4.add(2, 3)`, and the import line shows the type (`add (a: number, b: number): number`). It is only drawn; the code stays as you wrote it. Right-click in the editor → "Hide the full path & type of imports" (or "Show…") turns it off and on.
 - Only cells of the same tab; for another tab use `at('/lab/J24')` ([8.9](#89-cells-in-other-tabs-atlabj24)).
 - Supported: `export function/class/const/let/var`, `export { a as b }`, `export default`, `export * from`, and `import` with names, a default, `* as`, or nothing. A dynamic `import()` is left alone.
 
