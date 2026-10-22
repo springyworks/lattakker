@@ -26,6 +26,8 @@ export function coachFor({ code, message, bad, line }: CoachInput): string[] {
   if (code === 2554 || code === 2555 || code === 2556) return ['💡 deze functie wil een ander aantal dingen tussen de haakjes'];
   if (code === 2322 || code === 2345 || code === 2365 || code === 2367) return ['💡 dit past hier niet: kijk of het een getal, tekst of iets anders moet zijn'];
   if (code === 2300 || code === 2451) return [`💡 '${bad}' bestaat al: kies een andere naam`];
+  if (code === 2307) return [`💡 ${bad} is geen cel met code: een cel haal je op met import { naam } from './B2'`, '💡 tik de aanhalingstekens leeg en kies uit de lijst met cellen'];
+  if (code === 2305 || code === 2614) return [`💡 die cel geeft '${bad}' niet door`, '💡 zet het woord  export  voor de functie of waarde in die andere cel'];
   if (code === 2588) return [`💡 '${bad}' is een const: die kun je niet veranderen, gebruik let`];
   if (SYNTAX_CODES.has(code) || (code >= 1000 && code < 2000)) return ['💡 er mist of staat iets te veel: kijk naar haakjes, komma\'s en aanhalingstekens'];
   const first = message.split('\n')[0].trim();

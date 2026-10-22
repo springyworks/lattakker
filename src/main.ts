@@ -25,6 +25,7 @@ import { SheetPane } from './ui/SheetPane';
 import { createLab } from './lab';
 import { createSheetTab } from './sheetTab';
 import { MONITOR_DEMOS } from './monitorDemos';
+import { RPC_DEMOS } from './rpcDemos';
 import { MONITOR_OLDER_VERSIONS } from './monitorOlderVersions';
 import { TabManager, installTabManager } from './tabManager';
 import { loadTabSaved, startTabAutoSave } from './storage';
@@ -241,6 +242,21 @@ tabManager.makeBuiltIn(
       restoreLabel: '↺ Restore monitor',
       load: () => loadTabSaved('monitor'),
       startSave: (sheet) => startTabAutoSave('monitor', sheet),
+    }),
+);
+tabManager.makeBuiltIn(
+  { id: 'rpc', title: 'Cells talk', icon: '🔗', hint: 'Cells that use each other\'s functions: export in one cell, import in another' },
+  () =>
+    createSheetTab(view, smallScreen, {
+      id: 'rpc',
+      title: 'Cells talk',
+      icon: '🔗',
+      intro: 'Cells that use each other. Write export in front of a function, then import it in another cell with import { name } from \'./A4\'.',
+      seed: RPC_DEMOS,
+      restoreLabel: '↺ Restore demos',
+      restoreHint: 'Put every demo back as it was written (your own cells stay)',
+      load: () => loadTabSaved('rpc'),
+      startSave: (sheet) => startTabAutoSave('rpc', sheet),
     }),
 );
 tabManager.restore();

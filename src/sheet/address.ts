@@ -140,6 +140,7 @@ const TAB = '(?:\\/([a-z][a-z0-9-]*)\\/)?';
 const SINGLE_RE = new RegExp('^(\\s*)' + TAB + '(\\$?)([a-z]{1,3})(\\$?)(\\d{1,3})((?:\\/\\d+,\\d+)?\\s*)$', 'i');
 const COLON_RE = new RegExp('^(\\s*)' + TAB + '(\\$?)([a-z]{1,3})(\\$?)(\\d{1,3})(\\s*:\\s*)(\\$?)([a-z]{1,3})(\\$?)(\\d{1,3})(\\s*)$', 'i');
 const DASH_RE = new RegExp('^(\\s*)' + TAB + '([a-z]{1,3})(\\d{1,3})(\\s*-\\s*)(\\d{1,3})(\\s*)$', 'i');
+const IMPORT_RE = /^(\.\/)([a-z]{1,3})(\d{1,3})(\.ts)?$/i;
 
 function end(dollarCol: string, letters: string, dollarRow: string, digits: string): End | null {
   const row = parseInt(digits, 10) - 1;
@@ -148,6 +149,12 @@ function end(dollarCol: string, letters: string, dollarRow: string, digits: stri
 
 /** Only a literal whose whole text is one address or one range counts; any other text is left alone. */
 function parseLiteral(text: string): ParsedLiteral | null {
+  // An import of a cell of this tab ('./B2', see sheet/cellModules.ts) moves with that cell like any other address.
+  const imported = IMPORT_RE.exec(text);
+  if (imported) {
+    const a = end('', imported[2], '', imported[3]);
+    return a && { lead: imported[1], trail: imported[4] ?? '', kind: 'cell', sep: '', ends: [a] };
+  }
   // m[2] is the optional tab. It stays part of `lead` so the literal is written back exactly as it was found.
   const prefix = (m: RegExpExecArray): string => m[1] + (m[2] ? `/${m[2]}/` : '');
   let m = SINGLE_RE.exec(text);

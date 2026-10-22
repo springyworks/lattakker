@@ -12,7 +12,7 @@ import { inputPanel } from './InputPanel';
 import { CellEditor } from '../editor/CellEditor';
 import { CellCodeView } from '../editor/CellCodeView';
 import { ContextPopups } from '../editor/ContextPopups';
-import { transpile } from '../editor/monaco';
+import { syncModel, transpile } from '../editor/monaco';
 import { THEME } from '../theme';
 import { CellMenu } from './CellMenu';
 import type { MenuItem } from './HoverMenu';
@@ -122,6 +122,11 @@ export class SheetPane {
     this.cellMenu.onBusy = () => hover.dismiss();
 
     sheet.setRunner((data, ctx) => runCell(data, ctx, (d, c) => buildApi(sheet, view, hooks, d, c), (a, s) => transpile(a, s, sheet.id)));
+    // The editor's picture of every cell follows its code, so the cells that import it are checked against the real thing.
+    sheet.onCodeChanged((address) => {
+      const d = sheet.dataAt(address);
+      if (d) syncModel(address, d.code, sheet.id);
+    });
     sheet.raiseHeaders();
     this.installListeners();
     this.installSheetHandlers();

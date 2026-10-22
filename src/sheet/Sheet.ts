@@ -32,8 +32,9 @@ import {
   colInsertRewrite,
 } from './address';
 import { THEME } from '../theme';
-import { DependencyGraph, MODE_NODE, ROWS_NODE, COLS_NODE, codeNode, enterNode, leaveNode, sizeNode } from './reactivity';
+import { DependencyGraph, MODE_NODE, ROWS_NODE, COLS_NODE, codeNode, enterNode, leaveNode, moduleNode, sizeNode } from './reactivity';
 import { CancelError, RunContext } from './tasks';
+import { CellModules, type Probe } from './cellModules';
 import { Spring } from './spring';
 import { decideSpan, emptyShape, readSpanCall, rewriteSpanCall, type ShapeState, type Size } from './shape';
 import { SheetCellHandler } from './cellHandler';
@@ -330,6 +331,15 @@ export class Sheet {
   /** Tracks recent clicks per cell id to detect double-clicks ourselves (see CLICK listener below). */
   private lastClickInfo: { id: string; time: number } | null = null;
   private depGraph = new DependencyGraph();
+  /** What the cells of this tab export to each other (import { f } from './B2'); see cellModules.ts. */
+  readonly modules = new CellModules();
+  /** The cells of the current pass that have not started yet: an import of one of them waits for its new run. */
+  private queued = new Set<string>();
+
+  /** What an importer needs to know about the cell it waits for. */
+  probeModule(address: string): Probe {
+    return { hasCode: !!this.data.get(address)?.code.trim(), pending: this.queued.has(address) || this.depGraph.isDirty(address) };
+  }
   /** cell id -> a live DOM node to host as that cell's label (e.g. the Monaco editor frame). */
   private nodeLabels = new Map<string, HTMLElement>();
   private refreshQueue = new Set<string>();
@@ -2526,8 +2536,10 @@ export class Sheet {
     if (!d) return;
     const changed = d.code !== code;
     d.code = code;
-    if (!code.trim()) d.uid = '';
-    else if (uid) d.uid = uid;
+    if (!code.trim()) {
+      d.uid = '';
+      this.modules.forget(address);
+    } else if (uid) d.uid = uid;
     else if (!d.uid) d.uid = newUid();
     d.error = null;
     d.runCount = 0;
@@ -2563,7 +2575,7 @@ export class Sheet {
 
   /** Cells whose code read `address` last time they ran. */
   dependentsOf(address: string): string[] {
-    const all = [address, sizeNode(address), codeNode(address)].flatMap((n) => this.depGraph.dependentsOf(n));
+    const all = [address, sizeNode(address), codeNode(address), moduleNode(address)].flatMap((n) => this.depGraph.dependentsOf(n));
     return [...new Set(all)];
   }
 
@@ -2597,6 +2609,7 @@ export class Sheet {
     this.stopTasks(address);
     const ctx = new RunContext(address);
     this.contexts.set(address, ctx);
+    this.modules.begin(address, ctx);
     this.depGraph.beginRun(address);
     return ctx;
   }
@@ -2709,6 +2722,7 @@ export class Sheet {
       }
       if (order.length) {
         const resetSet = new Set(order);
+        this.queued = new Set(order);
         for (const w of this.depGraph.writeTargets(order)) resetSet.add(w);
         this.graph.batchUpdate(() => {
           for (const addr of resetSet) {
@@ -2728,10 +2742,12 @@ export class Sheet {
           const d = this.data.get(address);
           if (!d) continue;
           const ctx = this.startRun(address);
+          this.queued.delete(address);
           d.runReason = this.nextReason.get(address) ?? 'update';
           this.nextReason.delete(address);
           d.runCount += 1;
           this.runsStarted++;
+          const published = this.modules.current(address);
           const finished = Promise.resolve()
             .then(() => this.runner!(d, ctx))
             .catch((err) => {
@@ -2740,6 +2756,8 @@ export class Sheet {
             .then(() => {
               ctx.tracking = false;
               this.runsFinished++;
+              // The cell's top level is over: what it exports is ready for the cells that import it (or they hear why not).
+              if (published) this.modules.settle(published, ctx.cancelled ? new Error('was stopped') : (d.error ?? undefined));
             });
           let slice = 0;
           const inTime = await Promise.race([
@@ -2781,6 +2799,7 @@ export class Sheet {
       this.afterRunHandlers.forEach((h) => h());
     } finally {
       this.running = false;
+      this.queued.clear();
       if (this.runPending) {
         this.runPending = false;
         this.requestRun();

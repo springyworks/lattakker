@@ -1,13 +1,14 @@
 import type { Sheet, SheetCellData, TileGrid } from './Sheet';
 import type { GameView } from '../game/GameView';
 import { isLake } from '../game/model';
-import { GAME_NODE, MODE_NODE, describeNode, ROWS_NODE, COLS_NODE, clickNode, codeNode, enterNode, leaveNode, sizeNode } from './reactivity';
+import { GAME_NODE, MODE_NODE, describeNode, ROWS_NODE, COLS_NODE, clickNode, codeNode, enterNode, leaveNode, moduleNode, sizeNode } from './reactivity';
 import { parseTilePath } from './address';
 import { blurTiles, focusTiles, listenTileKeys, tilesHaveFocus } from './tileKeys';
 import { workspace } from '../workspace';
 import { router, type Traffic } from '../mcp/router';
 import { SIGNAL } from '../mcp/tabServer';
 import { CancelError, parseInterval, type RunContext } from './tasks';
+import { cellOfSpecifier } from './cellModules';
 import { makePlot, type PlotOptions } from './plot';
 import { SvgScene, type SceneHost } from './svgScene';
 import { svgAsset, svgAssetNames } from './svgAssets';
@@ -1296,7 +1297,23 @@ export function buildApi(
 
   const runInfo = Object.freeze({ reason: data.runReason, count: data.runCount });
 
+  // import { f } from './B2' (see cellModules.ts): `__cell` fetches the exports of another cell of this tab, `__exports` is where this cell publishes its own.
+  const latest = sheet.modules.current(data.address);
+  const published = latest?.ctx === ctx ? latest : undefined;
+  const importCell = async (spec: string): Promise<Record<string, unknown>> => {
+    const address = cellOfSpecifier(String(spec));
+    if (!address) {
+      throw new Error(`Cannot import "${spec}": a cell is imported like  import { name } from './B2'  (a cell of this tab; the other tabs are read with at('/lab/J24'))`);
+    }
+    if (!sheet.dataAt(address)) throw new Error(`Cannot import "${spec}": there is no cell ${address} in this tab`);
+    // The importer runs again when the other cell does (and after it).
+    track(moduleNode(address));
+    return sheet.modules.load(data.address, address, () => sheet.probeModule(address));
+  };
+
   const api: Record<string, unknown> = {
+    __cell: importCell,
+    __exports: published?.exports ?? {},
     cell: self,
     print: (...values: unknown[]) => void self.print(...values),
     view: (text: string) => void self.view(text),

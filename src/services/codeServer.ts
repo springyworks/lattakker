@@ -33,7 +33,7 @@ const BUDGET_PROPS = {
   context_tokens: { type: 'integer', description: 'How big your own memory is, in tokens: the reply then takes at most a third of it.' },
 };
 
-const TAB_PROP = { type: 'string', description: "Only this tab ('board', 'lab', 'examples', 'monitor' or one of your own). Several: 'board,lab'. Default: all tabs." };
+const TAB_PROP = { type: 'string', description: "Only this tab ('board', 'lab', 'examples', 'monitor', 'rpc' or one of your own). Several: 'board,lab'. Default: all tabs." };
 
 const TOOLS = [
   {

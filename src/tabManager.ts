@@ -47,7 +47,7 @@ export interface BuiltInTab {
 }
 
 /** Names that already mean something to the router: a tab with such an id would shadow a server. */
-const RESERVED = new Set(['board', 'lab', 'examples', 'monitor', 'tabs', 'router', 'memory', 'weather', 'ollama', 'local-ai', 'status', 'system', 'code', 'app', 'new']);
+const RESERVED = new Set(['board', 'lab', 'examples', 'monitor', 'rpc', 'tabs', 'router', 'memory', 'weather', 'ollama', 'local-ai', 'status', 'system', 'code', 'app', 'new']);
 const MAX_USER_TABS = 12;
 const DEFAULT_ICON = '📄';
 

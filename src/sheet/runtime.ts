@@ -1,6 +1,7 @@
 import type { SheetCellData } from './Sheet';
 import type { TranspileResult } from '../editor/monaco';
 import type { RunContext } from './tasks';
+import { rewriteModules } from './cellModules';
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (
   ...args: string[]
@@ -29,6 +30,15 @@ export async function runCell(data: SheetCellData, ctx: RunContext, makeApi: Api
     // Transpiler unavailable: try to run the source as plain JavaScript.
     console.warn('transpile failed, running as JS', err);
     engineError = err;
+  }
+  if (!engineError) {
+    // import / export between the cells of a tab (see cellModules.ts)
+    try {
+      js = rewriteModules(js).js;
+    } catch (err) {
+      data.error = err instanceof Error ? err.message : String(err);
+      return;
+    }
   }
   if (ctx.cancelled) return;
   const api = makeApi(data, ctx);

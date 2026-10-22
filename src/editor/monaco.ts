@@ -346,6 +346,81 @@ export function modelFor(address: string, source: string, scope = ''): monaco.ed
   return model;
 }
 
+/** Keeps the editor's picture of a cell true to its code, for the cells that import it (a model is made only for a cell that holds code). */
+export function syncModel(address: string, source: string, scope = ''): void {
+  if (source.trim() || models.has(`${scope}/${address}`)) modelFor(address, source, scope);
+}
+
+// ------------------------------------------------------------------ cells that import cells
+
+/** The addresses a cell's code imports from: `import { f } from './B2'` gives B2. */
+function importedCells(code: string): string[] {
+  return [...code.matchAll(/\bfrom\s*['"]\.\/([A-Za-z]{1,3}\d{1,3})(?:\.ts)?['"]/g)].map((m) => m[1].toUpperCase());
+}
+
+/** The names a cell exports, as far as a quick look at its code can tell (for the list of cells to import from). */
+function exportedNames(code: string): string[] {
+  const names = new Set<string>();
+  for (const m of code.matchAll(/^export\s+(?:default\s+)?(?:async\s+)?(?:function\*?|class|const|let|var|enum)\s+([A-Za-z_$][\w$]*)/gm)) names.add(m[1]);
+  for (const m of code.matchAll(/^export\s*\{([^}]*)\}/gm)) for (const part of m[1].split(',')) if (part.trim()) names.add(part.trim().split(/\s+as\s+/).pop()!);
+  if (/^export\s+default\b/m.test(code)) names.add('default');
+  return [...names];
+}
+
+// The editor re-checks a cell when the cell itself is edited, not when a cell it imports from is. So when a cell's code changes,
+// the cells of the same tab that import it are checked again (changing the diagnostics options makes Monaco re-check every model).
+const recheckTimers = new Map<string, number>();
+monaco.editor.onDidCreateModel((model) => {
+  const parsed = parseCellUri(model.uri);
+  if (!parsed) return;
+  model.onDidChangeContent(() => {
+    const key = `${parsed.scope}/${parsed.address}`;
+    window.clearTimeout(recheckTimers.get(key));
+    recheckTimers.set(
+      key,
+      window.setTimeout(() => {
+        recheckTimers.delete(key);
+        const affected = monaco.editor.getModels().some((other) => {
+          const o = parseCellUri(other.uri);
+          return !!o && o.scope === parsed.scope && o.address !== parsed.address && importedCells(other.getValue()).includes(parsed.address);
+        });
+        if (affected) ts.typescriptDefaults.setDiagnosticsOptions({ ...ts.typescriptDefaults.getDiagnosticsOptions() });
+      }, 400),
+    );
+  });
+});
+
+/** Inside `from '|'` the cells of the same tab are offered, with what each one exports. */
+monaco.languages.registerCompletionItemProvider('typescript', {
+  triggerCharacters: ["'", '"', '.', '/'],
+  provideCompletionItems(model, position) {
+    const self = parseCellUri(model.uri);
+    if (!self) return { suggestions: [] };
+    const before = model.getValueInRange(new monaco.Range(position.lineNumber, 1, position.lineNumber, position.column));
+    const open = /(?:\bfrom|\bimport)\s*(['"])([^'"]*)$/.exec(before);
+    if (!open) return { suggestions: [] };
+    const after = model.getValueInRange(new monaco.Range(position.lineNumber, position.column, position.lineNumber, model.getLineMaxColumn(position.lineNumber)));
+    const tail = /^[^'"]*/.exec(after)![0].length;
+    const range = new monaco.Range(position.lineNumber, position.column - open[2].length, position.lineNumber, position.column + tail);
+    const suggestions: monaco.languages.CompletionItem[] = [];
+    for (const other of monaco.editor.getModels()) {
+      const o = parseCellUri(other.uri);
+      const code = other.getValue();
+      if (!o || o.scope !== self.scope || o.address === self.address || !code.trim()) continue;
+      const names = exportedNames(code);
+      suggestions.push({
+        label: { label: `./${o.address}`, description: names.length ? names.join(', ') : 'exports nothing yet' },
+        kind: monaco.languages.CompletionItemKind.Module,
+        insertText: `./${o.address}`,
+        range,
+        detail: names.length ? `Cell ${o.address} exports: ${names.join(', ')}` : `Cell ${o.address} has no export yet (write  export function ...  in it)`,
+        sortText: (names.length ? '0' : '1') + o.address.padStart(6, '0'),
+      });
+    }
+    return { suggestions };
+  },
+});
+
 export interface TranspileResult {
   js: string;
   errors: string[];
@@ -393,6 +468,8 @@ export async function typescriptWorker(): Promise<Awaited<ReturnType<typeof ts.g
 const transpiled = new Map<string, TranspileResult>();
 
 export async function transpile(address: string, source: string, scope = ''): Promise<TranspileResult> {
+  // A cell that other cells import from must be known to the editor even when its transpiled code is already cached.
+  modelFor(address, source, scope);
   // Cells re-run often with the same code: skipping the worker keeps their output from blinking.
   const hit = transpiled.get(source);
   if (hit) return hit;

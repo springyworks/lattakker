@@ -1794,6 +1794,39 @@ What tiles do **not** have (yet): hover and pointer-move events, drag, a tile th
 tiles that hold a small cell of their own. A tile's click arrives as `on(g, 'click')` with the tile; double-clicks and
 right-clicks keep their sheet meaning (edit, menu).
 
+### 8.21 Cells that use each other: `export` and `import`
+
+Inside one tab a cell can call the functions of another cell. The cell that offers something writes `export`; the cell that
+wants it writes `import`, with the address of the offering cell as the path:
+
+```ts
+// A4
+export function add(a: number, b: number): number { return a + b }
+export const TAU = Math.PI * 2
+```
+
+```ts
+// G4
+import { add, TAU } from './A4'
+print(add(2, 3) + ' ' + TAU)
+```
+
+It is a plain function call in the same page: no sockets, nothing is copied or turned into text, the answer is there at once
+(`await` it when the function is `async`). The contract is the TypeScript type: the editor knows what `./A4` exports, offers the
+cells and their names after `from '`, and draws a red line when a name is missing or a type does not fit. Types and interfaces can be
+exported too (`import { type Point } from './A11'`); they cost nothing when the cell runs.
+
+- The cell you import from runs first, whatever the order on the sheet. If it is still busy, the importer waits (at most five seconds).
+- Change the cell you import from and every cell that imports it runs again by itself; a cell that only *prints* something new does not wake them.
+- Move a cell, or insert a column, and the `./A4` in the importing cells follows ([6.1](#61-code-follows-the-cells-it-names)).
+- An exported function is the exporting cell's own: when it calls `show()` or `print()`, that appears in the exporting cell.
+- `import { x }` takes the value as it is when the importer runs; use `import * as a4 from './A4'` to read the latest value each time.
+- A cell cannot import itself, two cells cannot import each other, and a cell with an error or without code cannot be imported (the message says which).
+- Only cells of the same tab; for another tab use `at('/lab/J24')` ([8.9](#89-cells-in-other-tabs-atlabj24)).
+- Supported: `export function/class/const/let/var`, `export { a as b }`, `export default`, `export * from`, and `import` with names, a default, `* as`, or nothing. A dynamic `import()` is left alone.
+
+The "Cells talk" tab shows it with a small maths cell, a counter that other cells bump, and a chain of three cells.
+
 
 ## 9 How the cell code is run (internals)
 

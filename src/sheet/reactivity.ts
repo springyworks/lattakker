@@ -14,6 +14,8 @@ export const GAME_NODE = '__game__';
  */
 export const sizeNode = (address: string): string => `size:${address}`;
 export const codeNode = (address: string): string => `code:${address}`;
+/** What a cell that imports from another cell reads: it wakes up when that cell runs again (not whenever its output changes). */
+export const moduleNode = (address: string): string => `module:${address}`;
 export const clickNode = (address: string): string => `click:${address}`;
 export const enterNode = (address: string): string => `enter:${address}`;
 export const leaveNode = (address: string): string => `leave:${address}`;
@@ -93,6 +95,10 @@ export class DependencyGraph {
     this.dirty.add(address);
   }
 
+  isDirty(address: string): boolean {
+    return this.dirty.has(address);
+  }
+
   markAllDirty(addresses: Iterable<string>): void {
     for (const a of addresses) this.dirty.add(a);
   }
@@ -118,7 +124,7 @@ export class DependencyGraph {
     // Dirty addresses that aren't themselves code cells (e.g. board squares, __game__) still need
     // their dependents visited even though they're not part of the output.
     const seedDependents = (addr: string) => {
-      for (const dep of this.dependents.get(addr) ?? []) {
+      for (const dep of [...(this.dependents.get(addr) ?? []), ...(this.dependents.get(moduleNode(addr)) ?? [])]) {
         if (!affected.has(dep)) {
           affected.add(dep);
           queue.push(dep);
@@ -150,7 +156,9 @@ function topoSort(subset: string[], dependsOn: Map<string, Set<string>>): string
   const edges = new Map<string, Set<string>>(); // dep -> dependents, restricted to subset
   for (const addr of subset) indegree.set(addr, 0);
   for (const addr of subset) {
-    for (const dep of dependsOn.get(addr) ?? []) {
+    // Importing from a cell means coming after it; one cell read in two ways still counts once.
+    const deps = new Set([...(dependsOn.get(addr) ?? [])].map((read) => (read.startsWith('module:') ? read.slice(7) : read)));
+    for (const dep of deps) {
       if (!subsetSet.has(dep)) continue;
       indegree.set(addr, (indegree.get(addr) ?? 0) + 1);
       let set = edges.get(dep);

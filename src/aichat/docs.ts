@@ -5,6 +5,7 @@ import { CELL_API_DTS } from '../sheet/apiTypes';
 import { EXAMPLES } from '../examples';
 import { LAB_DEMOS } from '../labDemos';
 import { MONITOR_DEMOS } from '../monitorDemos';
+import { RPC_DEMOS } from '../rpcDemos';
 import { fetchReadme } from '../ai/orientation';
 
 /**
@@ -162,7 +163,7 @@ const firstComment = (code: string): string => {
 /** Every example cell of the board and every demo of the Lab, with the path of the cell it lives in. */
 function exampleChunks(): Chunk[] {
   const cells = (tab: string, list: ReadonlyArray<readonly [string, string]>): Chunk[] => list.map(([address, code]) => ({ title: firstComment(code) || `cell ${address}`, path: `/${tab}/${address}`, text: code }));
-  return [...cells('board', EXAMPLES), ...cells('lab', LAB_DEMOS), ...cells('monitor', MONITOR_DEMOS)];
+  return [...cells('board', EXAMPLES), ...cells('lab', LAB_DEMOS), ...cells('monitor', MONITOR_DEMOS), ...cells('rpc', RPC_DEMOS)];
 }
 
 let readmePromise: Promise<Chunk[]> | null = null;
