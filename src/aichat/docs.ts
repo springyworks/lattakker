@@ -253,7 +253,30 @@ function outline(doc: string, chunks: Chunk[], budget: number): string {
  * Reads one document. `doc` is api, examples, readme or rules. With `path` an example cell comes back whole; with
  * `query` the best matching parts do; with neither, an outline. Never longer than `budget` characters.
  */
+/**
+ * Looks things up in the api, the examples, the README or the rules. An answer from the API with a query also carries the
+ * best matching working cell, because a small model that was only told to "look for a similar cell" does not do it: the
+ * example arrives together with the signature, in the same round.
+ */
 export async function readDocs(args: { doc: string; query?: string; path?: string }, budget: number): Promise<string> {
+  if (args.doc.toLowerCase() !== 'api' || !args.query || args.path || budget < 2500) return lookup(args, budget);
+  const example = bestExample(args.query, Math.floor(budget * 0.4));
+  const api = await lookup(args, example ? budget - example.length - 2 : budget);
+  return example ? `${api}\n\n${example}` : api;
+}
+
+/** The one example cell that matches the words best (cut to fit), with the instruction to follow its style; '' when none matches. */
+function bestExample(query: string, room: number): string {
+  const words = terms(query);
+  const top = exampleChunks()
+    .map((c) => ({ c, s: score(c, words) }))
+    .filter((x) => x.s > 0)
+    .sort((a, b) => b.s - a.s)[0];
+  if (!top) return '';
+  return `A working cell that uses it, ${top.c.path} (follow its style; read_docs doc "examples" with a path or other words for more):\n${cut(top.c.text, room - 160)}`;
+}
+
+async function lookup(args: { doc: string; query?: string; path?: string }, budget: number): Promise<string> {
   const doc = args.doc.toLowerCase();
   if (doc === 'rules') return askRules(args.query ?? '', budget);
   if (doc !== 'api' && doc !== 'examples' && doc !== 'readme') return JSON.stringify({ error: `doc must be api, examples, readme or rules (not "${args.doc}")`, urls: docUrls() });

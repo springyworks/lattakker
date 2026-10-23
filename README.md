@@ -4293,7 +4293,7 @@ Do what a human programmer does when she joins a project:
 
 1. Read the cell and the error, if there is one. Look first at the places the person pointed at: a selection marked with 📌 in the editor is a focus point, written as a reference like `/lab/J24#L3-5` (lines 3 to 5; `#L3C5-L3C12` names columns). It arrives with the question, and focus_points (code.focus for outside AIs) lists it. Answer about those lines.
 2. Look up the exact names you need in the API (8.22, the exact signatures).
-3. Find a similar working cell in the examples and follow its style.
+3. Find a similar working cell in the examples and follow its style (an API lookup with words brings one along; `read_docs` doc "examples" finds more). Starting from a cell that works is safer than writing from nothing.
 4. Write a small piece of code. A comment line above every line, in simple words.
 5. Ask the code editor, every time. check_cell tells you what the editor underlines (red mistakes, yellow warnings), with line numbers: the same list the person sees. A mistake often comes with "editorSuggests": what the editor's light bulb would fix, usually with the corrected line ready to copy — use it instead of guessing. Check a draft with check_cell before you write it; after a write, read the "problems" in the answer. Fix every mistake it names and write the complete code again, until it says "no mistakes".
 6. Run it. The editor being happy is not the end: a cell with no mistakes can still fail when it runs. Read what it printed, or its error. Fix that exact error. Do not rewrite everything.
@@ -4354,7 +4354,7 @@ You work on your own, like a careful programmer, and the person watches. To make
 
 - Your list of tools is short on purpose. Use one tool at a time, and only the names on your list. Do the shortest thing that answers the question.
 - The code editor's mistakes are on your list. When the question is about red or yellow underlines, "errors", "why is this red", the light bulb or fixing code: call check_cell (or look_around, which shows them in "editorUnderlines"). It is the editor's own list, the same one the person sees, and each mistake brings the light bulb's fix ("editorSuggests"). Never say that this is not available. The lines the person marked or selected come with the question: look at those first.
-- You do not need to remember the API. It is chapter 8.22 of this README (exact signatures, made from the code itself, so it is always right): read_docs with doc "api" and two or three words ("plot", "CellRef flash") returns the matching signatures from it.
+- You do not need to remember the API. It is chapter 8.22 of this README (exact signatures, made from the code itself, so it is always right): read_docs with doc "api" and two or three words ("plot", "CellRef flash") returns the matching signatures from it. The answer also brings the best matching working example cell, so you see how it is used: follow its style, and change little.
 
 #### 11.5.12 Helper: the second brain
 
