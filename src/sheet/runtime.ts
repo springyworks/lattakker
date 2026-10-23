@@ -11,7 +11,7 @@ export type ApiFactory = (data: SheetCellData, ctx: RunContext) => Record<string
 export type Transpiler = (address: string, source: string) => Promise<TranspileResult>;
 
 /** Names that joined the cell API after cells already existed. */
-const OPTIONAL_NAMES = new Set(['weather', 'ollama', 'input', 'svg', 'system', 'tabs', 'anim', 'teletype', 'repl']);
+const OPTIONAL_NAMES = new Set(['weather', 'ollama', 'input', 'svg', 'system', 'tabs', 'anim', 'teletype', 'repl', 'Semaphore', 'Mutex', 'RWLock', 'Channel', 'lock']);
 
 /** Runs one cell: transpile its TypeScript, then execute it with the cell API in scope. */
 export async function runCell(data: SheetCellData, ctx: RunContext, makeApi: ApiFactory, transpile: Transpiler): Promise<void> {

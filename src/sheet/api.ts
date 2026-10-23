@@ -24,6 +24,7 @@ import { ollamaAsk, ollamaChat, ollamaModels, ollamaStatus, type OllamaMessage, 
 import { inputPanel, type ControlKind, type ControlSpec } from '../ui/InputPanel';
 import type { PaperOptions } from './paper';
 import { createRepl } from './repl';
+import { makeSync } from './sync';
 import { printInto, TOP } from './ansi';
 
 const MIN_INTERVAL_MS = 10;
@@ -1360,6 +1361,8 @@ export function buildApi(
           reject(new CancelError());
         });
       }),
+    // Semaphore, Mutex, RWLock, Channel, lock: waits end when this run is cancelled, permits it holds go back (see sync.ts)
+    ...makeSync({ guard: () => ctx.guard(), onCancel: (stop) => ctx.addTransient(stop) }),
     log: (...values: unknown[]) => {
       console.log(`[${data.address}]`, ...values);
       self.print(...values);

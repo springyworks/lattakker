@@ -1829,14 +1829,32 @@ exported too (`import { type Point } from './A11'`); they cost nothing when the 
 
 The "Cells talk" tab shows it with a small maths cell, a counter that other cells bump, and a chain of three cells.
 
-**Taking turns (semaphores).** Code with no `await` in it is one uninterruptible step, so `if (n > 0) n--` can never be cut in two: that
+**Taking turns (semaphores, channels, locks).** Code with no `await` in it is one uninterruptible step, so `if (n > 0) n--` can never be cut in two: that
 is already a semaphore for free. Other cells only get in between when a cell awaits in the middle of *read, change, write*. The ways
-out: don't await in the middle; let one cell own the data and let the others call its functions; use a semaphore (a number of
-permits: `acquire()` waits while there are none, `release()` gives one back; one permit is a mutex, four let four in); or always take
-shared things in the same order, so that no circle of waiting (deadlock) can form. The lower part of the "Cells talk" tab has live
-demos, all built from one exported `Semaphore` class (A24): lost updates with and without a `Mutex` (G24), a bounded belt with two
-counting semaphores (A30) and the dining philosophers, which deadlock first and then get out in two ways (G30). Press *↺ Restore demos*
-if they are not there yet.
+out: don't await in the middle; let one cell own the data and let the others call its functions; **pass messages** instead of sharing
+(a `Channel`); take turns with a semaphore or a lock; or always take shared things in the same order, so that no circle of waiting
+(deadlock) can form.
+
+Dijkstra's semaphore (1965) is still the base of all of it; newer tools are built on it and add what a cooperative page needs. They are in
+**every cell**, with nothing to import (typed in the editor like everything else):
+
+| Name | What it is |
+|---|---|
+| `new Semaphore(n)` | `n` permits. `acquire(k?)` is P (waits while there are none), `release(k?)` is V. `tryAcquire()` never waits. `value`, `waiting` are real members. Value 0 at the start is a signal. |
+| `new Mutex()` | one permit: one at a time (`locked`) |
+| `new RWLock()` | many readers (`read()`) or one writer (`write()`), first come first served |
+| `new Channel<T>(size)` | messages between cells with back-pressure: `send` waits when full, `receive` waits when empty, `close()`, `for await (const m of channel)`. Size 0 is a hand-over. |
+| `lock('name')` | one lock by name for all cells (like the browser's Web Locks, between cells); `{ mode: 'shared' }` for readers |
+
+- A permit is a **lease**: `using turn = await lock('printer')` gives it back at the end of the block, also after an error. It also goes
+  back by itself when the cell that holds it is edited or run again, and a cell that waits in a line leaves the line, so an old run can
+  never keep the others waiting for ever.
+- Every wait can give up: `await sem.acquire(1, { timeout: '2s' })` fails with an error named `TimeoutError`; `{ signal }` takes an `AbortSignal`.
+- A cell that declares its own `Semaphore`, `Mutex`, `RWLock`, `Channel` or `lock` keeps its own (the built-in one is left out of that cell).
+
+The lower part of the "Cells talk" tab has live demos: lost updates with and without a `Mutex` and `using` (G24), a bounded belt with two
+counting semaphores (A30) and the same belt with a `Channel` (A36), readers and a writer with an `RWLock` (G36), and the dining philosophers,
+which deadlock first and then get out in two ways (G30). Press *↺ Restore demos* if they are not there yet.
 
 
 ## 9 How the cell code is run (internals)

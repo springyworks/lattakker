@@ -163,98 +163,37 @@ print('• Trouble starts only when a cell awaits (sleep, ask, fetch...) in the 
 print('• Four ways out:')
 print('   1. do not await in the middle (the cheapest);')
 print('   2. let ONE cell own the data and let the others call its functions, like A8 and G8 above;')
-print('   3. a SEMAPHORE (Dijkstra): a number of permits. P = acquire waits while there are none, V = release gives one back. 1 permit is a Mutex, 4 permits let four in;')
-print('   4. take shared things always in the same order: no circle of waiting, no deadlock.')
-print('A24 offers Semaphore and Mutex · G24 shows lost updates · A30 is a belt with a bounded buffer · G30 is the dining philosophers: a deadlock, and two ways out.')`,
+print('   3. a SEMAPHORE (Dijkstra, still the base of everything newer): a number of permits. P = acquire waits while there are none, V = release gives one back. 1 permit is a Mutex, 4 permits let four in. They are in every cell, nothing to import;')
+print('   4. take shared things always in the same order: no circle of waiting, no deadlock;')
+print('   5. pass MESSAGES, do not share things: a Channel with a size (back-pressure). The modern way, and the one to try first.')
+print('A24 lists what is ready made · G24 lost updates, cured with "using" · A30 a belt (classic semaphores) · A36 the same job with a Channel · G36 readers and a writer · G30 the dining philosophers: a deadlock, and two ways out.')`,
   ],
   [
     'A24',
-    String.raw`// A SEMAPHORE is a number that says how many may go in. Import it in any cell: import { Semaphore, Mutex } from './A24'
+    String.raw`// TAKING TURNS, READY MADE. These are in every cell, nothing to import:
 span(6, 6)
 color('#dbe8f7')
 
-export class Semaphore {
-  // Who waits, first come first served. A waiter wants n permits.
-  private queue: { n: number; go: () => void }[] = []
-
-  constructor(public value = 1, readonly name = 'semaphore') {}
-
-  /** How many are waiting right now. */
-  get waiting(): number {
-    return this.queue.length
-  }
-
-  /** P (Dijkstra's "proberen", to try): take n permits, or wait until they are there. */
-  acquire(n = 1): Promise<void> {
-    // This check and the subtraction are ONE step: no other cell can run between them.
-    if (this.queue.length === 0 && this.value >= n) {
-      this.value -= n
-      return Promise.resolve()
-    }
-    return new Promise<void>((go) => this.queue.push({ n, go }))
-  }
-
-  /** Take n permits only if they are there right now. Never waits. */
-  tryAcquire(n = 1): boolean {
-    if (this.queue.length > 0 || this.value < n) return false
-    this.value -= n
-    return true
-  }
-
-  /** V ("verhogen", to raise): give n permits back and wake the ones that can go now. */
-  release(n = 1): void {
-    this.value += n
-    while (this.queue.length > 0 && this.value >= this.queue[0].n) {
-      const next = this.queue.shift()!
-      this.value -= next.n
-      next.go()
-    }
-  }
-
-  /** Acquire, run, and always release, even when fn throws. */
-  async use<T>(fn: () => T | Promise<T>, n = 1): Promise<T> {
-    await this.acquire(n)
-    try {
-      return await fn()
-    } finally {
-      this.release(n)
-    }
-  }
-}
-
-/** A semaphore with one permit: only one at a time. */
-export class Mutex extends Semaphore {
-  constructor(name = 'mutex') {
-    super(1, name)
-  }
-  get locked(): boolean {
-    return this.value <= 0
-  }
-}
-
-print('📦 offers: Semaphore, Mutex')
-print('value = how many permits are free')
-print('acquire(n) = P: take n, or wait in line')
-print('release(n) = V: give n back, wake the first in line')
-print('tryAcquire(n): take only if free now')
-print('use(fn): acquire, run fn, release')
-print('waiting = how many stand in line')
+print('🚦 Semaphore(n)   n permits (Dijkstra: P = acquire, V = release)')
+print('🔒 Mutex()        one permit: one at a time')
+print('📖 RWLock()       many readers or one writer')
+print('📬 Channel(size)  messages between cells, with back-pressure')
+print('🏷 lock(name)     one lock by name for ALL cells')
 print('')
-print('value 1 = a Mutex (one at a time)')
-print('value 4 = four at a time')
-print('value 0 at the start = a signal: "wait until somebody calls release()"')
+print('A permit is a lease. It goes back at the end of the block, also after an error, and by itself when the cell that holds it is edited or run again:')
+print('   using turn = await lock("printer")')
+print('   ...only one cell at a time is here...')
 print('')
-print('The line is first come, first served, so nobody waits for ever just because others keep coming.')
-print('The members (value, waiting) are real members of one object: every cell that imports this class sees the same ones.')`,
+print('Every wait can give up: await sem.acquire(1, { timeout: "2s" }), or { signal }. The line is first come, first served.')
+print('Members are real: sem.value, sem.waiting, mutex.locked, channel.size, rw.readers.')`,
   ],
   [
     'G24',
     String.raw`// LOST UPDATES. Four workers add 1 to the same counter, 8 times each. The right answer is 32.
 // Each add is: read the number, wait a little (a real cell would await an answer), write number + 1.
+// The Mutex is built in. "using" gives the permit back at the closing brace, whatever happens.
 span(6, 6)
 color('#e4f2e1')
-
-import { Mutex } from './A24'
 
 const WORKERS = 4
 const STEPS = 8
@@ -272,11 +211,12 @@ function start(label: string, lock: Mutex | null): Run {
   for (let w = 0; w < WORKERS; w++) {
     void (async () => {
       for (let i = 0; i < STEPS; i++) {
-        await lock?.acquire() // P: one at a time through the next three lines
-        const seen = run.count // read ...
-        await sleep(20 + Math.random() * 60) // ... others run in this gap ...
-        run.count = seen + 1 // ... and we write back what we SAW: maybe an old number
-        lock?.release() // V
+        {
+          using _turn = lock ? await lock.acquire() : null // P: one at a time until the closing brace, which gives the permit back (V)
+          const seen = run.count // read ...
+          await sleep(20 + Math.random() * 60) // ... others run in this gap ...
+          run.count = seen + 1 // ... and we write back what we SAW: maybe an old number
+        }
         await sleep(Math.random() * 40)
       }
       run.done++
@@ -316,8 +256,6 @@ every('100ms', () => {
 // free = empty places (the producer waits when it is 0), full = boxes on the belt (the consumer waits when it is 0).
 span(6, 6)
 color('#dbe8f7')
-
-import { Semaphore, Mutex } from './A24'
 
 const PLACES = 4
 const free = new Semaphore(PLACES, 'free')
@@ -375,6 +313,117 @@ every('100ms', () => {
 })`,
   ],
   [
+    'A36',
+    String.raw`// THE BELT AGAIN, NEW WAY. No counting of free and full places by hand: a Channel with 4 places does it.
+// send waits when the belt is full (the producer is slowed down: back-pressure), receive waits when it is empty. Two workers share the belt.
+span(6, 6)
+color('#dbe8f7')
+
+const PLACES = 4
+const belt = new Channel<number>(PLACES, 'belt')
+let made = 0
+let taken = 0
+let producer = 'starting'
+const workers = ['starting', 'starting']
+// Every 6 seconds the speeds swap: the belt fills up, then it runs empty.
+const gap = (who: 'producer' | 'workers'): number => (Math.floor(Date.now() / 6000) % 2 === (who === 'producer' ? 0 : 1) ? 120 : 500)
+
+void (async () => {
+  while (true) {
+    producer = belt.size === PLACES ? 'belt is full, waits' : 'puts box ' + (made + 1)
+    await belt.send(made + 1) // waits here while the belt is full
+    made++
+    await sleep(gap('producer'))
+  }
+})().catch(() => {})
+
+workers.forEach((_, w) => {
+  void (async () => {
+    workers[w] = 'waits for a box'
+    for await (const box of belt) {
+      workers[w] = 'works on box ' + box
+      await sleep(gap('workers') * 2)
+      taken++
+      workers[w] = 'waits for a box'
+    }
+  })().catch(() => {})
+})
+
+every('100ms', () => {
+  const places = Array.from({ length: PLACES }, (_, i) => (i < belt.size ? '📦' : '▫️')).join(' ')
+  print.top(
+    [
+      '🏭 producer: ' + producer,
+      '',
+      '   ' + places + '   ' + belt.size + ' of ' + PLACES,
+      '',
+      '👷 worker 1: ' + workers[0],
+      '👷 worker 2: ' + workers[1],
+      '',
+      'made ' + made + ' · taken ' + taken + ' · in line: ' + belt.waiting,
+      'No lock, no counters: the Channel keeps the order.',
+    ].join('\n'),
+  )
+})`,
+  ],
+  [
+    'G36',
+    String.raw`// READERS AND A WRITER. The writer moves 5 from one slot to the next in two steps, with a pause between. The total must always be 30.
+// A reader who looks in that pause sees a torn board. An RWLock lets many readers in together, but the writer only alone.
+span(6, 6)
+color('#e4f2e1')
+
+interface Board {
+  label: string
+  slots: number[]
+  lock: RWLock | null
+  reads: number
+  torn: number
+  writes: number
+}
+
+function start(label: string, lock: RWLock | null): Board {
+  const b: Board = { label, slots: [10, 10, 10], lock, reads: 0, torn: 0, writes: 0 }
+  void (async () => {
+    while (true) {
+      await sleep(150 + Math.random() * 150)
+      using _write = lock ? await lock.write() : null // alone until the end of this block
+      const full = [0, 1, 2].filter((i) => b.slots[i] >= 5)
+      const from = full[Math.floor(Math.random() * full.length)] ?? 0
+      b.slots[from] -= 5
+      await sleep(80) // the board is torn right now: 5 are nowhere
+      b.slots[(from + 1) % 3] += 5
+      b.writes++
+    }
+  })().catch(() => {})
+  for (let r = 0; r < 3; r++) {
+    void (async () => {
+      while (true) {
+        await sleep(60 + Math.random() * 120)
+        using _read = lock ? await lock.read() : null // readers can be here together
+        b.reads++
+        if (b.slots.reduce((sum, n) => sum + n, 0) !== 30) b.torn++
+        await sleep(40)
+      }
+    })().catch(() => {})
+  }
+  return b
+}
+
+const boards = [start('no lock', null), start('with an RWLock', new RWLock('board'))]
+
+every('100ms', () => {
+  const lines = ['📋 total must be 30', '']
+  for (const b of boards) {
+    lines.push(b.label.padEnd(15) + b.slots.map((n) => String(n).padStart(3)).join(' ') + '   = ' + b.slots.reduce((sum, n) => sum + n, 0))
+    lines.push('   writes ' + b.writes + ' · reads ' + b.reads + ' · ' + (b.torn ? '❌ torn reads: ' + b.torn : '✅ torn reads: 0'))
+    if (b.lock) lines.push('   inside now: ' + b.lock.readers + ' reading' + (b.lock.writing ? ', 1 writing' : '') + ' · in line: ' + b.lock.waiting)
+    lines.push('')
+  }
+  print.top(lines.join('\n'))
+})`,
+  ],
+  [
     'G30',
     String.raw`// THE DINING PHILOSOPHERS. Five sit at a round table with five forks, one between each two. To eat you need BOTH of your forks.
 // Round 1: everyone takes the left fork first, so they can all end up holding one and waiting for ever: a DEADLOCK.
@@ -382,8 +431,6 @@ every('100ms', () => {
 // Round 3: a butler (a Semaphore with 4 permits) lets only 4 sit at once, so one can always finish.
 span(6, 6)
 color('#f6e7d8')
-
-import { Semaphore } from './A24'
 
 const N = 5
 interface Mode {

@@ -1200,4 +1200,75 @@ declare function sleep(time?: Interval): Promise<void>;
 declare function repl(overrides?: Record<string, unknown>): (line: string) => Promise<string>;
 /** console.log that also shows up in the cell */
 declare function log(...values: unknown[]): void;
+
+/** Options of every wait (acquire, send, receive, lock ...). */
+interface WaitOptions {
+  /** Give up after this long ('2s' or 500): the wait fails with an error named TimeoutError. */
+  timeout?: Interval;
+  /** Give up when this signal aborts. */
+  signal?: AbortSignal;
+}
+/** What acquire() gives you. release() gives it back once; "using p = await sem.acquire()" does it at the end of the block, also after an error, and it goes back by itself when the run of the cell that holds it is cancelled (the cell was edited or run again). */
+interface Permit {
+  readonly released: boolean;
+  release(): void;
+  [Symbol.dispose](): void;
+}
+/** A counting semaphore (Dijkstra, 1965): value = how many permits are free. P = acquire waits while there are none, V = release gives them back. Value 1 is a Mutex, value 0 at the start is a signal ("wait until somebody calls release()"). The line is first come, first served. A cell run again leaves the line by itself. */
+declare class Semaphore {
+  constructor(value?: number, name?: string);
+  /** How many permits are free. */
+  value: number;
+  readonly name: string;
+  /** How many are waiting in line. */
+  readonly waiting: number;
+  /** P: take n permits or wait in line. using p = await sem.acquire() or p.release(). { timeout: '2s' } gives up waiting. */
+  acquire(n?: number, opts?: WaitOptions): Promise<Permit>;
+  /** Take n permits only when they are free right now; null when they are not. Never waits. */
+  tryAcquire(n?: number): Permit | null;
+  /** V: give n permits back (or add new ones) and wake the ones in line that can go now. */
+  release(n?: number): void;
+  /** Acquire, run fn, always release, even when fn throws. */
+  use<T>(fn: () => T | Promise<T>, n?: number, opts?: WaitOptions): Promise<T>;
+}
+/** A Semaphore with one permit: one at a time. */
+declare class Mutex extends Semaphore {
+  constructor(name?: string);
+  readonly locked: boolean;
+}
+/** Many readers or one writer, first come first served (a waiting writer is not overtaken by new readers). */
+declare class RWLock {
+  constructor(name?: string);
+  readonly readers: number;
+  readonly writing: boolean;
+  readonly waiting: number;
+  /** Read together with other readers: using p = await rw.read() */
+  read(opts?: WaitOptions): Promise<Permit>;
+  /** Write alone: using p = await rw.write() */
+  write(opts?: WaitOptions): Promise<Permit>;
+  useRead<T>(fn: () => T | Promise<T>, opts?: WaitOptions): Promise<T>;
+  useWrite<T>(fn: () => T | Promise<T>, opts?: WaitOptions): Promise<T>;
+}
+/** A queue between cells that passes messages instead of sharing things. capacity = how many may wait inside: send waits when it is full (back-pressure), receive waits when it is empty. Capacity 0 = a hand-over. After close() the messages inside can still be received; "for await (const m of channel)" then ends. */
+declare class Channel<T> implements AsyncIterable<T> {
+  constructor(capacity?: number, name?: string);
+  readonly capacity: number;
+  /** Messages waiting inside. */
+  readonly size: number;
+  /** Senders and receivers waiting. */
+  readonly waiting: number;
+  readonly closed: boolean;
+  send(value: T, opts?: WaitOptions): Promise<void>;
+  /** Send only when there is room or a receiver waits right now; false when it would have to wait. */
+  trySend(value: T): boolean;
+  /** The oldest message; waits for one. Fails with ChannelClosedError when closed and empty. */
+  receive(opts?: WaitOptions): Promise<T>;
+  /** { value } when a message is there right now, else undefined. */
+  tryReceive(): { value: T } | undefined;
+  /** No more sending; those waiting to send fail, those waiting to receive are told there is nothing more. */
+  close(): void;
+  [Symbol.asyncIterator](): AsyncGenerator<T, void, undefined>;
+}
+/** A lock by name, the same one in every cell, with nothing to import (like the Web Locks API of the browser, between cells): using l = await lock('printer'). mode 'shared' ones go in together, 'exclusive' (the default) is alone. */
+declare function lock(name: string, opts?: WaitOptions & { mode?: 'shared' | 'exclusive' }): Promise<Permit>;
 `;

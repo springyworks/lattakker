@@ -40,7 +40,7 @@ ts.typescriptDefaults.setCompilerOptions({
   // `catch (e)` stays `any`: no need to narrow an `unknown` before printing it.
   useUnknownInCatchVariables: false,
   // The library files by their full names: 'es2020' and 'dom' alone load nothing, and then console, document, setTimeout and fetch are "not found".
-  lib: ['lib.es2022.d.ts', 'lib.dom.d.ts', 'lib.dom.iterable.d.ts'],
+  lib: ['lib.es2022.d.ts', 'lib.esnext.disposable.d.ts', 'lib.dom.d.ts', 'lib.dom.iterable.d.ts'],
 } as ts.CompilerOptions);
 ts.typescriptDefaults.setDiagnosticsOptions({ noSemanticValidation: false, noSyntaxValidation: false, diagnosticCodesToIgnore: IMPLICIT_ANY_MESSAGES });
 ts.typescriptDefaults.setEagerModelSync(true);

@@ -124,6 +124,7 @@ CELL CODE (TypeScript, async allowed, re-runs when things it reads change)
   game.pieces('red') game.captured('blue') game.pieceAt('B7') game.legalMoves('B7'|'red'|'blue')
   game.move('B7','B6') game.move('B4','B5','blue') game.say('hi')   game.busy game.bluePlayer game.takeOverBlue() game.giveBackBlue()
   sheet.mode sheet.cols sheet.rows   mode   sleep(ms|'2s')   log(...)
+  Semaphore(n) Mutex() RWLock() Channel<T>(size) lock('name')   taking turns, in every cell, nothing to import: using p = await sem.acquire() (a lease: given back at the end of the block and when the cell runs again), acquire(1, { timeout: '2s' }), sem.value/.waiting, mutex.locked, rw.read()/.write(), ch.send(x)/await ch.receive()/ch.close()/for await (const m of ch), using l = await lock('printer', { mode: 'shared'|'exclusive' }). Prefer a Channel (pass messages) to sharing data
   repl()             a TypeScript REPL that keeps its variables: const ts = repl(); await ts('const x = 6 * 7'); await ts('x + 1') -> '43' (errors start with '??')
   show(...) replace output   clear()   span() read size, span(4) keep rows
   plot(Math.sin, {from:0,to:6.28,title:'wave'})  XY plot as output; also plot([1,4,9]), plot([[0,1],[1,3]]), plot({a: f, b: g})
