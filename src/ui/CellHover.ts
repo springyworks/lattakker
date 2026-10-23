@@ -2,8 +2,8 @@ import type { Cell, InternalMouseEvent } from '@maxgraph/core';
 import type { Sheet } from '../sheet/Sheet';
 import { cellHints } from './hints';
 
-const LABEL_DELAY_MS = 1000;
-const HINT_DELAY_MS = 600;
+const LABEL_DELAY_MS = 1300;
+const HINT_DELAY_MS = 1000; // rest on a cell this long before its hint shows
 const HINT_GRACE_MS = 280;
 const FADE_MS = 6000;
 const TRAIL = 5;

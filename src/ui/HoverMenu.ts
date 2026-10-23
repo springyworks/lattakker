@@ -19,7 +19,7 @@ export interface MenuItem {
 }
 
 const CLOSE_DELAY_MS = 280;
-const OPEN_DELAY_MS = 90;
+const OPEN_DELAY_MS = 450; // a pointer that only passes over the anchor must not open it
 
 /**
  * A small dropdown that opens when the pointer rests on its anchor and stays while the pointer is

@@ -11,6 +11,7 @@ const ZOOM_IN = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" str
 const ZOOM_OUT = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="6.5" cy="6.5" r="4.3"/><path d="M10 10l4 4M4.6 6.5h3.8"/></svg>';
 const ICON_W = 16;
 const ICON_H = 18;
+const SUBHEADER_DELAY_MS = 450;
 
 /**
  * A tiny ⋮ in the top-right corner of the cell (or merged block) under the pointer. Resting on it
@@ -29,6 +30,7 @@ export class CellMenu {
   private address: string | null = null;
   private overIcon = false;
   private hideTimer = 0;
+  private subheaderTimer = 0;
   private badges = new Map<string, Cell>();
   private showIds = false;
   private placeQueued = false;
@@ -80,13 +82,15 @@ export class CellMenu {
 
     this.icon.addEventListener('pointerenter', () => {
       this.overIcon = true;
-      this.showSubheader();
+      window.clearTimeout(this.subheaderTimer);
+      this.subheaderTimer = window.setTimeout(() => this.showSubheader(), SUBHEADER_DELAY_MS);
       this.syncTooltips();
       window.clearTimeout(this.hideTimer);
       if (this.address) this.menu.hoverAnchor(this.icon, () => this.items());
     });
     this.icon.addEventListener('pointerleave', () => {
       this.overIcon = false;
+      window.clearTimeout(this.subheaderTimer);
       if (!this.menu.isOpen) this.hideSubheader();
       this.syncTooltips();
       this.menu.leaveAnchor();
