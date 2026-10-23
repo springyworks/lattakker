@@ -265,23 +265,30 @@ export interface SearchOptions {
   /** Lines of context around each match, 0 to 5. */
   context?: number;
   maxResults?: number;
+  /** Only say which cells match and how often, without the lines. */
+  cellsOnly?: boolean;
   budget: number;
 }
 
 export class SearchError extends Error {}
 
-/** A glob over paths: * (not past a /), ** (anything) and ?; a bare word like "lab" means "/lab/**". Several globs may be given, separated by commas. */
+/**
+ * A glob over paths: * (not past a /), ** (anything) and ?; a bare word like "lab" means "/lab/**". Several globs may be given, separated by commas.
+ * A glob that starts with ! leaves those cells out (like the "files to exclude" of an editor): "/lab/*,!/lab/J24", or only "!/lab/*" for everything else.
+ */
 export function globTest(spec: string): (path: string) => boolean {
-  const globs = spec
+  const compile = (g: string): RegExp => {
+    const full = !g.includes('/') && !g.includes('*') && !/^[A-Za-z]{1,3}\d+$/.test(g) ? `/${g}/**` : g;
+    const pattern = full.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*/g, '\u0000').replace(/\*/g, '[^/]*').replace(/\u0000/g, '.*').replace(/\?/g, '[^/]');
+    return new RegExp(`^${full.startsWith('/') ? '' : '.*/'}${pattern}$`, 'i');
+  };
+  const parts = spec
     .split(',')
     .map((g) => g.trim())
-    .filter(Boolean)
-    .map((g) => {
-      const full = !g.includes('/') && !g.includes('*') && !/^[A-Za-z]{1,3}\d+$/.test(g) ? `/${g}/**` : g;
-      const pattern = full.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*/g, '\u0000').replace(/\*/g, '[^/]*').replace(/\u0000/g, '.*').replace(/\?/g, '[^/]');
-      return new RegExp(`^${full.startsWith('/') ? '' : '.*/'}${pattern}$`, 'i');
-    });
-  return (path) => !globs.length || globs.some((r) => r.test(path));
+    .filter(Boolean);
+  const wanted = parts.filter((g) => !g.startsWith('!')).map(compile);
+  const left = parts.filter((g) => g.startsWith('!') && g.length > 1).map((g) => compile(g.slice(1).trim()));
+  return (path) => (!wanted.length || wanted.some((r) => r.test(path))) && !left.some((r) => r.test(path));
 }
 
 /** The pattern the caller means. Text is taken literally; a regular expression is checked for the shapes that can hang a browser. */
@@ -291,7 +298,7 @@ export function buildPattern(opts: Pick<SearchOptions, 'query' | 'regex' | 'matc
   if (q.length > 200) throw new SearchError('query is longer than 200 characters');
   let source = q;
   if (opts.regex) {
-    if (/\([^)]*[+*][^)]*\)[+*{]/.test(q) || /\(\?[=!<]/.test(q)) throw new SearchError('that regular expression has a shape that can take forever (a repeat inside a repeat, or a look-around); write it simpler, or search as plain text');
+    if (/\([^)]*[+*][^)]*\)[+*{]/.test(q)) throw new SearchError('that regular expression has a shape that can take forever (a repeat inside a repeat); write it simpler, or search as plain text');
   } else {
     source = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
@@ -310,13 +317,68 @@ interface Hit {
   text: string;
 }
 
-const MAX_SCAN_LINE = 600;
+/** A match: the line it starts on and the line it ends on (more than one only for a search that contains a line break). */
+interface Found {
+  start: number;
+  end: number;
+}
+
+const MAX_SCAN_LINE = 20000;
+const SHOW_WIDTH = 190;
+
+/** A line as one row of the report. A long line is cut around the first match, so the match is always in the row. */
+function excerpt(line: string, pattern: RegExp): string {
+  const flat = line.length > 4000 ? line.slice(0, 4000) : line;
+  if (flat.replace(/\s+/g, ' ').trim().length <= SHOW_WIDTH) return oneLine(flat, SHOW_WIDTH);
+  pattern.lastIndex = 0;
+  const m = pattern.exec(flat);
+  pattern.lastIndex = 0;
+  if (!m) return oneLine(flat, SHOW_WIDTH);
+  const from = Math.max(0, m.index - 70);
+  const cut = oneLine(flat.slice(from, from + SHOW_WIDTH - 2), SHOW_WIDTH - 2);
+  return (from > 0 ? '…' : '') + cut;
+}
+
+/** The matches in the lines of one source. A search with a line break in it looks at the lines as one text, like the find of an editor. */
+function scanLines(lines: string[], pattern: RegExp, multiline: boolean): Found[] {
+  const found: Found[] = [];
+  if (!multiline) {
+    lines.forEach((line, i) => {
+      pattern.lastIndex = 0;
+      if (pattern.test(line.length > MAX_SCAN_LINE ? line.slice(0, MAX_SCAN_LINE) : line)) found.push({ start: i + 1, end: i + 1 });
+    });
+    return found;
+  }
+  const starts: number[] = [];
+  let at = 0;
+  for (const line of lines) {
+    starts.push(at);
+    at += line.length + 1;
+  }
+  const lineOf = (offset: number): number => {
+    let lo = 0;
+    let hi = starts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (starts[mid] <= offset) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo + 1;
+  };
+  pattern.lastIndex = 0;
+  for (const m of lines.join('\n').matchAll(pattern)) {
+    if (!m[0]) continue;
+    found.push({ start: lineOf(m.index!), end: lineOf(m.index! + m[0].length - 1) });
+  }
+  return found;
+}
 
 /** Finds the lines; returns the report as text, grouped by cell, in the style of the search of an editor. */
 export function renderSearch(cells: readonly CodeCell[], opts: SearchOptions): { text: string; matches: number; shown: number; cellsHit: number } {
   const pattern = buildPattern(opts);
+  const multiline = /\n/.test(opts.query) || (opts.regex === true && /\\[nr]/.test(opts.query));
   const where = opts.where ?? 'code';
-  const limit = clamp(opts.maxResults ?? 20, 1, 200);
+  const limit = opts.cellsOnly ? Number.MAX_SAFE_INTEGER : clamp(opts.maxResults ?? 20, 1, 200);
   const context = clamp(opts.context ?? 1, 0, 5);
   const sources = (c: CodeCell): Array<{ kind: string; lines: string[] }> => {
     const out: Array<{ kind: string; lines: string[] }> = [];
@@ -326,25 +388,21 @@ export function renderSearch(cells: readonly CodeCell[], opts: SearchOptions): {
     return out;
   };
   const hits: Hit[] = [];
-  const byCell = new Map<CodeCell, Array<{ kind: string; lines: string[]; found: number[] }>>();
+  const byCell = new Map<CodeCell, Array<{ kind: string; lines: string[]; found: Found[] }>>();
   let total = 0;
   for (const c of cells) {
     for (const src of sources(c)) {
-      const found: number[] = [];
-      src.lines.forEach((line, i) => {
-        pattern.lastIndex = 0;
-        if (pattern.test(line.length > MAX_SCAN_LINE ? line.slice(0, MAX_SCAN_LINE) : line)) found.push(i + 1);
-      });
+      const found = scanLines(src.lines, pattern, multiline);
       if (!found.length) continue;
       total += found.length;
       const list = byCell.get(c) ?? [];
       list.push({ ...src, found });
       byCell.set(c, list);
-      for (const n of found) if (hits.length < limit) hits.push({ cell: c, source: src.kind, line: n, text: src.lines[n - 1] });
+      for (const f of found) if (hits.length < limit) hits.push({ cell: c, source: src.kind, line: f.start, text: src.lines[f.start - 1] });
     }
   }
   const shownKeys = new Set(hits.map((h) => `${h.cell.path}|${h.source}|${h.line}`));
-  const how = `${opts.regex ? 'regular expression' : 'text'} ${opts.regex ? '/' + opts.query + '/' : JSON.stringify(opts.query)}${opts.matchCase ? ', case matters' : ', any case'}${opts.wholeWord ? ', whole words' : ''}`;
+  const how = `${opts.regex ? 'regular expression' : 'text'} ${opts.regex ? '/' + opts.query + '/' : JSON.stringify(opts.query)}${opts.matchCase ? ', case matters' : ', any case'}${opts.wholeWord ? ', whole words' : ''}${multiline ? ', over line breaks' : ''}`;
   const head = total
     ? `${total} match${total === 1 ? '' : 'es'} in ${byCell.size} cell${byCell.size === 1 ? '' : 's'} for ${how}${where === 'code' ? '' : ` (in ${where})`}.`
     : `No match for ${how}${where === 'code' ? '' : ` (in ${where})`} in ${cells.length} cells.`;
@@ -355,20 +413,23 @@ export function renderSearch(cells: readonly CodeCell[], opts: SearchOptions): {
     let block = '';
     let cellShown = 0;
     for (const g of groups) {
-      const mine = g.found.filter((n) => shownKeys.has(`${cell.path}|${g.kind}|${n}`));
+      const mine = g.found.filter((f) => shownKeys.has(`${cell.path}|${g.kind}|${f.start}`));
       if (!mine.length) continue;
+      cellShown += mine.length;
+      if (opts.cellsOnly) continue;
       const want = new Set<number>();
-      for (const n of mine) for (let k = n - context; k <= n + context; k++) if (k >= 1 && k <= g.lines.length) want.add(k);
+      const isMatch = new Set<number>();
+      for (const f of mine) {
+        for (let k = f.start; k <= f.end; k++) isMatch.add(k);
+        for (let k = f.start - context; k <= f.end + context; k++) if (k >= 1 && k <= g.lines.length) want.add(k);
+      }
       const rows = [...want].sort((a, b) => a - b);
       let prev = 0;
       for (const n of rows) {
         if (prev && n > prev + 1) block += '      ⋯\n';
-        const isMatch = mine.includes(n);
-        const line = g.lines[n - 1];
-        block += `  ${String(n).padStart(4)}${isMatch ? ':' : '-'} ${g.kind === 'code' ? '' : `[${g.kind}] `}${oneLine(line.length > 400 ? line.slice(0, 400) : line, 190)}\n`;
+        block += `  ${String(n).padStart(4)}${isMatch.has(n) ? ':' : '-'} ${g.kind === 'code' ? '' : `[${g.kind}] `}${isMatch.has(n) ? excerpt(g.lines[n - 1], pattern) : oneLine(g.lines[n - 1].slice(0, 400), SHOW_WIDTH)}\n`;
         prev = n;
       }
-      cellShown += mine.length;
     }
     if (!cellShown) continue;
     const chunk = `${cell.path} · ${cellShown} match${cellShown === 1 ? '' : 'es'}${cell.error ? ' · ERROR' : ''}\n${block}`;

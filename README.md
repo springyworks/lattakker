@@ -1239,7 +1239,7 @@ reply has a size you choose, says how big it is, and tells exactly what to do ne
 | --- | --- |
 | `overview` | **start here**: how many cells have code, in which tabs, how many characters and tokens, which cells fail, and which tool to use for what |
 | `dump` | **all** the code as one self-explaining document, in **parts** that fit a budget; the end of every part says the `cursor` of the next, until it says `END` |
-| `search` | like the search of an editor: a text (or `regex: true`), `match_case`, `whole_word`, `include` (a glob over cell paths: `/lab/*`, `/board/A*`, `lab`), `context` lines, `max_results`, `where` (`code`, `output`, `error`, `all`); results grouped by cell with line numbers |
+| `search` | like the search of an editor: a text (or `regex: true`), `match_case`, `whole_word`, `include` / `exclude` (globs over cell paths: `/lab/*`, `/board/A*`, `lab`; `!` in front leaves cells out: `/lab/*,!/lab/J24`), `tab` (an unknown tab is refused and the real tabs are named), `context` lines, `max_results`, `cells_only` (which cells, how many times, no lines), `where` (`code`, `output`, `error`, `all`); a regular expression with `\n` finds text over several lines; look-around is allowed (only a repeat inside a repeat is refused); a long line is cut around the match; an argument that does not exist is named in the reply instead of silently ignored; results grouped by cell with line numbers |
 | `read` | one cell by path (`/lab/J24`) or id (`c-1a2b3c4d`), with line numbers; long cells in pieces (`from_line`, `lines`) |
 | `list` | one line per cell (path, id, size, first line), in pages (`from`) |
 

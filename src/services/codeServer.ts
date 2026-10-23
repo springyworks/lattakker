@@ -65,11 +65,14 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: 'What to look for.' },
+        query: { type: 'string', description: 'What to look for. A regular expression with \\n in it (regex=true) finds text over several lines.' },
         regex: { type: 'boolean', description: 'query is a regular expression (default: plain text).' },
         match_case: { type: 'boolean', description: 'Capital letters must match (default: any case).' },
         whole_word: { type: 'boolean', description: 'Only whole words.' },
-        include: { type: 'string', description: "Which cells, by path: '/lab/*', '/board/A*', 'lab', 'J24', several with commas. Default: all." },
+        include: { type: 'string', description: "Which cells, by path: '/lab/*', '/board/A*', 'lab', 'J24', several with commas; a ! in front leaves cells out: '/lab/*,!/lab/J24'. Default: all." },
+        exclude: { type: 'string', description: "Cells to leave out, the same kind of paths: '/lab/J24,monitor'." },
+        tab: TAB_PROP,
+        cells_only: { type: 'boolean', description: 'Only say which cells match and how many times, without the lines (a good first look when there are many).' },
         where: { type: 'string', enum: ['code', 'output', 'error', 'all'], description: "Look in the code (default), in what it printed, in its error messages, or all three." },
         context: { type: 'integer', description: 'Lines around each match, 0 to 5 (default 1).' },
         max_results: { type: 'integer', description: 'At most this many matches (default 20, at most 200).' },
@@ -149,6 +152,8 @@ const tabsOf = (args: Record<string, unknown>): string[] | undefined => {
   return !t || t === 'all' ? undefined : t.split(',').map((x) => x.trim()).filter(Boolean);
 };
 
+const SEARCH_ARGS = new Set(['query', 'regex', 'match_case', 'whole_word', 'include', 'exclude', 'tab', 'cells_only', 'where', 'context', 'max_results', 'budget_chars', 'budget_tokens', 'context_tokens']);
+
 const asInt = (v: unknown, fallback: number): number => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : fallback);
 
 export class CodeServer implements McpServer {
@@ -213,10 +218,14 @@ export class CodeServer implements McpServer {
           return reply(part.text, { part: part.part, parts: part.parts, next: part.next, snapshot: part.snapshot });
         }
         case 'search': {
+          const known = workspace.list().map((t) => t.id);
+          const unknownTabs = (tabs ?? []).filter((t) => !known.includes(t));
+          if (unknownTabs.length) return fail(`No tab called ${unknownTabs.map((t) => `"${t}"`).join(', ')}. The tabs are: ${known.join(', ')}.`);
           const cells = gatherCells(tabs);
           const include = typeof args.include === 'string' && args.include.trim() ? globTest(args.include) : () => true;
+          const leave = typeof args.exclude === 'string' && args.exclude.trim() ? globTest(args.exclude) : () => false;
           const where = ['code', 'output', 'error', 'all'].includes(String(args.where)) ? (String(args.where) as 'code' | 'output' | 'error' | 'all') : 'code';
-          const found = renderSearch(cells.filter((c) => include(c.path)), {
+          const found = renderSearch(cells.filter((c) => include(c.path) && !leave(c.path)), {
             query: typeof args.query === 'string' ? args.query : '',
             regex: args.regex === true,
             matchCase: args.match_case === true,
@@ -224,9 +233,12 @@ export class CodeServer implements McpServer {
             where,
             context: asInt(args.context, 1),
             maxResults: asInt(args.max_results, 20),
+            cellsOnly: args.cells_only === true,
             budget,
           });
-          return reply(found.text, { matches: found.matches, shown: found.shown, cellsHit: found.cellsHit });
+          const ignored = Object.keys(args).filter((k) => !SEARCH_ARGS.has(k));
+          const note = ignored.length ? `\n(Ignored, not arguments of search: ${ignored.join(', ')}. See tools/list.)` : '';
+          return reply(found.text + note, { matches: found.matches, shown: found.shown, cellsHit: found.cellsHit });
         }
         case 'read': {
           const path = typeof args.path === 'string' ? args.path.trim() : '';
