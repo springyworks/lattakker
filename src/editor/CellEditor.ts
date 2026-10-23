@@ -282,8 +282,23 @@ export class CellEditor {
   }
 
   private openedAt = 0;
+  /** The cells opened one after the other, and which of them is open now: the ◀ ▶ arrows in the title bar walk along it. */
+  private trail: string[] = [];
+  private trailAt = -1;
 
-  open(address: string): void {
+  /** The nearest cell before (-1) or after (+1) the open one in the trail that still exists, as a position in the trail. */
+  private trailStep(dir: -1 | 1): number {
+    for (let i = this.trailAt + dir; i >= 0 && i < this.trail.length; i += dir) if (this.sheet.dataAt(this.trail[i])) return i;
+    return -1;
+  }
+
+  private walk(dir: -1 | 1): void {
+    const i = this.trailStep(dir);
+    if (i < 0) return;
+    this.open(this.trail[i], i);
+  }
+
+  open(address: string, trailIndex?: number): void {
     if (this.address === address && this.editor) {
       this.editor.focus();
       return;
@@ -293,6 +308,12 @@ export class CellEditor {
     const geo = this.sheet.geometryOf(address);
     if (!data || !geo) return;
     this.address = address;
+    if (trailIndex !== undefined) this.trailAt = trailIndex;
+    else {
+      this.trail.length = this.trailAt + 1;
+      this.trail.push(address);
+      this.trailAt = this.trail.length - 1;
+    }
     this.openedAt = performance.now();
     this.hooks.onOpen?.(address);
 
@@ -350,7 +371,21 @@ export class CellEditor {
     const where = document.createElement('span');
     const pathNow = (): string => workspace.pathOf(this.sheet.id, address);
     bindPathChip(where, () => `📍 ${pathNow()}`, pathNow);
-    titleBar.append(where, document.createTextNode(' · TypeScript'));
+    const arrows = document.createElement('span');
+    arrows.className = 'cell-editor-arrows';
+    for (const [dir, label, tip] of [[-1, '◀', 'The cell you had open before'], [1, '▶', 'The cell you had open after this one']] as const) {
+      const arrow = document.createElement('button');
+      arrow.type = 'button';
+      arrow.textContent = label;
+      const target = this.trail[this.trailStep(dir)];
+      arrow.disabled = target === undefined;
+      arrow.title = target === undefined ? `${tip} (none yet)` : `${tip}: ${target}`;
+      arrow.addEventListener('pointerdown', (e) => e.stopPropagation());
+      arrow.addEventListener('dblclick', (e) => e.stopPropagation());
+      arrow.addEventListener('click', () => this.walk(dir));
+      arrows.appendChild(arrow);
+    }
+    titleBar.append(arrows, where, document.createTextNode(' · TypeScript'));
     titleBar.title = 'Ctrl+Enter restarts the cell · Esc restarts it and closes · drag this bar to move · double-click it to fill the screen';
     this.installTitleDrag(titleBar);
     const fit = document.createElement('button');

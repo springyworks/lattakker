@@ -46,10 +46,8 @@ ts.typescriptDefaults.setDiagnosticsOptions({ noSemanticValidation: false, noSyn
 ts.typescriptDefaults.setEagerModelSync(true);
 ts.typescriptDefaults.addExtraLib(CELL_API_DTS, 'file:///cell-api.d.ts');
 
-// The types TypeScript works out are drawn in the code itself (const n: number = ..., (a: string) => ..., function f(): boolean), so you see them without
-// hovering. Only drawn: the code stays as it was written. Right-click in the editor to turn them off.
-const TYPES_KEY = 'lattakker.showInferredTypes';
-let showTypes = localStorage.getItem(TYPES_KEY) !== 'off';
+// The types TypeScript works out are drawn in the code itself (const n: number = ..., (a: string) => ..., function f(): boolean), so you see them
+// without hovering. Only drawn: the code stays as it was written. They go together with the paths of imported names (one switch, see below).
 const typeHints = (on: boolean): void =>
   ts.typescriptDefaults.setInlayHintsOptions({
     includeInlayVariableTypeHints: on,
@@ -58,16 +56,6 @@ const typeHints = (on: boolean): void =>
     includeInlayPropertyDeclarationTypeHints: on,
     includeInlayParameterNameHints: on ? 'literals' : 'none',
   });
-typeHints(showTypes);
-
-/** Whether the types TypeScript works out are drawn between the code (on by default). */
-export const inferredTypesShown = (): boolean => showTypes;
-
-export function setInferredTypesShown(on: boolean): void {
-  showTypes = on;
-  localStorage.setItem(TYPES_KEY, on ? 'on' : 'off');
-  typeHints(on);
-}
 
 // One light theme for every editor (Monaco applies a theme globally). The editor itself is transparent so a
 // cell's own fill shows through, but the popup widgets (suggestions, hover, parameter hints) are opaque.
@@ -417,14 +405,16 @@ monaco.editor.onDidCreateModel((model) => {
 
 const SOURCES_KEY = 'lattakker.showImportSources';
 let showSources = localStorage.getItem(SOURCES_KEY) !== 'off';
+typeHints(showSources);
 const sourcesChanged = new monaco.Emitter<void>();
 
-/** Whether imported names show their cell (`./A4.add(2, 3)`) and, in the import line, their type. On by default. */
+/** Whether the editor draws the types and where imported names come from (`./A4.add(2, 3)`). One switch for both, on by default. */
 export const importSourcesShown = (): boolean => showSources;
 
 export function setImportSourcesShown(on: boolean): void {
   showSources = on;
   localStorage.setItem(SOURCES_KEY, on ? 'on' : 'off');
+  typeHints(on);
   sourcesChanged.fire();
 }
 
