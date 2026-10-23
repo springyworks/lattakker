@@ -381,7 +381,7 @@ the code in a free spot) and **Copy → output**. **Copy → everything** (in th
 
 At the right of the strip, **📍** always shows where you are: click a cell (or a
 tile of a grid) and the path follows, for example `📍 /lab/A17/3,4`. Click the
-path to copy it. The ⋮ menu of a cell has **Copy → path** and **Copy → id**.
+path to copy it. The same 📍 chip is at the top left of every open cell editor and in the AI helper: click it to copy the cell's path. The ⋮ menu of a cell has **Copy → path** and **Copy → id**.
 
 The strip is a small maxGraph drawing, but the real tab buttons are still in
 the page, hidden. They keep the keyboard (arrow keys between tabs), screen
@@ -672,7 +672,7 @@ Top-level `await` works. The editor shows these names with help text as you type
 
 | Call | What it does |
 |---|---|
-| `print(...values)` | Add a line to this cell's output (shown in run mode). Only the last 300 lines are kept. |
+| `print(...values)` | Add a line to this cell's output (shown in run mode). Only the last 300 lines are kept. When there are more lines than the cell is tall, the newest stay in view like on a terminal (a thin bar at the right edge shows where you are) and the mouse wheel over the cell winds back to the older lines. `print.top(...values)` starts again at the top: what was printed before is dropped. The terminal codes work in the text too: `print('\x1b[2J\x1b[H' + frame)` (clear screen and home; `'\x1b[H'` alone and `'\x1bc'` do the same); other escape codes such as colours are removed. |
 | `show(...values)` | Replace the output with one line. Use this for displays that update in place. |
 | `clear()` | Empty the output and remove the plot. |
 | `plot(data, options?)` | Draw an XY plot as this cell's output. `data` is a list of numbers, a list of `[x, y]` pairs, a list of `{ x, y }` points, a function of x such as `Math.sin` or `(x) => x * x`, or an object of several of these (`{ sin: Math.sin, cos: Math.cos }`, drawn with a legend). Options: `title`, `xLabel`, `yLabel`, `from`/`to`/`steps` (for functions: default -10 to 10 in 200 steps), `dots`, `color`, and `xMin`/`xMax`/`yMin`/`yMax` to fix the edges (so an animation does not jump around) and `axes: false` for just the lines. A series name that starts with `_` stays out of the legend. Call it again to redraw (do this inside `every()` for a live plot). Whatever you `print` or `show` becomes a caption under the plot. Make the cell bigger with `span(4, 3)`; a small cell draws a bare line without axes. |
@@ -1823,10 +1823,20 @@ exported too (`import { type Point } from './A11'`); they cost nothing when the 
 - `import { x }` takes the value as it is when the importer runs; use `import * as a4 from './A4'` to read the latest value each time.
 - A cell cannot import itself, two cells cannot import each other, and a cell with an error or without code cannot be imported (the message says which).
 - The editor draws where a name comes from: `add(2, 3)` is shown as `./A4.add(2, 3)`, and the import line shows the type (`add (a: number, b: number): number`). It is only drawn; the code stays as you wrote it. Right-click in the editor → "Hide the full path & type of imports" (or "Show…") turns it off and on.
+- On every code line the editor also draws the types TypeScript works out: `const n` shows `: number`, parameters show their type, a function shows its result type. It is TypeScript all the way: nothing is turned into untyped JavaScript, the hints are only drawn. Right-click → "Hide the types in the code" (or "Show…") turns them off and on. It is on in the cell editor, the Examples editors and the inline cell editors.
 - Only cells of the same tab; for another tab use `at('/lab/J24')` ([8.9](#89-cells-in-other-tabs-atlabj24)).
 - Supported: `export function/class/const/let/var`, `export { a as b }`, `export default`, `export * from`, and `import` with names, a default, `* as`, or nothing. A dynamic `import()` is left alone.
 
 The "Cells talk" tab shows it with a small maths cell, a counter that other cells bump, and a chain of three cells.
+
+**Taking turns (semaphores).** Code with no `await` in it is one uninterruptible step, so `if (n > 0) n--` can never be cut in two: that
+is already a semaphore for free. Other cells only get in between when a cell awaits in the middle of *read, change, write*. The ways
+out: don't await in the middle; let one cell own the data and let the others call its functions; use a semaphore (a number of
+permits: `acquire()` waits while there are none, `release()` gives one back; one permit is a mutex, four let four in); or always take
+shared things in the same order, so that no circle of waiting (deadlock) can form. The lower part of the "Cells talk" tab has live
+demos, all built from one exported `Semaphore` class (A24): lost updates with and without a `Mutex` (G24), a bounded belt with two
+counting semaphores (A30) and the dining philosophers, which deadlock first and then get out in two ways (G30). Press *↺ Restore demos*
+if they are not there yet.
 
 
 ## 9 How the cell code is run (internals)

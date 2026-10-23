@@ -70,7 +70,7 @@ interface CellRef {
   readonly isBoard: boolean;
   /** true for the lake squares of the board, where no piece can stand. */
   readonly isLake: boolean;
-  /** Append a line of text to this cell (shown in run mode). */
+  /** Append a line of text to this cell (shown in run mode). The newest lines stay in view; the wheel winds back. '\x1b[2J' or '\x1b[H' in the text starts again at the top. */
   print(...values: unknown[]): CellRef;
   /** Replace the text shown in view mode (default: the code itself). */
   view(text: string): CellRef;
@@ -904,8 +904,16 @@ interface SheetApi {
 
 /** The cell this code lives in. */
 declare const cell: CellRef;
-/** Short for cell.print(...) */
+/**
+ * Short for cell.print(...). Each call adds a line; when there are more lines than the cell is tall, the newest stay in view and the mouse wheel
+ * winds back to the older ones. Start again at the top with print.top('first line'), or put the terminal codes in the text:
+ * print('\x1b[2J\x1b[H' + 'a new page') (clear screen + home; '\x1b[H' alone and '\x1bc' do the same). Other escape codes (colours) are removed.
+ */
 declare function print(...values: unknown[]): void;
+declare namespace print {
+  /** Drops everything printed so far and prints these values at the top, like clear + print (show() does the same with one line). */
+  function top(...values: unknown[]): void;
+}
 /** Short for cell.view(text) */
 declare function view(text: string): void;
 /** Short for cell.color(fill) */

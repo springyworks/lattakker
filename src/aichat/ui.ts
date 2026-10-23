@@ -1,6 +1,7 @@
 import { workspace } from '../workspace';
 import { cellLink } from '../nav';
 import { helpButton } from '../ui/help';
+import { bindPathChip } from '../ui/pathChip';
 import { router } from '../mcp/router';
 import { jobs, onJobsChange, type JobNode } from './jobs';
 import { installPopupMenu } from '../editor/EditorContextMenu';
@@ -120,6 +121,8 @@ export class AiChatUi {
   private readonly sideBody = el('div', { className: 'ai-body' });
   private readonly sideInput = el('textarea', { className: 'ai-input', rows: 2, placeholder: 'Ask about the cell you are in… (Enter sends)' });
   private readonly sideChip = el('span', { className: 'ai-chip' });
+  private chipText = '';
+  private chipPath = '';
   private readonly mini = el('div', { className: 'ai-mini', hidden: true });
   private readonly miniLog = el('div', { className: 'ai-log' });
   private readonly miniInput = el('textarea', { className: 'ai-input', rows: 2, placeholder: 'Ask… (Enter sends)' });
@@ -187,6 +190,7 @@ export class AiChatUi {
   // ------------------------------------------------------------ the side chat
 
   private buildSide(): void {
+    bindPathChip(this.sideChip, () => this.chipText || '📍', () => this.chipPath || '/');
     const title = el('div', { className: 'ai-title' }, el('strong', { textContent: '🤖 AI helper' }), this.sideChip);
     const settings = el('button', { className: 'ai-icon', textContent: '⚙', title: 'Settings: choose the helper' });
     const clear = el('button', { className: 'ai-icon', textContent: '🗑', title: 'Start a new conversation' });
@@ -306,8 +310,9 @@ export class AiChatUi {
 
   private paintChip(): void {
     const ctx = this.host.contextNow();
-    this.sideChip.textContent = ctx.address ? `📍 ${workspace.pathFor(ctx.tab, ctx.address, workspace.current)}${ctx.line ? `:${ctx.line}` : ''}` : `📍 /${ctx.tab}`;
-    this.sideChip.title = 'The cell your question will be about (click a cell to change it)';
+    this.chipText = ctx.address ? `📍 ${workspace.pathFor(ctx.tab, ctx.address, workspace.current)}${ctx.line ? `:${ctx.line}` : ''}` : `📍 /${ctx.tab}`;
+    this.chipPath = ctx.address ? workspace.pathOf(ctx.tab, ctx.address) : `/${ctx.tab}`;
+    this.sideChip.repaint?.();
   }
 
   // ------------------------------------------------------------ the little pop-up

@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { fingerprint, refreshSeeded } from '../src/seedMigration';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { fingerprint, recordSeeds, refreshSeeded } from '../src/seedMigration';
 import type { Sheet } from '../src/sheet/Sheet';
 
 function fakeSheet(cells: Record<string, string>): { sheet: Sheet; cells: Record<string, string> } {
@@ -32,5 +32,43 @@ describe('refreshSeeded', () => {
     const { sheet, cells } = fakeSheet({ A1: seed[0][1], C2: OLD + ' // mine' });
     refreshSeeded(sheet, 'test', seed, older);
     expect(cells.C2).toBe(OLD + ' // mine');
+  });
+});
+
+describe('refreshSeeded: cells added in a later version', () => {
+  const store = new Map<string, string>();
+  vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) });
+  afterEach(() => store.clear());
+
+  function sheetWithRows(cells: Record<string, string>) {
+    const { sheet } = fakeSheet(cells);
+    const grid = sheet as unknown as { rowCount: number; insertRow: () => void; dataAt: (a: string) => unknown };
+    const known = grid.dataAt;
+    grid.rowCount = 10;
+    grid.insertRow = () => void grid.rowCount++;
+    // Rows that do not exist yet have no cell.
+    grid.dataAt = (a: string) => (Number(/\d+/.exec(a)![0]) <= grid.rowCount ? (cells[a] === undefined ? { address: a, code: '' } : known(a)) : undefined);
+    return { sheet, cells, grid };
+  }
+
+  it('puts a never-seen shipped cell into an empty place, and makes the rows it needs', () => {
+    recordSeeds('t', [['A1', 'one()']]);
+    const { sheet, cells, grid } = sheetWithRows({ A1: 'one()' });
+    refreshSeeded(sheet, 't', [['A1', 'one()'], ['A30', 'two()']]);
+    expect(cells.A30).toBe('two()');
+    expect(grid.rowCount).toBeGreaterThanOrEqual(38);
+  });
+
+  it('keeps a cell that was seen and then emptied empty', () => {
+    recordSeeds('t', [['A1', 'one()'], ['A5', 'five()']]);
+    const { sheet, cells } = sheetWithRows({ A1: 'one()', A5: '' });
+    refreshSeeded(sheet, 't', [['A1', 'one()'], ['A5', 'five()']]);
+    expect(cells.A5).toBe('');
+  });
+
+  it('does nothing for a sheet that was never seeded in this browser', () => {
+    const { sheet, cells } = sheetWithRows({});
+    refreshSeeded(sheet, 'never', [['A1', 'one()']]);
+    expect(cells.A1).toBeUndefined();
   });
 });

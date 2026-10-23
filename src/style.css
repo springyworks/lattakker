@@ -2323,3 +2323,42 @@ body.ai-open .help-card {
 .subtitle[hidden] {
   display: none;
 }
+
+/* Printed text of a cell: anchored at the bottom, so the newest lines stay in view and the older ones scroll out at the top (see Sheet.tailHtml). */
+.cell-tail {
+  position: relative;
+  display: flex;
+  flex-direction: column-reverse;
+  overflow: hidden;
+}
+.cell-tail > .cell-text {
+  flex: none;
+  min-height: 100%;
+}
+.cell-tail-thumb {
+  position: absolute;
+  right: 0;
+  width: 3px;
+  border-radius: 2px;
+  background: rgba(82, 96, 117, 0.45);
+  pointer-events: none;
+}
+
+/* A "📍 /lab/J24" locator that copies its path when clicked (see ui/pathChip.ts) */
+.path-chip {
+  cursor: pointer;
+  white-space: nowrap;
+  font: 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: #3e4c59;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+.path-chip:hover,
+.path-chip:focus-visible {
+  background: #fff;
+  border-color: #9aa5b1;
+}
+.ai-chip.path-chip {
+  border-color: #b8bfc7;
+}

@@ -115,7 +115,7 @@ An outside AI chat can use the same tools over MCP: run the dev server, open thi
 The page also keeps an accessible text mirror in #mms-text (board grid, captured pieces, last move, code cells with output and errors). Each code cell is one list item: "A12: code: <first 3 lines, max 200 chars> | output: ... | error: ..."; use getCell for the whole code.
 
 CELL CODE (TypeScript, async allowed, re-runs when things it reads change)
-  print(...values)   add a line of output           view(text)      text shown in view mode
+  print(...values)   add a line of output (newest stay in view, wheel winds back; print.top(...) or '\\x1b[2J\\x1b[H' in the text starts again at the top)   view(text)      text shown in view mode
   color('#ecdcd8')   cell background                span(cols,rows) merge cells (not over the board)
   paper()            print like a teletype on a roll of plain paper with a faint grain, typed at 10 characters a second (newest line at the bottom, mouse wheel winds back; a speaker icon in the cell switches the ASR-33 sound on, default off); a moving print head shows the column; in text \\n is CR+LF, \\r returns the head without feeding (overstrike), \\b backs it one column, \\v feeds without returning; paper({font:'tty33'|'tty28'|'tty35', tint, wear:0..1, speed}), paper(false) off; skipPaper() types all that still waits at once
   at('B7')           another cell: .text .code .piece .color(c) .print(...) .flash()

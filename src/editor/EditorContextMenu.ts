@@ -3,7 +3,7 @@ import { HoverMenu, type MenuItem } from '../ui/HoverMenu';
 import { aiBridge } from '../aichat/bridge';
 import { showHelp } from '../ui/help';
 import type { AiContext } from '../aichat/tools';
-import { importSourcesShown, parseCellUri, setImportSourcesShown } from './monaco';
+import { importSourcesShown, inferredTypesShown, parseCellUri, setImportSourcesShown, setInferredTypesShown } from './monaco';
 import { focusPoints } from './focusPoints';
 
 /**
@@ -146,6 +146,11 @@ function editorItems(editor: monaco.editor.ICodeEditor): MenuItem[] {
       label: importSourcesShown() ? '🙈 Hide the full path & type of imports' : '🧭 Show the full path & type of imports',
       title: "Shows which cell an imported name comes from (add(2, 3) becomes ./A4.add(2, 3)) and its type in the import line. It is only drawn, the code stays as you wrote it",
       onSelect: () => setImportSourcesShown(!importSourcesShown()),
+    },
+    {
+      label: inferredTypesShown() ? '🙈 Hide the types in the code' : '🏷 Show the types in the code',
+      title: 'Draws the type TypeScript works out for a name, a parameter and a function result right in the code line (const n: number = 3). It is only drawn, the code stays as you wrote it',
+      onSelect: () => setInferredTypesShown(!inferredTypesShown()),
     },
     action(editor, 'editor.action.formatDocument', 'Format code', 'Shift+Alt+F'),
     action(editor, 'editor.action.quickCommand', 'All commands', 'F1'),

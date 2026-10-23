@@ -51,7 +51,20 @@ export function refreshSeeded(sheet: Sheet, tab: string, seed: ReadonlyArray<rea
   let updated = 0;
   for (const [address, code] of seed) {
     const shipped = fingerprint(code);
-    const data = sheet.dataAt(address);
+    let data = sheet.dataAt(address);
+    // A shipped cell this browser never saw (added in a later version) goes into its place; one that was seen and then emptied stays empty.
+    // A sheet that was never seeded here (nothing is recorded) is left alone too.
+    if (Object.keys(seeds).length > 0 && seeds[address] === undefined && !data?.code.trim()) {
+      const row = Number(/\d+/.exec(address)?.[0] ?? 1);
+      while (sheet.rowCount < row + 8 && sheet.rowCount < 200) sheet.insertRow(sheet.rowCount - 1);
+      data = sheet.dataAt(address);
+      if (data) {
+        sheet.setCode(address, code);
+        seeds[address] = shipped;
+        updated++;
+      }
+      continue;
+    }
     if (!data || !data.code.trim()) continue;
     const have = fingerprint(data.code);
     // Blank lines around the code (a cell written through the editor or the MCP bridge) do not make it another version.

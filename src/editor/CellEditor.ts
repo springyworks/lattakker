@@ -1,12 +1,13 @@
 import { Cell, EventObject, Geometry, InternalEvent } from '@maxgraph/core';
 import type { Sheet } from '../sheet/Sheet';
-import { escapeHtml } from '../sheet/Sheet';
 import { THEME } from '../theme';
 import { isAnswered, requestAt } from '../ai/requests';
 import { createEditor, modelFor, monaco } from './monaco';
 import { installPopupMenu } from './EditorContextMenu';
 import { installOutputTrace } from './outputTrace';
 import { aiBridge } from '../aichat/bridge';
+import { bindPathChip } from '../ui/pathChip';
+import { workspace } from '../workspace';
 import type { AiContext } from '../aichat/tools';
 import { getSettings, isConfigured } from '../aichat/config';
 
@@ -346,7 +347,10 @@ export class CellEditor {
     host.className = 'cell-editor-host';
     const titleBar = document.createElement('div');
     titleBar.className = 'cell-editor-title hud-text';
-    titleBar.innerHTML = `${escapeHtml(address)} · TypeScript`;
+    const where = document.createElement('span');
+    const pathNow = (): string => workspace.pathOf(this.sheet.id, address);
+    bindPathChip(where, () => `📍 ${pathNow()}`, pathNow);
+    titleBar.append(where, document.createTextNode(' · TypeScript'));
     titleBar.title = 'Ctrl+Enter restarts the cell · Esc restarts it and closes · drag this bar to move · double-click it to fill the screen';
     this.installTitleDrag(titleBar);
     const fit = document.createElement('button');

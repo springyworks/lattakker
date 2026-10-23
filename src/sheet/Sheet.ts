@@ -45,6 +45,10 @@ import { registerPaperShape } from './paperShape';
 import { bellOn, primeBell, printChar, setBell } from '../aichat/bell';
 import type { SvgScene } from './svgScene';
 
+/** The height of one line of printed text (12px at 1.3, see .cell-text.out) and the room a cell's frame and padding take from its height. */
+const TEXT_LINE_PX = 15.6;
+const TEXT_PAD_Y = 8;
+
 /** A cell that takes longer than this is moved to the background so the others can run. */
 const RUN_SLICE_MS = 150;
 
@@ -345,6 +349,8 @@ export class Sheet {
   private refreshQueue = new Set<string>();
   /** How far each teletype paper is wound back (lines from the newest), and how many lines it had when last drawn. */
   private paperView = new Map<string, { back: number; total: number }>();
+  /** The same for plain printed text: lines wound back from the newest, and how many lines there were when last drawn. */
+  private textView = new Map<string, { back: number; total: number }>();
   /** How much each teletype paper has typed so far (it types at the pace of the real machine), and the timer for the next letters. */
   private paperPrint = new Map<string, { state: PrintState; timer: number }>();
   /** Paper cells in the middle of a line feed: when it began, how long it takes, and how far the slide has got (0..1). */
@@ -484,7 +490,7 @@ export class Sheet {
         const id = hit?.getId() ?? '';
         if (!id.startsWith('sheet:')) return;
         const lines = Math.sign(-e.deltaY) * Math.max(1, Math.round(Math.abs(e.deltaY) / 40));
-        if (this.scrollPaper(id.slice(6), lines)) e.preventDefault();
+        if (this.scrollPaper(id.slice(6), lines) || this.scrollText(id.slice(6), lines)) e.preventDefault();
       },
       { passive: false },
     );
@@ -1074,7 +1080,49 @@ export class Sheet {
     const text = forceOutput ? (d.error ? `⚠ ${d.error}` : d.output.join('\n')) : this.displayText(d);
     if (!text) return base?.label ? `<div class="cell-text out">${escapeHtml(base.label)}</div>` : '';
     const cls = showCode && d.viewText === null ? 'cell-text code' : 'cell-text out';
+    if (!size && !forceOutput && !d.error && !(d.code && this.mode === 'view')) return this.tailHtml(address, d.output);
     return `<div class="${cls}">${escapeHtml(text)}</div>`;
+  }
+
+  /**
+   * Printed text like on a terminal: when there are more lines than the cell is tall the newest stay in view (the box is anchored at the bottom,
+   * so a wrapped line pushes the older text up and out), and the wheel winds back to the older lines (see scrollText).
+   */
+  private tailHtml(address: string, output: string[]): string {
+    const geo = this.cells.get(address)?.getGeometry();
+    if (!geo) return `<div class="cell-text out">${escapeHtml(output.join('\n'))}</div>`;
+    const height = Math.max(8, Math.round(geo.height - TEXT_PAD_Y));
+    const fit = Math.max(1, Math.floor(height / TEXT_LINE_PX));
+    const seen = this.textView.get(address) ?? { back: 0, total: 0 };
+    const total = output.length;
+    const grown = total - seen.total;
+    const maxBack = Math.max(0, total - fit);
+    // A wound-back view keeps its place while new lines arrive; a shorter output (cleared, started again at the top) goes back to the newest.
+    const back = Math.max(0, Math.min(maxBack, grown < 0 ? 0 : grown > 0 && seen.back > 0 ? seen.back + grown : seen.back));
+    this.textView.set(address, { back, total });
+    const shown = back ? output.slice(0, total - back) : output;
+    let thumb = '';
+    if (maxBack > 0) {
+      const h = Math.max(10, Math.round((height * fit) / total));
+      const top = Math.round((height - h) * (1 - back / maxBack));
+      thumb = `<div class="cell-tail-thumb" style="top:${top}px;height:${h}px"></div>`;
+    }
+    return `<div class="cell-tail" style="height:${height}px"><div class="cell-text out">${escapeHtml(shown.join('\n'))}</div>${thumb}</div>`;
+  }
+
+  /** Winds a cell's printed text by whole lines (positive = towards older lines). Returns false when the text fits or there was nowhere to go. */
+  scrollText(address: string, lines: number): boolean {
+    const d = this.data.get(address);
+    const geo = this.cells.get(address)?.getGeometry();
+    if (!d || !geo || d.error || d.plot || d.tiles || d.scene || (d.code && this.mode === 'view')) return false;
+    const fit = Math.max(1, Math.floor(Math.max(8, geo.height - TEXT_PAD_Y) / TEXT_LINE_PX));
+    const maxBack = Math.max(0, d.output.length - fit);
+    const seen = this.textView.get(address) ?? { back: 0, total: d.output.length };
+    const next = Math.max(0, Math.min(maxBack, seen.back + lines));
+    if (next === seen.back) return false;
+    this.textView.set(address, { back: next, total: d.output.length });
+    this.refreshCell(address);
+    return true;
   }
 
   /** Which tile of a block's grid a mouse event landed on (x across, y down, from 0), or null. */

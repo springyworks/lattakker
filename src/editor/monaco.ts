@@ -46,6 +46,29 @@ ts.typescriptDefaults.setDiagnosticsOptions({ noSemanticValidation: false, noSyn
 ts.typescriptDefaults.setEagerModelSync(true);
 ts.typescriptDefaults.addExtraLib(CELL_API_DTS, 'file:///cell-api.d.ts');
 
+// The types TypeScript works out are drawn in the code itself (const n: number = ..., (a: string) => ..., function f(): boolean), so you see them without
+// hovering. Only drawn: the code stays as it was written. Right-click in the editor to turn them off.
+const TYPES_KEY = 'lattakker.showInferredTypes';
+let showTypes = localStorage.getItem(TYPES_KEY) !== 'off';
+const typeHints = (on: boolean): void =>
+  ts.typescriptDefaults.setInlayHintsOptions({
+    includeInlayVariableTypeHints: on,
+    includeInlayFunctionParameterTypeHints: on,
+    includeInlayFunctionLikeReturnTypeHints: on,
+    includeInlayPropertyDeclarationTypeHints: on,
+    includeInlayParameterNameHints: on ? 'literals' : 'none',
+  });
+typeHints(showTypes);
+
+/** Whether the types TypeScript works out are drawn between the code (on by default). */
+export const inferredTypesShown = (): boolean => showTypes;
+
+export function setInferredTypesShown(on: boolean): void {
+  showTypes = on;
+  localStorage.setItem(TYPES_KEY, on ? 'on' : 'off');
+  typeHints(on);
+}
+
 // One light theme for every editor (Monaco applies a theme globally). The editor itself is transparent so a
 // cell's own fill shows through, but the popup widgets (suggestions, hover, parameter hints) are opaque.
 monaco.editor.defineTheme('mms', {

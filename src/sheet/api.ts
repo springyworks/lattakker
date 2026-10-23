@@ -24,6 +24,7 @@ import { ollamaAsk, ollamaChat, ollamaModels, ollamaStatus, type OllamaMessage, 
 import { inputPanel, type ControlKind, type ControlSpec } from '../ui/InputPanel';
 import type { PaperOptions } from './paper';
 import { createRepl } from './repl';
+import { printInto, TOP } from './ansi';
 
 const MIN_INTERVAL_MS = 10;
 const MAX_OUTPUT_LINES = 300;
@@ -239,8 +240,7 @@ export function buildApi(
       },
       print(...values: unknown[]) {
         markWrite(address);
-        d.output.push(values.map(fmt).join(' '));
-        if (d.output.length > MAX_OUTPUT_LINES) d.output.splice(0, d.output.length - MAX_OUTPUT_LINES);
+        printInto(d.output, values.map(fmt).join(' '), MAX_OUTPUT_LINES);
         sheet.refreshSoon(address);
         return ref;
       },
@@ -1315,7 +1315,10 @@ export function buildApi(
     __cell: importCell,
     __exports: published?.exports ?? {},
     cell: self,
-    print: (...values: unknown[]) => void self.print(...values),
+    print: Object.assign((...values: unknown[]) => void self.print(...values), {
+      // print.top(...) starts again at the top: what was printed before is dropped, like ESC[2J ESC[H on a terminal.
+      top: (...values: unknown[]) => void self.print(TOP + values.map(fmt).join(' ')),
+    }),
     view: (text: string) => void self.view(text),
     plot: (data: unknown, options?: PlotOptions) => void self.plot(data, options),
     color: (fill: string) => void self.color(fill),
