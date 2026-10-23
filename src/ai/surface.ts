@@ -13,6 +13,7 @@ import { McpError, router } from '../mcp/router';
 import { callers, currentCaller, outsideTrace, participant, throughChannel } from './entry';
 import { showSubtitle } from '../ui/subtitles';
 import { README_URL, isOriented, markOriented, orientation, readReadme } from './orientation';
+import MMS_GUIDE from 'virtual:readme-mms';
 import { docUrls, askRules } from '../aichat/docs';
 import { bellOn, machineRunning, soundSources } from '../aichat/bell';
 
@@ -52,102 +53,9 @@ const LEGEND_BLUE =
 
 type Side = 'red' | 'blue';
 
-const HELP = `LATTAKKER SHEET - window.mms guide (everything runs locally in this page; free, no tracking, no network unless the player starts a Share session or sets up the optional built-in helper, the 🤖 AI button)
+/** What mms.help() returns: chapter 11.3.5 of the README, the one home of this guide (cut out of it when the app is built). */
+const HELP = `LATTAKKER SHEET - window.mms guide. This is chapter 11.3.5 of the README (${README_URL}), the place of truth.\n\n${MMS_GUIDE}\n`;
 
-FIRST, BEFORE ANYTHING ELSE: read the README, the place of truth: ${README_URL}
-(raw text: https://raw.githubusercontent.com/springyworks/lattakker/main/README.md). If you cannot open links, call the tool read_readme (it fetches it from GitHub, part 1, 2 ...) or confirm_readme with one sentence on what you learned. An AI that comes in over /mcp or WebMCP has its first call answered with the rules until it has done so. Everything you do through the router is recorded (who started it, through whom, what it changed): see the router tools trace, history, change.
-
-The page is a Lattakker board that is also a spreadsheet. Red is the child/player, Blue is the computer. Cells below the board (A12, E12, ...) hold TypeScript that runs live.
-Every mms method returns plain JSON. Errors never throw: you get { ok: false, error: "..." }. Success is { ok: true, ... }.
-Methods marked (async) return a Promise: await them.
-
-CELL PATHS (tabs: board, lab, examples). Cells are named like files, with / meaning "inside":
-  J24            a cell of the board tab (or of the tab you pass as a second argument/option: { tab: 'lab' })
-  /lab/J24       absolute: tab first, so it works from anywhere (/board/A12 for the board)
-  /lab/J24/3,4   tile x=3, y=4 of the grid inside block J24
-  @c-1a2b3c4d    a cell by its identity (uid); it follows the code when cells move, from any tab
-  lattakker:///lab/J24   the same absolute path written as a URI
-  Every result that names a cell carries { tab, address, path, uid }. Write it back the same way: the path field is always safe to pass in.
-
-READ
-  mms.help()                 this guide
-  mms.docs()                 { ok, urls: {...} } where to read the rules, the API typings (cell-api.d.ts), every example cell, and the README; fetch them like a coder reads a project
-  mms.askRules('a few words')   the sections of the rules that answer your words, with the owner's standing directives (each with its strength); no words = the whole rules text
-  mms.findTools('a few words')   (async) the best few MCP tools for your words, over all servers: server, tool, a sentence, and the mcp_request to copy. Ask it when you do not know which tool does what
-  mms.mcp('lab', 'resources/list' | 'tools/call' ..., params) (async)   send an MCP request to a tab's server through the page's router; mms.mcpLog(20) shows the last messages that crossed it
-  mms.sounds()               { muted, motorRunning, sources: [{ path, secondsAgo, calls }] } which cells made teletype sound lately (they flash once)
-  mms.tabs()                 { current, tabs: [{ id, title, path, mode, codeCells, rows, columns }], paths } the tabs that hold code cells and which one the player sees
-  mms.state()                { phase: 'setup'|'play'|'over', turn, winner, moveCount, lastMove, message, busy, bluePlayer: 'builtin'|'virtual', redPieces, bluePieces }
-  mms.board('red'|'blue')    { rows: [10 strings, row 1 first], legend, text }. As Red (default) hidden Blue pieces stay hidden (B?); as Blue (after takeOverBlue) your Blue pieces are shown and Red's are hidden (R?).
-  mms.legalMoves(x)          x = 'red' or a Red square like 'B7' -> [{from,to}]. Blue's moves only after takeOverBlue(); until then Blue stays hidden.
-  mms.cells('board'|'lab'|'all')  cells holding code: [{uid, tab, address, path, code, output, error, mode}]; board by default
-  mms.getCell('A12')         one cell: { uid, tab, address, path, code, output, error, text, mode, ... }. Also accepts a path ('/lab/J24'), a uid, or a tab: mms.getCell('J24', 'lab').
-  mms.resolve('@c-1a2b3c4d') where a cell is now: { tab, address, path, uid, hasCode }. Takes an address, a path or a uid.
-  mms.exportSvg()            SVG string snapshot of the maxGraph canvas
-  mms.exportModelXml()       maxGraph model as XML (large)
-
-ACT
-  mms.shuffle()              setup phase only: re-deal Red's army randomly
-  mms.start()                setup -> play (Red moves first)
-  mms.move('B7','B6') (async)  Red moves one square (Scouts: any distance in a line); waits for Blue's reply. Returns the new state.
-  mms.takeOverBlue()         you play Blue: the built-in Blue player keeps quiet. Then mms.move('B4','B5','blue') makes Blue's move, so two virtual players (two AIs, or you for both) can play each other.
-  mms.giveBackBlue()         the built-in Blue player plays again (it also does when the page is reloaded; a cell that took Blue over gives it back when it stops)
-  mms.pause() / mms.resume() pause or continue the battle (nobody moves while paused)
-  mms.newGame()              back to setup with new armies
-  mms.undo()                 take back Red's last move and Blue's answer
-  mms.setCode('A12', code, { run: true, tab: 'board' }) (async)   put TypeScript in a cell (a path like '/lab/J24' works too); run:false returns immediately (it still runs in the background)
-  mms.runCell('A12' | '/lab/J24') (async) re-run a cell, wait. Success { ok: true, address, uid, output, text }; failure { ok: false, error, address, uid, output }.
-                             error is a plain string: "line 6: '}' expected." for the first syntax error, just the message for a runtime error, never an object or code.
-  mms.clearCell('A12')       empty a cell
-  mms.insertColumn('C', 'right' | 'left', tab?)   insert a blank column next to C, like a spreadsheet: cells to the right move over and the addresses in code are rewritten (the board tab only grows to the right of the panel)
-  mms.setMode('run'|'view')  cells show output (run) or their code (view)
-  mms.say('Nice move!')      show a message to the player in the speech bubble
-  mms.subtitle('Now Red moves', 4)   a subtitle at the bottom of the screen for a screen recording (0 = until the next; '' removes it)
-  mms.writeCodeLive('A12', code) (async)   open the cell's editor and type the code in slowly; the player presses Esc or Restart & close to keep and run it
-  mms.requests()             questions the player wrote as "// AI: ..." comment lines: { requests: [{address, uid, line, text, answered, unsaved}] }
-  mms.waitForRequest(15) (async)   wait up to 20 s for a new question, then return like requests()
-  mms.replyToRequest('A12', line, 'text')   write your answer as "// ↳ AI: ..." right below the question (a fresh "// " line follows for the next one)
-
-IDENTITY: every code cell has a uid such as c-1a2b3c4d. The uid stays with its content when cells move, swap or rows are inserted; the address changes. Keep the uid to find code again later; mms.resolve(uid) gives the current address.
-
-WebMCP: if the browser supports it, the same actions are registered as tools: get_state, get_board, legal_moves, make_move, take_over_blue, give_back_blue, shuffle_army, start_battle, pause_battle, resume_battle, undo_move, new_game, list_tabs, list_cells, get_cell, resolve_cell, set_cell_code, write_code_live, get_requests, wait_for_request, reply_to_request, run_cell, set_mode, say_to_player, check_mail, read_mail, send_mail, mcp_request, mcp_log, export_svg, ask_rules, find_tools. mms.webmcp tells you what was registered.
-An outside AI chat can use the same tools over MCP: run the dev server, open this page with ?mcp added to the URL, and connect to http://localhost:5178/mcp (see the README, section 11.3).
-The page also keeps an accessible text mirror in #mms-text (board grid, captured pieces, last move, code cells with output and errors). Each code cell is one list item: "A12: code: <first 3 lines, max 200 chars> | output: ... | error: ..."; use getCell for the whole code.
-
-CELL CODE (TypeScript, async allowed, re-runs when things it reads change)
-  print(...values)   add a line of output (newest stay in view, wheel winds back; print.top(...) or '\\x1b[2J\\x1b[H' in the text starts again at the top)   view(text)      text shown in view mode
-  color('#ecdcd8')   cell background                span(cols,rows) merge cells (not over the board)
-  paper()            print like a teletype on a roll of plain paper with a faint grain, typed at 10 characters a second (newest line at the bottom, mouse wheel winds back; a speaker icon in the cell switches the ASR-33 sound on, default off); a moving print head shows the column; in text \\n is CR+LF, \\r returns the head without feeding (overstrike), \\b backs it one column, \\v feeds without returning; paper({font:'tty33'|'tty28'|'tty35', tint, wear:0..1, speed}), paper(false) off; skipPaper() types all that still waits at once
-  at('B7')           another cell: .text .code .piece .color(c) .print(...) .flash()
-  range('A1:J10')    array of cells with .color(c) and .print(...)
-  game.phase game.turn game.winner game.moveCount game.lastMove game.history
-  game.pieces('red') game.captured('blue') game.pieceAt('B7') game.legalMoves('B7'|'red'|'blue')
-  game.move('B7','B6') game.move('B4','B5','blue') game.say('hi')   game.busy game.bluePlayer game.takeOverBlue() game.giveBackBlue()
-  sheet.mode sheet.cols sheet.rows   mode   sleep(ms|'2s')   log(...)
-  Semaphore(n) Mutex() RWLock() Channel<T>(size) lock('name')   taking turns, in every cell, nothing to import: using p = await sem.acquire() (a lease: given back at the end of the block and when the cell runs again), acquire(1, { timeout: '2s' }), sem.value/.waiting, mutex.locked, rw.read()/.write(), ch.send(x)/await ch.receive()/ch.close()/for await (const m of ch), using l = await lock('printer', { mode: 'shared'|'exclusive' }). Prefer a Channel (pass messages) to sharing data
-  repl()             a TypeScript REPL that keeps its variables: const ts = repl(); await ts('const x = 6 * 7'); await ts('x + 1') -> '43' (errors start with '??')
-  show(...) replace output   clear()   span() read size, span(4) keep rows
-  plot(Math.sin, {from:0,to:6.28,title:'wave'})  XY plot as output; also plot([1,4,9]), plot([[0,1],[1,3]]), plot({a: f, b: g})
-  grid(10, 8) tiles inside this block (after span(10, 8)): g.at(x,y).color('#3f8f5a') .show('7'), g.paint((x,y) => colour|null), g.fill(c), on(g,'click', tile => ...); tiles use their own x,y from 0, other cells read at('A16/3,4').fill. More: g.box(x,y,w,h,colour), g.text(x,y,'words',{ink,fill,bold,align,snap,mono,w}) (snap: one letter per tile, a terminal), tile.ink(colour), tile.bold(), grid(80,20,{lines:false}); a grid takes the keyboard with g.focus() (from a click handler) and on(g,'key',(key,info)=>...), also on(g,'focus'|'blur',fn)
-  every('1s', n => ...)  after('5s', fn)  on('B7' | 'A1:J10' | 'game', fn)  stop()   (timers die when the cell re-runs)
-  on('I18', 'size' | 'code' | 'click' | 'enter' | 'leave', fn)  on('sheet', 'rows' | 'cols' | 'mode', fn)   events; also cell.cols/rows, at(x).code, sheet.rows/cols/mode are reactive when read at top level
-  memory (notebook that survives re-runs)  run.reason ('edit'|'moved'|'update')  run.count
-  mcp.catalog() / mcp.tools(server) / mcp.stats() / mcp.recent(n)   what the MCP ecosystem offers, and the router's counters (perSecond is ready for plot)
-  mcp.packets(filter, n) / mcp.analyze(filter) / mcp.ask('any errors?') / mcp.callers()   the traffic by type with a display filter, counted, and answered in words
-  await weather.now('Amsterdam') / weather.forecast(place, days) / weather.find(name)   weather from open-meteo.com (also the MCP server 'weather')
-  await ollama.status() (never throws, says what is missing) / ollama.ask(prompt) / ollama.models()   the model on this computer (also the MCP server 'ollama')
-  teletype.print(char) / teletype.key(char?) / teletype.cr() / teletype.bell()   the soft ASR-33 sounds: print(letter) is the machine printing (hum + print head, '\n' = carriage return), key() one keyboard clack, the bell (muted by the chat's speaker button; a click allows sound)
-  await input.ask(q) / input.confirm(q) / input.choose(q, options); input.slider(label,{min,max,value},fn) .number .text .checkbox .select .button; input.onKey((key) => ...); input.onPaste((text) => ...) takes what the cell menu's Paste sends to a cell with its own input (a terminal) instead of making it the cell's code; input.claimKeys(lost?) keeps Enter/Delete/letters/Ctrl-C/Ctrl-D from the sheet's shortcuts for a terminal cell
-  cell.usedBy / cell.reads  addresses that read this cell / that this cell read
-  Moving, swapping or inserting rows rewrites address literals in all code ('B7', 'A1:B3', 'C32-55') so they follow their cells; a range split by a move is only reported. Keep addresses as plain literals ('E' + n is not followed).
-  Hidden Blue pieces have rank '?'. Board squares are A1:J10; put code in A12 or below.
-
-EXAMPLES
-  await mms.setCode('A12', "print('Red pieces: ' + game.pieces('red').length)")
-  mms.shuffle(); mms.start(); await mms.move('A7','A6')
-  await mms.setCode('E12', "for (const sq of range('A7:J7')) sq.color('#ecdcd8')")
-  await mms.runCell('E12')
-`;
 
 const APP_LABEL =
   'Lattakker sheet: a Lattakker board that is also a spreadsheet where cells hold TypeScript. ' +
@@ -441,7 +349,7 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
     /** The rules counter: a few words in, the matching sections of the rules and the standing directives out. */
     askRules(query?: unknown): Result {
       try {
-        return ok({ text: askRules(typeof query === 'string' ? query : '', 4000), wholeFile: docUrls().rules });
+        return ok({ text: askRules(typeof query === 'string' ? query : '', typeof query === 'string' && query.trim() ? 4000 : 20000), wholeFile: docUrls().rules });
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
       }

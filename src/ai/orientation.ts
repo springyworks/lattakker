@@ -1,43 +1,42 @@
-import rulesRaw from '../../ai-docs/rules.md?raw';
+import { RULES_PARTS } from './rulesText';
 
 /**
  * First contact. Every AI that starts to work with the internals of this page (an outside AI over /mcp or WebMCP,
- * the built-in helper) is told the same thing first: read the README on GitHub, the place of truth, and follow the
+ * the built-in helper) is told the same thing first: read the README, the place of truth, and follow the
  * rules. Until it has done so, its first tool call is answered with this instead of being carried out, and it
- * says so itself by reading the README through a tool (which fetches it from GitHub) or by confirming it read it.
+ * says so itself by reading the README through a tool (which fetches it) or by confirming it read it.
  */
 
 export const README_URL = 'https://github.com/springyworks/lattakker/blob/main/README.md';
 export const README_RAW = 'https://raw.githubusercontent.com/springyworks/lattakker/main/README.md';
 
-/** The "First contact" part of ai-docs/rules.md (the same text is published for AIs that can open links). */
-const firstContact = (): string => {
-  const start = rulesRaw.indexOf('## First contact');
-  if (start < 0) return '';
-  const body = rulesRaw.slice(rulesRaw.indexOf('\n', start) + 1);
-  const end = body.search(/^## /m);
-  return end < 0 ? body : body.slice(0, end);
-};
-
-export const FIRST_CONTACT = firstContact()
-  .replaceAll('{{GITHUB_README}}', README_URL)
-  .replaceAll('{{GITHUB_README_RAW}}', README_RAW)
-  .trim();
+/** The "First contact" part of the rules (README chapter 11.5.1). */
+export const FIRST_CONTACT = (RULES_PARTS['first contact'] ?? '').trim();
 
 const PART_CHARS = 12000;
+const FETCH_MS = 10000;
 let cached: Promise<{ text: string; source: string }> | null = null;
 
-/** The README as it is on GitHub; the copy published next to the page is only the fallback when GitHub cannot be reached. */
+/** True for a README, false for whatever else a server answers with a 200 (a page of "not found", the app's own index.html). */
+export const looksLikeReadme = (text: string): boolean => text.length > 5000 && /^#\s+\S/.test(text) && text.includes('Lattakker');
+
+/**
+ * The README. First the copy published next to this page (github.io, or the dev server): it is built from the very
+ * README of this version of the app, so its API chapter matches the code that runs. Then GitHub, in case that copy is
+ * missing. Each try has a time limit, so a slow network never hangs the helper.
+ */
 export function fetchReadme(): Promise<{ text: string; source: string }> {
   cached ??= (async () => {
     const attempts: Array<[string, string]> = [
+      [new URL(`${import.meta.env.BASE_URL}ai/README.md`, location.href).href, 'the README published next to this page'],
       [README_RAW, 'GitHub'],
-      [new URL(`${import.meta.env.BASE_URL}ai/README.md`, location.href).href, 'the copy published next to this page (GitHub could not be reached)'],
     ];
     for (const [url, source] of attempts) {
       try {
-        const res = await fetch(url);
-        if (res.ok) return { text: await res.text(), source };
+        const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_MS) });
+        if (!res.ok) continue;
+        const text = await res.text();
+        if (looksLikeReadme(text)) return { text, source };
       } catch {
         // try the next place
       }
@@ -49,6 +48,7 @@ export function fetchReadme(): Promise<{ text: string; source: string }> {
   });
   return cached;
 }
+
 
 /** Cuts the README into parts of about 12 000 characters, at the ends of lines, preferring the start of a heading. */
 export function readmeParts(text: string): string[] {

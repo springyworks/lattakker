@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "docs": "node scripts/sync-readme.mjs"
   },
   "dependencies": {
     "@maxgraph/core": "^0.25.0",

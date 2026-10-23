@@ -29,7 +29,7 @@ const BASE_PROMPT = `You are the helper inside "Lattakker Sheet", a spreadsheet 
 
 You ARE connected to the app and you have tools to use it (look at the list your tools come with). Use them instead of guessing, and never say you cannot reach the app or must ask the person to run code for you.`;
 
-// Every rule text comes from ai-docs/rules.md, the one home of the rules (tests/rulesConsistency guards these names).
+// Every rule text comes from README.md chapter 11.5, the one home of the rules (tests/rulesConsistency guards these names).
 const CHANGE_RULE_ASK = (): string => RULES.section('Helper: changing cells by asking');
 const CHANGE_RULE_AUTONOMOUS = (): string => RULES.section('Helper: changing cells on its own');
 const CHANGE_RULE_WRITE = (): string => RULES.section('Helper: changing cells, empty ones only');
@@ -49,7 +49,7 @@ function directives(): string {
   return text ? `\n\nStanding directives:\n${text}` : '';
 }
 
-/** The fixed instructions, shaped for this model: the shared rules (ai-docs/rules.md), how to use the tools, and where the documents are. A small model gets no memory tools. */
+/** The fixed instructions, shaped for this model: the shared rules (README.md chapter 11.5), how to use the tools, and where the documents are. A small model gets no memory tools. */
 export function buildPrompt(options: { small: boolean; write: boolean }): string {
   return `${BASE_PROMPT} ${options.write ? (getSettings().autonomous ? CHANGE_RULE_AUTONOMOUS() : CHANGE_RULE_WRITE()) : CHANGE_RULE_ASK()}\n\nFirst contact (your very first tool call: read_docs with doc "readme"):\n${RULES.first}\n\nRules (the same for every AI that helps here):\n${RULES.behave}\n\nHow to work:\n${RULES.coder}${directives()}\n\nCell code:\n${RULES.cell}\n\nHow to use your tools:\n${TOOL_HINTS()}\n${options.small ? SMALL_RULES() : MEMORY_RULES()}${pointers()}`;
 }

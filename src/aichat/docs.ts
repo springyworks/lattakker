@@ -1,4 +1,4 @@
-import rulesRaw from '../../ai-docs/rules.md?raw';
+import { RULES_PARTS, RULES_TEXT } from '../ai/rulesText';
 import directivesRaw from '../../ai-docs/directives.json?raw';
 import { parseDirectives, renderDirectives } from '../ai/directives';
 import { CELL_API_DTS } from '../sheet/apiTypes';
@@ -7,6 +7,7 @@ import { LAB_DEMOS } from '../labDemos';
 import { MONITOR_DEMOS } from '../monitorDemos';
 import { RPC_DEMOS } from '../rpcDemos';
 import { fetchReadme } from '../ai/orientation';
+import { API_BEGIN, apiReference } from '../ai/readmeSections';
 
 /**
  * What a human coder has when she joins a project, for the helper: the rules, the API (exact names and
@@ -16,6 +17,7 @@ import { fetchReadme } from '../ai/orientation';
  * itself: `docUrls()` says where.
  */
 
+const PUBLIC_SITE = 'https://springyworks.github.io/lattakker/';
 const GITHUB = 'https://github.com/springyworks/lattakker/blob/main/';
 const GITHUB_RAW = 'https://raw.githubusercontent.com/springyworks/lattakker/main/';
 
@@ -43,22 +45,10 @@ export function docUrls(): Record<string, string> {
 
 // ---------------------------------------------------------------- the rules
 
-/** The "## Heading" parts of rules.md, by heading. */
-function sections(markdown: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  let name = '';
-  for (const line of markdown.split('\n')) {
-    const h = /^##\s+(.*)$/.exec(line);
-    if (h) {
-      name = h[1].trim().toLowerCase();
-      out[name] = '';
-    } else if (name) out[name] += `${line}\n`;
-  }
-  for (const k of Object.keys(out)) out[k] = out[k].trim();
-  return out;
-}
-
-const parts = sections(rulesRaw);
+/** The sections of the rules: chapter 11.5 of the README, by heading. */
+const parts = RULES_PARTS;
+/** The whole chapter, its "#### 11.5.n Heading" lines written as "## Heading" like the published ai/rules.md. */
+const rulesRaw = RULES_TEXT.replace(/^#### (?:\d+(?:\.\d+)*\s+)?/gm, '## ');
 
 /** The owner's standing directives that count today (a directive ends after its last day), or '' when there are none. Read each time, so a page left open for days still lets them end. */
 export function standingDirectives(): string {
@@ -69,12 +59,12 @@ export function standingDirectives(): string {
   }
 }
 
-/** The placeholders of rules.md made real: links to this page and to GitHub. */
-const fill = (text: string): string => text.replaceAll('{{SITE}}ai/', `${site()}ai/`).replaceAll('{{GITHUB_README_RAW}}', `${GITHUB_RAW}README.md`).replaceAll('{{GITHUB_README}}', `${GITHUB}README.md`);
+/** The links to the published site in the rules point at this page's own copy (the README names the public one). */
+const fill = (text: string): string => text.replaceAll(`${PUBLIC_SITE}ai/`, `${site()}ai/`);
 
-/** The rules the built-in helper is given (the same file is published for outside AIs). */
+/** The rules the built-in helper is given (the same text is chapter 11.5 of the README, for everybody else). */
 export const RULES = {
-  first: (parts['first contact'] ?? '').replaceAll('{{GITHUB_README_RAW}}', `${GITHUB_RAW}README.md`).replaceAll('{{GITHUB_README}}', `${GITHUB}README.md`),
+  first: parts['first contact'] ?? '',
   behave: parts['how to behave'] ?? '',
   coder: parts['work like a coder'] ?? '',
   cell: parts['cell code rules'] ?? '',
@@ -123,7 +113,7 @@ export interface Chunk {
 const isComment = (line: string): boolean => /^\s*(\/\*\*|\*|\*\/|\/\/)/.test(line);
 
 /** The declarations of the API, one entry per member (its comment and its signature), named after the type it belongs to. */
-function apiChunks(): Chunk[] {
+function apiChunks(dts: string): Chunk[] {
   const out: Chunk[] = [];
   let owner = '';
   let cur: string[] = [];
@@ -137,7 +127,7 @@ function apiChunks(): Chunk[] {
     const name = /^(?:readonly\s+)?(?:declare\s+(?:function|const)\s+|function\s+|const\s+|interface\s+|type\s+)?([\w$]+)/.exec(signature)?.[1] ?? signature;
     out.push({ title: `${owner ? `${owner}: ` : ''}${signature.replace(/\s*\{$/, '')}`, owner, name, text });
   };
-  for (const line of CELL_API_DTS.split('\n')) {
+  for (const line of dts.split('\n')) {
     const type = /^(?:declare\s+)?(?:interface|type|class)\s+(\w+)/.exec(line);
     const value = /^(?:declare\s+)?(?:function|const)\s+\w+/.test(line);
     if (type || value) {
@@ -166,6 +156,20 @@ function exampleChunks(): Chunk[] {
   return [...cells('board', EXAMPLES), ...cells('lab', LAB_DEMOS), ...cells('monitor', MONITOR_DEMOS), ...cells('rpc', RPC_DEMOS)];
 }
 
+let apiPromise: Promise<Chunk[]> | null = null;
+
+/**
+ * The API entries from chapter 8.22 of the README (made from the code's own typings, so it is the README that holds them).
+ * Only when the README cannot be loaded or has no such chapter, the page's own copy of the same typings answers.
+ */
+function apiFromReadme(): Promise<Chunk[]> {
+  apiPromise ??= fetchReadme()
+    .then(({ text }) => apiReference(text))
+    .catch(() => null)
+    .then((dts) => apiChunks(dts && dts.length > 500 ? dts : CELL_API_DTS));
+  return apiPromise;
+}
+
 let readmePromise: Promise<Chunk[]> | null = null;
 
 /** The README by heading, as it is on GitHub (the place of truth); the copy published next to the page is the fallback. */
@@ -177,7 +181,10 @@ function readmeChunks(): Promise<Chunk[]> {
       let title = '';
       let body: string[] = [];
       const flush = (): void => {
-        if (title && body.join('').trim()) out.push({ title, text: `${title}\n${body.join('\n').trim()}` });
+        const text = body.join('\n').trim();
+        // The API chapter is one long block of declarations: it is searched as "api" (entry by entry), not as a README part.
+        if (title && text && !text.includes(API_BEGIN.slice(0, 24))) out.push({ title, text: `${title}\n${text}` });
+        else if (title && text) out.push({ title, text: `${title}\nThe exact signatures of everything a cell can use: ask read_docs with doc "api" and a few words.` });
       };
       for (const line of text.split('\n')) {
         const h = /^(#{2,4})\s+(.*)$/.exec(line);
@@ -252,7 +259,7 @@ export async function readDocs(args: { doc: string; query?: string; path?: strin
   if (doc !== 'api' && doc !== 'examples' && doc !== 'readme') return JSON.stringify({ error: `doc must be api, examples, readme or rules (not "${args.doc}")`, urls: docUrls() });
   let chunks: Chunk[];
   try {
-    chunks = doc === 'api' ? apiChunks() : doc === 'examples' ? exampleChunks() : await readmeChunks();
+    chunks = doc === 'api' ? await apiFromReadme() : doc === 'examples' ? exampleChunks() : await readmeChunks();
   } catch (err) {
     return JSON.stringify({ error: `The README could not be loaded (${err instanceof Error ? err.message : String(err)}). It is at ${docUrls().readme}.` });
   }

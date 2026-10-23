@@ -368,18 +368,10 @@ function limit(text: string, max = MAX_RESULT): string {
 
 const CELL_RULES = `Rules of cell code (read these first):\n${RULES.cell}\n`;
 
-/** The cell API guide: the "Cell code API" part of /llms.txt (which is served with the page), with the rules in front. */
+/** The cell API guide: the rules of cell code, then the outline of the API from chapter 8.22 of the README (the exact signatures come with read_docs doc "api" and a query). */
 async function cellGuide(): Promise<string> {
-  try {
-    const res = await fetch(`${import.meta.env.BASE_URL}llms.txt`);
-    const text = await res.text();
-    const start = text.indexOf('## Cell code API');
-    const end = text.indexOf('## Game rules');
-    if (start >= 0) return `${CELL_RULES}\n${text.slice(start, end > start ? end : undefined)}`;
-  } catch {
-    // offline copy missing: the short rules and the window.mms guide still help
-  }
-  return CELL_RULES;
+  const outline = await readDocs({ doc: 'api' }, 7500);
+  return `${CELL_RULES}\nThe API (exact names; ask read_docs with doc "api" and a few words for the signatures):\n${outline}`;
 }
 
 const asText = (value: unknown): string => (typeof value === 'string' ? value : JSON.stringify(value));
