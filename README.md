@@ -276,8 +276,10 @@ switches both at once.
 To edit a cell:
 
 - Double-click it to open it in a popup Monaco editor. Drag its title bar to
-  move it, double-click the title bar to fill the screen (and again to go
-  back), and resize it from its corner handle.
+  move it, double-click the title bar to park it as a column along the right
+  edge of the sheet (and again to go back), and resize it from its corner
+  handle. The ◎ cell button in the title bar zooms the sheet to the cell you
+  are editing (and back).
 - Or, in view mode, type directly into the cell on the sheet itself. The
   tiny ⋮ in the corner of the cell (see [the ⋮ menu](#the--menu)) is a handle: drag
   it to move the cell's content (code, output, colour, span) to another cell.

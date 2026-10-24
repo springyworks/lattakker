@@ -3,15 +3,13 @@ import { MIN_SCALE, type Sheet } from '../sheet/Sheet';
 import { workspace } from '../workspace';
 
 const STEP = 1.15;
-/** One notch of a mouse wheel: a fixed, small step (a notch reports about 100 pixels, which must not mean "zoom 2.7 times"). */
-const NOTCH = 1.12;
+/** One notch of a mouse wheel is exactly one press of the + or − button (a notch reports about 100 pixels, which must not mean "zoom 2.7 times"). */
+const NOTCH = STEP;
 /** A trackpad pinch reports many small deltas: each one counts a little, but never more than this. */
 const PINCH_PER_PIXEL = 0.008;
 const PINCH_MAX = 0.06;
-/** However fast the wheel is turned, the aim is never further than this away from what is on screen: no running ahead of the picture. */
-const MAX_LEAD = 1.5;
 /** The glide: the picture covers 63% of the way to the aim every this many milliseconds, and never goes past it. */
-const GLIDE_MS = 70;
+const GLIDE_MS = 60;
 const MAX_SCALE = 2.5;
 
 /**
@@ -118,18 +116,15 @@ export class ZoomControls {
     // A click of a mouse wheel is big and whole (100 pixels, or lines); a pinch is a stream of small fractions.
     const notch = e.deltaMode !== 0 || Math.abs(pixels) >= 40;
     const change = notch ? -Math.sign(pixels) * Math.log(NOTCH) : Math.max(-PINCH_MAX, Math.min(PINCH_MAX, -pixels * PINCH_PER_PIXEL));
-    this.aimAt(change, [e.clientX, e.clientY], true);
+    this.aimAt(change, [e.clientX, e.clientY]);
   }
 
   /** Moves the aim by `change` (a logarithm: 0.1 is about 10%) around a point of the screen, and starts the glide. */
-  private aimAt(change: number, around: [number, number], capped = false): void {
+  private aimAt(change: number, around: [number, number]): void {
     const now = this.sheet.graph.getView().getScale();
-    // While a glide is on, the next turn adds to its aim; otherwise it starts from what is on screen.
+    // While a glide is on, the next turn adds to its aim (every notch counts, however slow the redraw); otherwise it starts from what is on screen.
     const from = this.frame ? this.aim : now;
-    const lead = Math.log(MAX_LEAD);
-    const toward = Math.log(Math.min(MAX_SCALE, Math.max(MIN_SCALE, from * Math.exp(change))) / now);
-    // Only the wheel is held back; a button, Ctrl + 0 and the like say exactly where to go.
-    this.aim = now * Math.exp(capped ? Math.max(-lead, Math.min(lead, toward)) : toward);
+    this.aim = Math.min(MAX_SCALE, Math.max(MIN_SCALE, from * Math.exp(change)));
     this.anchor = around;
     if (!this.frame) {
       this.applied = now;

@@ -7,10 +7,10 @@ export function exampleTemplate(cols: number, rows: number): string {
   return `// My example: replace this line with a title for it.
 // Say in plain words what it should do, then build it step by step below.
 
-// Make the block big enough to see the code and what it shows.
+/** Make the block big enough to see the code and what it shows. */
 span(${cols}, ${rows})
 
-// Step 1: say hello. Change the words between the quotes.
+/** Step 1: say hello. Change the words between the quotes. */
 show('Hello! This is my own example.')
 
 // Step 2: your idea goes here. Tip: hover over any word to learn what it does,

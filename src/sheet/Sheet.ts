@@ -384,6 +384,8 @@ export class Sheet {
     this.graph = new Graph(container, undefined, [TooltipHandler, SelectionCellsHandler, SelectionHandler, PanningHandler, PopupMenuHandler]);
     const graph = this.graph;
     const model = graph.getDataModel();
+    // Nothing here folds; without this maxGraph asks for images/expanded.gif, which does not exist (404).
+    graph.options.foldingEnabled = false;
 
     graph.setHtmlLabels(true);
     graph.setCellsEditable(false);
@@ -2895,7 +2897,7 @@ export class Sheet {
   /** Takes a view at once (no flight). */
   jumpTo(view: SheetView): void {
     this.flight++;
-    this.graph.zoomTo(view.scale, false);
+    this.applyScale(view.scale);
     this.container.scrollLeft = view.left;
     this.container.scrollTop = view.top;
     this.updateStickyHeaders();
@@ -3108,7 +3110,7 @@ export class Sheet {
         const p = Math.min(1, (now - start) / duration);
         const e = p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
         const s = Math.max(MIN_SCALE, from.scale * Math.pow(end / from.scale, e) * (1 - dip * Math.sin(Math.PI * e)));
-        this.graph.zoomTo(s, false);
+        this.applyScale(s);
         c.scrollLeft = (a.x + (b.x - a.x) * e) * s - hx;
         c.scrollTop = (a.y + (b.y - a.y) * e) * s - hy;
         this.updateStickyHeaders();
@@ -3128,10 +3130,17 @@ export class Sheet {
     return true;
   }
 
+  /** Sets the scale exactly. (graph.zoomTo rounds to whole percents, so a small step of a smooth zoom would come to nothing and stick.) */
+  private applyScale(scale: number): void {
+    // A hidden tab has no size, and a view worked out from it may be nonsense: never hand that to the view.
+    if (!Number.isFinite(scale) || scale <= 0) return;
+    this.graph.getView().setScale(scale);
+  }
+
   zoomBy(factor: number): void {
     const view = this.graph.getView();
     const next = Math.min(2.5, Math.max(MIN_SCALE, view.getScale() * factor));
-    this.graph.zoomTo(next, false);
+    this.applyScale(next);
     this.updateStickyHeaders();
   }
 
@@ -3146,7 +3155,7 @@ export class Sheet {
     const py = clientY - rect.top;
     const modelX = (this.container.scrollLeft + px) / before;
     const modelY = (this.container.scrollTop + py) / before;
-    this.graph.zoomTo(next, false);
+    this.applyScale(next);
     this.container.scrollLeft = modelX * next - px;
     this.container.scrollTop = modelY * next - py;
     this.updateStickyHeaders();

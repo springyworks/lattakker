@@ -80,6 +80,8 @@ export class TabStrip {
     this.graph = new Graph(container, undefined, [TooltipHandler]);
     const graph = this.graph;
     graph.setEnabled(true);
+    // Nothing here folds; without this maxGraph asks for images/expanded.gif, which does not exist (404).
+    graph.options.foldingEnabled = false;
     graph.setCellsMovable(false);
     graph.setCellsResizable(false);
     graph.setCellsEditable(false);

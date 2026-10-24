@@ -32,7 +32,8 @@ const FRESH_MS = 700;
 let fps: number | null = null;
 let lastRead: { at: number; value: SystemInfo } | null = null;
 let inflight: Promise<SystemInfo> | null = null;
-let devServer: boolean | null = null;
+// Only `npm run dev` has the /__lattakker/system server; a built page must not even ask (a 404 in the console).
+let devServer: boolean | null = import.meta.env.DEV ? null : false;
 const history: Array<{ at: number; values: Record<SeriesName, number | null> }> = [];
 
 /** Counts the page's own frames per second (only while somebody is looking: it starts with the first read()). */

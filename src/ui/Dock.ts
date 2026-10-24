@@ -29,6 +29,8 @@ export class Dock {
     document.body.classList.add('has-dock');
 
     this.graph = new Graph(this.host, undefined, []);
+    // Nothing here folds; without this maxGraph asks for images/expanded.gif, which does not exist (404).
+    this.graph.options.foldingEnabled = false;
     this.graph.setHtmlLabels(true);
     this.graph.setCellsMovable(false);
     this.graph.setCellsSelectable(false);

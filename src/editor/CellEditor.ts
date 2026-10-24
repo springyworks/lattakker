@@ -70,6 +70,7 @@ export class CellEditor {
     const relayout = () => this.editor?.layout();
     graph.getView().addListener(InternalEvent.SCALE, relayout);
     graph.getView().addListener(InternalEvent.SCALE_AND_TRANSLATE, relayout);
+    sheet.onZoomState(() => this.updateCellZoomButton());
     graph.isCellResizable = (cell: Cell) => cell.getId() === 'ed:frame' || sheet.hasHandles(cell);
     // SelectionCellsHandler (needed so resize handles render at all) would otherwise let any
     // clicked cell enter native selection and grow a VertexHandler outline; restrict that to the
@@ -224,8 +225,20 @@ export class CellEditor {
     this.editor?.layout();
   }
 
-  /** Double-click on the title bar: fill the visible sheet area, or go back to the old place. */
+  /** Fill the visible sheet area, or go back to the old place. */
   toggleMaximize(): void {
+    this.rearrange((v, m) => [v.x + m, v.y + m, Math.max(MIN_W, v.width - 2 * m), Math.max(MIN_H, v.height - 2 * m)]);
+  }
+
+  /** Double-click on the title bar: park the editor as a column along the right edge of the sheet (next to the AI sidebar), or go back to the old place. */
+  toggleDock(): void {
+    this.rearrange((v, m, g) => {
+      const w = Math.min(Math.max(MIN_W, g.width), Math.max(MIN_W, v.width * 0.6));
+      return [v.x + v.width - w - m, v.y + m, w, Math.max(MIN_H, v.height - 2 * m)];
+    });
+  }
+
+  private rearrange(place: (v: { x: number; y: number; width: number; height: number }, margin: number, now: Geometry) => [number, number, number, number]): void {
     if (!this.frame) return;
     if (this.restoreGeo) {
       const g = this.restoreGeo;
@@ -235,9 +248,23 @@ export class CellEditor {
     }
     const g = this.frame.getGeometry()!;
     this.restoreGeo = new Geometry(g.x, g.y, g.width, g.height);
-    const v = this.sheet.visibleRect();
-    const m = 8;
-    this.setFrameGeometry(v.x + m, v.y + m, Math.max(MIN_W, v.width - 2 * m), Math.max(MIN_H, v.height - 2 * m));
+    this.setFrameGeometry(...place(this.sheet.visibleRect(), 8, g));
+  }
+
+  private cellZoomButton: HTMLButtonElement | null = null;
+
+  private updateCellZoomButton(): void {
+    const b = this.cellZoomButton;
+    if (!b || !this.address) return;
+    const here = this.sheet.isZoomedOn(this.address);
+    b.textContent = here ? '◎ back' : '◎ cell';
+    b.title = here ? 'Zoom the sheet back to where it was' : 'Zoom the sheet to the cell block you are editing, so you can watch it work. Press again to go back.';
+  }
+
+  /** Zooms the sheet to the block of the cell under edit, or back to where it was. */
+  toggleCellZoom(): void {
+    if (!this.address) return;
+    void (this.sheet.isZoomedOn(this.address) ? this.sheet.zoomOut() : this.sheet.zoomInOn(this.address));
   }
 
   /** The frame's label is a DOM node that swallows pointer events, so the title bar moves it itself. */
@@ -278,7 +305,7 @@ export class CellEditor {
       window.addEventListener('pointercancel', end, true);
       e.preventDefault();
     });
-    bar.addEventListener('dblclick', () => this.toggleMaximize());
+    bar.addEventListener('dblclick', () => this.toggleDock());
   }
 
   private openedAt = 0;
@@ -386,7 +413,7 @@ export class CellEditor {
       arrows.appendChild(arrow);
     }
     titleBar.append(arrows, where, document.createTextNode(' · TypeScript'));
-    titleBar.title = 'Ctrl+Enter restarts the cell · Esc restarts it and closes · drag this bar to move · double-click it to fill the screen';
+    titleBar.title = 'Ctrl+Enter restarts the cell · Esc restarts it and closes · drag this bar to move · double-click it to park it at the right edge (again: back)';
     this.installTitleDrag(titleBar);
     const fit = document.createElement('button');
     fit.type = 'button';
@@ -397,6 +424,15 @@ export class CellEditor {
     fit.addEventListener('dblclick', (e) => e.stopPropagation());
     fit.addEventListener('click', () => void this.sheet.fitToView(null, 'editor'));
     titleBar.appendChild(fit);
+    const cellZoom = document.createElement('button');
+    cellZoom.type = 'button';
+    cellZoom.className = 'cell-editor-fit';
+    this.cellZoomButton = cellZoom;
+    this.updateCellZoomButton();
+    cellZoom.addEventListener('pointerdown', (e) => e.stopPropagation());
+    cellZoom.addEventListener('dblclick', (e) => e.stopPropagation());
+    cellZoom.addEventListener('click', () => this.toggleCellZoom());
+    titleBar.appendChild(cellZoom);
     const body = document.createElement('div');
     body.className = 'cell-editor-body';
     host.appendChild(titleBar);
@@ -509,6 +545,9 @@ export class CellEditor {
       return [
       { label: 'Restart', hint: 'Ctrl+Enter', onSelect: () => this.run() },
       { label: '⤢ Zoom to fit', hint: 'F', title: 'Zooms and moves the sheet so this whole editor fits the window. Choose again for the whole sheet, then back to where you were.', onSelect: () => void this.sheet.fitToView(null, 'editor') },
+      { label: '⇥ Park at the right edge', hint: 'double-click', title: 'Puts the editor in a column along the right edge of the sheet. Choose again to go back.', onSelect: () => this.toggleDock() },
+      { label: '⛶ Fill the sheet', title: 'Makes the editor as large as the visible sheet. Choose again to go back.', onSelect: () => this.toggleMaximize() },
+      { label: '◎ Zoom to this cell', title: 'Zooms the sheet to the cell block you are editing. Choose again to go back.', onSelect: () => this.toggleCellZoom() },
       { label: tasks > 0 ? `⏹ Stop timers & events (${tasks})` : '⏹ Stop timers & events', title: 'Stops every timer and event watcher this cell started. The code stays.', disabled: tasks === 0, onSelect: () => { if (this.address) this.hooks.onStop(this.address); } },
       { label: '▶ Start timers & events', title: 'Runs the code from the top, which starts its timers and event watchers again.', disabled: tasks > 0, onSelect: () => this.run() },
       { label: 'Restart & close', hint: 'Esc', onSelect: () => this.close(true) },
