@@ -342,7 +342,11 @@ for half a second.
 
 Inside the popup editor, cells are always live: **Restart** (Ctrl+Enter) stops the
 cell's timers and runs its code again from the top, and **Restart & close**
-(Escape) does the same and closes the editor. **Close** throws the edit away. The strip at the bottom shows the cell's
+(Escape) does the same and closes the editor. The green **Restart** button is also a
+countdown for lazy typists: once the code has changed and has no TypeScript errors it
+counts down from 7 seconds ("Restart in 5", warming up and pulsing near the end), every
+keystroke starts the count over, and at 0 the cell restarts by itself (the button flashes
+"✓ Restarted"). While there are errors it waits and shows "Restart ⚠". **Close** throws the edit away. The strip at the bottom shows the cell's
 latest output. A click on that strip counts as a click on the cell (so code
 that waits with `on(cell, 'click', ...)` reacts); the small **enlarge / shrink**
 button in its corner makes the strip bigger. To choose the size yourself, **drag the

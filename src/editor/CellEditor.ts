@@ -23,11 +23,24 @@ const MIN_W = 320;
 const MIN_H = 200;
 const BTN_W = 100;
 const BTN_GAP = 6;
+/** The idle-restart countdown: this long after the last keystroke, clean changed code restarts by itself. */
+const AUTO_RESTART_MS = 7000;
+const FLASH_MS = 1100;
+const AUTO_TICK_MS = 120;
+const RESTART_BUSY = '#a9791f';
+const RESTART_HOT = '#6fcf8e';
 const BUTTONS: Array<[string, string, string]> = [
   ['ed:btn:run', 'Restart', THEME.go],
   ['ed:btn:save', 'Restart & close', THEME.primary],
   ['ed:btn:close', 'Close', THEME.neutral],
 ];
+
+/** Blends two #rrggbb colours (t = 0 gives a, t = 1 gives b). */
+function mixHex(a: string, b: string, t: number): string {
+  const k = Math.min(1, Math.max(0, t));
+  const ch = (hex: string, i: number) => parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16);
+  return '#' + [0, 1, 2].map((i) => Math.round(ch(a, i) + (ch(b, i) - ch(a, i)) * k).toString(16).padStart(2, '0')).join('');
+}
 
 export interface CellEditorHooks {
   onSave(address: string, code: string): void;
@@ -53,6 +66,12 @@ export class CellEditor {
   private hints: monaco.editor.IEditorDecorationsCollection | null = null;
   private hintTimer = 0;
   private outTimer = 0;
+  private autoTimer = 0;
+  /** The code as it was when the cell last ran (or when the editor opened): "changed" means different from this. */
+  private ranCode = '';
+  private lastEdit = 0;
+  private flashUntil = 0;
+  private runShown = { label: '', fill: '' };
   private outBox: HTMLElement | null = null;
   private outCell: HTMLElement | null = null;
   private outHtml = '';
@@ -489,7 +508,15 @@ export class CellEditor {
     this.editor.focus();
     this.hints = this.editor.createDecorationsCollection();
     this.editor.onDidChangeCursorPosition(() => this.updateHints());
-    this.editor.onDidChangeModelContent(() => this.updateHints());
+    this.editor.onDidChangeModelContent(() => {
+      this.updateHints();
+      this.lastEdit = performance.now();
+    });
+    this.ranCode = this.editor.getValue();
+    this.lastEdit = performance.now();
+    this.flashUntil = 0;
+    this.runShown = { label: 'Restart', fill: THEME.go };
+    this.autoTimer = window.setInterval(() => this.tickRestartButton(), AUTO_TICK_MS);
     this.hintTimer = window.setInterval(() => this.updateHints(), 3000);
     this.updateHints();
     this.layoutOutput();
@@ -599,7 +626,59 @@ export class CellEditor {
 
   run(): void {
     if (!this.address || !this.editor) return;
-    this.hooks.onRun(this.address, this.editor.getValue());
+    const code = this.editor.getValue();
+    this.ranCode = code;
+    this.flashUntil = performance.now() + FLASH_MS;
+    this.hooks.onRun(this.address, code);
+    this.tickRestartButton();
+  }
+
+  private hasErrors(): boolean {
+    const model = this.editor?.getModel();
+    return !!model && monaco.editor.getModelMarkers({ resource: model.uri }).some((m) => m.severity === monaco.MarkerSeverity.Error);
+  }
+
+  /**
+   * The green Restart button is also a countdown for people who type and then wait: while the code differs from what ran and has no
+   * TypeScript errors, it counts down from 7 s (every keystroke starts the count again) and restarts the cell at 0.
+   */
+  private tickRestartButton(): void {
+    const btn = this.sheet.graph.getDataModel().getCell('ed:btn:run');
+    if (!btn || !this.editor) return;
+    const now = performance.now();
+    let label = 'Restart';
+    let fill: string = THEME.go;
+    if (now < this.flashUntil) {
+      const fade = (this.flashUntil - now) / FLASH_MS;
+      label = '✓ Restarted';
+      fill = mixHex(THEME.go, RESTART_HOT, fade);
+    } else if (this.editor.getValue() !== this.ranCode) {
+      if (this.hasErrors()) {
+        label = 'Restart ⚠';
+        fill = RESTART_BUSY;
+        this.lastEdit = now;
+      } else {
+        const left = AUTO_RESTART_MS - (now - this.lastEdit);
+        if (left <= 0) {
+          this.run();
+          return;
+        }
+        const warm = 1 - left / AUTO_RESTART_MS;
+        const beat = left < 3000 ? (Math.sin(now / 90) + 1) / 2 : 0;
+        label = `Restart in ${Math.ceil(left / 1000)}`;
+        fill = mixHex(mixHex(RESTART_BUSY, THEME.go, warm), RESTART_HOT, beat * 0.6);
+      }
+    }
+    if (label === this.runShown.label && fill === this.runShown.fill) return;
+    const graph = this.sheet.graph;
+    graph.batchUpdate(() => {
+      if (label !== this.runShown.label) graph.getDataModel().setValue(btn, label);
+      if (fill !== this.runShown.fill) {
+        graph.setCellStyles('fillColor', fill, [btn]);
+        graph.setCellStyles('strokeColor', fill, [btn]);
+      }
+    });
+    this.runShown = { label, fill };
   }
 
   /** Closes an editor that was opened a moment ago by a double-click that turned out to be the start of a mouse gesture. */
@@ -613,6 +692,7 @@ export class CellEditor {
     const code = this.editor?.getValue() ?? '';
     window.clearInterval(this.hintTimer);
     window.clearInterval(this.outTimer);
+    window.clearInterval(this.autoTimer);
     this.outBox = null;
     this.outCell = null;
     this.hints = null;
