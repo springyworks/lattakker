@@ -4,6 +4,7 @@ import './ui/outsidePresence';
 import './ui/subtitles';
 import { parseLink } from './deeplink';
 import { applyViewLink, wantsTheView } from './viewLink';
+import { Client } from '@maxgraph/core';
 import '@maxgraph/core/css/common.css';
 import './style.css';
 import { Sheet } from './sheet/Sheet';
@@ -40,6 +41,9 @@ import { nav } from './nav';
 import { ShareDialog } from './ui/ShareDialog';
 import { MailPanel } from './ui/MailPanel';
 import { installHelp, toggleHelp } from './ui/help';
+
+// maxGraph's own images (popup submenu arrow...) are shipped in public/images, so a built page does not 404 on them.
+Client.setImageBasePath(`${import.meta.env.BASE_URL}images`);
 
 const HELP = `How to play Lattakker
 • Both armies have 40 pieces. Yours is RED. Blue's pieces are face down.
