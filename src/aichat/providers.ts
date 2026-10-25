@@ -572,7 +572,7 @@ export class OpenAiCompatProvider implements ModelProvider {
     if (!res.ok) throw fail(res.status, await errorMessage(res));
     if (this.paid) {
       // Every model with its price; only the ones that can use tools, since the helper works through tools. Cheapest first.
-      const models = parseModels(await res.json()).filter((m) => m.tools);
+      const models = parseModels(await res.json()).filter((m) => m.tools && !m.id.endsWith(':batch'));
       setPrices(models);
       return models.sort((a, b) => a.price.prompt + a.price.completion - (b.price.prompt + b.price.completion) || a.id.localeCompare(b.id)).map((m) => m.id);
     }
