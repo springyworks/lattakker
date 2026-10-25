@@ -20,6 +20,7 @@ import { createCellViewEditor, modelFor, monaco, parseCellUri, typescriptWorker 
 
 const DWELL_MS = 500; // rest this long on a word or row before a level opens or switches
 const GRACE_MS = 700; // pointer must be away from the whole chain this long before it closes
+const STALE_MS = 350; // a panel stays this long after Monaco's own hover has gone (time to reach it with the pointer)
 const ROW_H = 19;
 const TITLE_H = 20;
 const MAX_REF_ROWS = 10;
@@ -86,6 +87,9 @@ export class ContextPopups {
   private wordTimer = 0;
   private pendingWordKey = '';
   private closeTimer = 0;
+  private staleTimer = 0;
+  /** The word under the pointer, per editor: a panel whose answer arrives after the pointer moved on is not shown. */
+  private pointerWord = new WeakMap<monaco.editor.ICodeEditor, string>();
   private lastAliveAt = 0;
   private hoveredEditor: monaco.editor.ICodeEditor | null = null;
 
@@ -135,6 +139,7 @@ export class ContextPopups {
   closeAll(): void {
     window.clearTimeout(this.closeTimer);
     this.closeTimer = 0;
+    this.cancelStale();
     this.cancelWordDwell();
     this.collapse(0);
   }
@@ -146,6 +151,7 @@ export class ContextPopups {
     const id = me.getCell()?.getId() ?? '';
     if (id.startsWith('ctx:')) {
       this.alive();
+      this.cancelStale();
       this.hoverCtx(id);
       return;
     }
@@ -203,6 +209,8 @@ export class ContextPopups {
       this.setCellTooltips(false);
       const pos = e.target.position;
       const word = pos ? model.getWordAtPosition(pos) : null;
+      this.pointerWord.set(editor, word?.word ?? '');
+      this.followMonacoHover(editor, model, word?.word ?? '', e.target.type === monaco.editor.MouseTargetType.CONTENT_WIDGET);
       if (!pos || !word) {
         this.cancelWordDwell();
         return;
@@ -221,11 +229,40 @@ export class ContextPopups {
       }, DWELL_MS);
     });
     editor.onMouseLeave(() => {
+      this.pointerWord.set(editor, '');
       if (this.hoveredEditor === editor) this.hoveredEditor = null;
       this.setCellTooltips(true);
       this.cancelWordDwell();
       this.scheduleClose(true);
     });
+    // Monaco's own hover goes away on typing and scrolling: the panel next to it goes too.
+    const dropOwnPanel = (): void => {
+      const depth = this.editorDepth.get(editor) ?? 0;
+      if (this.levels[depth]?.kind === 'panel') this.collapse(depth);
+    };
+    editor.onKeyDown(dropOwnPanel);
+    editor.onDidScrollChange(() => this.hoveredEditor === editor && dropOwnPanel());
+  }
+
+  /**
+   * The panel is an addition to Monaco's own hover, so it must not outlive it. Monaco hides its hover when
+   * the pointer leaves the word (unless it is on the hover itself): after a short grace the panel goes too,
+   * instead of hanging there until the pointer leaves the whole editor.
+   */
+  private followMonacoHover(editor: monaco.editor.ICodeEditor, model: monaco.editor.ITextModel, word: string, onHover: boolean): void {
+    this.cancelStale();
+    const depth = this.editorDepth.get(editor) ?? 0;
+    const level = this.levels[depth];
+    if (level?.kind !== 'panel' || level.uri !== model.uri.toString() || onHover || word === level.word) return;
+    this.staleTimer = window.setTimeout(() => {
+      this.staleTimer = 0;
+      if (this.levels[depth] === level) this.collapse(depth);
+    }, STALE_MS);
+  }
+
+  private cancelStale(): void {
+    window.clearTimeout(this.staleTimer);
+    this.staleTimer = 0;
   }
 
   private setCellTooltips(on: boolean): void {
@@ -268,6 +305,7 @@ export class ContextPopups {
     if (model.isDisposed()) return;
     // The pointer left the chain while the worker was thinking: do not pop up behind its back.
     if (this.hoveredEditor !== editor) return;
+    if (this.pointerWord.get(editor) !== word) return;
     this.alive();
 
     const rows: RowSpec[] = [];
@@ -438,7 +476,10 @@ export class ContextPopups {
     for (const type of STOP_TYPES) {
       mount.addEventListener(type, (e) => e.stopPropagation(), { passive: type === 'wheel' || type === 'touchstart' });
     }
-    host.addEventListener('pointermove', () => this.alive());
+    host.addEventListener('pointermove', () => {
+      this.alive();
+      this.cancelStale();
+    });
     // The output pane of this little editor gets the app's popup menu as well (not the browser's).
     installPopupMenu(out, () => {
       const picked = window.getSelection()?.toString() ?? '';

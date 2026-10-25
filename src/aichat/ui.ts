@@ -17,7 +17,8 @@ import { getLive, onLiveChange } from './ollamaLoad';
 import { bellOn, onBellChange, primeBell, ringBell, setBell, soundSources, typewriterSounds } from './bell';
 import { answerCheckpoint, checkpoints, EXTENSIONS, minutesText, onCheckpointChange } from './patience';
 import { memoryFileState } from './memorySync';
-import { GeminiProvider, OpenAiCompatProvider, friendly, makeProvider, type ModelProvider } from './providers';
+import { GeminiProvider, OpenAiCompatProvider, OpenRouterProvider, friendly, makeProvider, type ModelProvider } from './providers';
+import { cost, costLine, costWarn, modelLabel, priceOf, priceText, usd } from './cost';
 import type { AiContext, FixResult } from './tools';
 
 /**
@@ -97,6 +98,26 @@ function modelLine(): HTMLElement {
   return line;
 }
 
+/** The money line: always in view while OpenRouter is the helper (the price of the model, what was spent, what is left). */
+function costNode(): HTMLElement {
+  const line = el('div', { className: 'ai-cost' });
+  line.dataset.role = 'cost';
+  return line;
+}
+
+/** Paints every money line; cheap, so it can run on every piece of an answer. */
+function paintCost(nodes: HTMLElement[]): void {
+  const on = getSettings().provider === 'openrouter';
+  for (const node of nodes) {
+    const line = node.querySelector<HTMLElement>('[data-role=cost]');
+    if (!line) continue;
+    line.hidden = !on;
+    line.textContent = on ? costLine() : '';
+    line.classList.toggle('ai-warn', on && costWarn());
+    line.title = 'Real money. The price of the model, what this page has spent through OpenRouter (the amount is the one OpenRouter reports for each answer), and how much of your budget is left. The helper stops asking when the budget is used up. Change the budget in the settings ⚙.';
+  }
+}
+
 /** The tiny line about the local model's doings: what is known (measured, in green) apart from what is only a reading of it (maybe, in amber). */
 function liveLine(): HTMLElement {
   const line = el('div', { className: 'ai-live' });
@@ -166,6 +187,7 @@ export class AiChatUi {
     onLiveChange(() => this.render());
     onCheckpointChange(() => this.render());
     ammo.onChange(() => this.render());
+    cost.onChange(() => paintCost([this.side, this.mini]));
     onMemoryChange(() => this.settingsOpen && this.render());
     void isKeptSafe().then((v) => (this.kept = v));
     workspace.onFocusChange(() => this.paintChip());
@@ -211,7 +233,7 @@ export class AiChatUi {
     sent.dataset.role = 'sent';
     const form = el('div', { className: 'ai-form' }, this.sideInput, this.fixColumn(this.sideInput), send);
     this.sideBody.append(this.sideLog);
-    this.side.append(this.makeGrip(), head, modelLine(), liveLine(), this.sideBody, sent, form);
+    this.side.append(this.makeGrip(), head, costNode(), modelLine(), liveLine(), this.sideBody, sent, form);
     this.applyWidth(loadWidth());
   }
 
@@ -340,7 +362,7 @@ export class AiChatUi {
     send.onclick = () => this.submit(this.miniInput, () => this.miniCtx);
     const sent = el('div', { className: 'ai-sent' });
     sent.dataset.role = 'sent';
-    this.mini.append(head, modelLine(), liveLine(), this.miniLog, sent, el('div', { className: 'ai-form' }, this.miniInput, this.fixColumn(this.miniInput), send));
+    this.mini.append(head, costNode(), modelLine(), liveLine(), this.miniLog, sent, el('div', { className: 'ai-form' }, this.miniInput, this.fixColumn(this.miniInput), send));
   }
 
   /** The little chat can be moved: press on its header (not on a button) and drag. It stays inside the window. */
@@ -546,6 +568,7 @@ export class AiChatUi {
     const configured = isConfigured();
     const sent = `Your question and the cells the helper reads are sent to ${destination()}.`;
     const info = describeModel();
+    paintCost([this.side, this.mini]);
     for (const node of [this.side, this.mini]) {
       const line = node.querySelector<HTMLElement>('[data-role=sent]');
       if (line) line.textContent = configured ? sent : '';
@@ -773,7 +796,7 @@ export class AiChatUi {
     const s = getSettings();
     const root = el('div', { className: 'ai-settings' });
 
-    const choose = (id: 'local' | 'gemini', title: string, detail: string): HTMLElement => {
+    const choose = (id: 'local' | 'gemini' | 'openrouter', title: string, detail: string): HTMLElement => {
       const radio = el('input', { type: 'radio', name: 'ai-provider', checked: s.provider === id });
       radio.onchange = () => {
         updateSettings((x) => (x.provider = id));
@@ -785,10 +808,12 @@ export class AiChatUi {
     root.append(
       el('h3', { textContent: 'Choose the helper' }),
       choose('local', 'A model on this computer (recommended)', 'Ollama or LM Studio. Private and free: nothing leaves this computer. Best for children.'),
+      choose('openrouter', 'OpenRouter (adults only, costs money)', 'Hundreds of models with one key, paid per token. The real cost and your budget are always shown at the top of the chat.'),
       choose('gemini', 'Google Gemini (adults only)', 'Runs at Google. Needs your own key, and Google’s rules apply (see below).'),
     );
 
     if (s.provider === 'local') root.append(this.localSettings());
+    else if (s.provider === 'openrouter') root.append(this.openRouterSettings());
     else root.append(this.geminiSettings());
 
     const remember = el('input', { type: 'checkbox', checked: s.remember });
@@ -796,6 +821,7 @@ export class AiChatUi {
       updateSettings((x) => (x.remember = remember.checked));
       setKey('local', getKey('local'));
       setKey('gemini', getKey('gemini'));
+      setKey('openrouter', getKey('openrouter'));
     };
     const auto = el('input', { type: 'checkbox', checked: s.autoPopup });
     auto.onchange = () => updateSettings((x) => (x.autoPopup = auto.checked));
@@ -947,7 +973,7 @@ export class AiChatUi {
             st.models = models;
             st.note = models.length ? `${models.length} models. Pick one from the list.` : 'The server answered, but has no models.';
             // Without a choice, take the model the server already holds in memory: any other one makes it load (minutes) and push that one out.
-            if (models.length && !current) set((await provider.loadedModels?.())?.find((m) => models.includes(m)) ?? models[0]);
+            if (models.length && !current && !(provider instanceof OpenRouterProvider)) set((await provider.loadedModels?.())?.find((m) => models.includes(m)) ?? models[0]);
             this.render();
           },
           (err: unknown) => say(friendly(err)),
@@ -955,12 +981,20 @@ export class AiChatUi {
     };
     const choices = el('select', { className: 'ai-wide' });
     const names = st.models.includes(current) || !current ? st.models : [current, ...st.models];
-    if (!names.length) choices.append(el('option', { value: '', textContent: '(press “Find models”)' }));
-    for (const m of names) choices.append(el('option', { value: m, textContent: m, selected: m === current }));
+    const fillChoices = (needle: string): void => {
+      choices.textContent = '';
+      const shown = names.filter((m) => m === current || !needle || modelLabel(m).toLowerCase().includes(needle) || (needle === 'free' && priceOf(m) && !priceOf(m)!.prompt && !priceOf(m)!.completion));
+      if (!shown.length) choices.append(el('option', { value: '', textContent: names.length ? '(no model matches the filter)' : '(press “Find models”)' }));
+      for (const m of shown) choices.append(el('option', { value: m, textContent: modelLabel(m), selected: m === current }));
+    };
+    fillChoices('');
     choices.onchange = () => {
       set(choices.value);
       this.render();
     };
+    const filter = el('input', { type: 'text', className: 'ai-wide', placeholder: 'filter the list (for example: claude, qwen, free)' });
+    filter.oninput = () => fillChoices(filter.value.trim().toLowerCase());
+    filter.hidden = names.length < 12;
     const typed = el('input', { type: 'text', value: current, className: 'ai-wide', placeholder: 'or type a model name' });
     typed.onchange = () => {
       set(typed.value.trim());
@@ -984,7 +1018,7 @@ export class AiChatUi {
     };
     // The list is fetched by itself the first time, when there is a key (or no key is needed).
     if (auto && !st.models.length && !st.note) window.setTimeout(() => !st.models.length && !st.note && load(), 0);
-    return el('div', { className: 'ai-field' }, el('label', { textContent: 'Model' }), choices, el('div', { className: 'ai-inline' }, typed), el('div', { className: 'ai-actions' }, find, test), note);
+    return el('div', { className: 'ai-field' }, el('label', { textContent: 'Model' }), filter, choices, el('div', { className: 'ai-inline' }, typed), el('div', { className: 'ai-actions' }, find, test), note);
   }
 
   private localSettings(): HTMLElement {
@@ -1020,6 +1054,59 @@ export class AiChatUi {
         el('p', { textContent: 'On the live page (https) your browser may ask whether this site may reach devices on your own network: allow it.' }),
       ),
     );
+  }
+
+  private openRouterSettings(): HTMLElement {
+    const s = getSettings();
+    const key = el('input', { type: 'password', value: getKey('openrouter'), className: 'ai-wide', placeholder: 'paste your OpenRouter API key (sk-or-…)', autocomplete: 'off' });
+    key.onchange = () => {
+      setKey('openrouter', key.value);
+      void cost.refreshKey(getKey('openrouter'), true);
+      this.pickers.clear();
+      this.render();
+    };
+    const budget = el('input', { type: 'number', min: '0.01', step: '0.5', value: String(s.openrouter.budgetUsd), className: 'ai-num' });
+    budget.onchange = () => {
+      updateSettings((x) => (x.openrouter.budgetUsd = Number(budget.value)));
+      paintCost([this.side, this.mini]);
+    };
+    const reset = el('button', { className: 'ai-stop', textContent: 'Reset the counter' });
+    reset.title = 'Start counting the spent money from zero again (OpenRouter itself keeps its own record at openrouter.ai/activity)';
+    reset.onclick = () => {
+      cost.reset();
+      this.render();
+    };
+    const chosen = priceOf(s.openrouter.model);
+    const parts: HTMLElement[] = [
+      el(
+        'div',
+        { className: 'ai-terms' },
+        el('strong', { textContent: 'Before you use OpenRouter, please know:' }),
+        el(
+          'ul',
+          {},
+          el('li', { textContent: 'It costs real money, per token, at the price shown next to each model. Longer chats and a helper that works on its own cost more. The cost of every answer is added up and shown at the top of the chat.' }),
+          el('li', { textContent: 'Your question and the cells the helper reads go to OpenRouter and to the company that runs the model. Never send names, addresses or other personal information, and not to children.' }),
+          el('li', {}, 'Your key stays in this page (it is sent only to OpenRouter). Get one at ', link('https://openrouter.ai/keys', 'openrouter.ai/keys'), ' and set a spending limit on the key there too.'),
+        ),
+      ),
+      el('div', { className: 'ai-field' }, el('label', { textContent: 'OpenRouter API key' }), key),
+      el('div', { className: 'ai-field' }, el('label', { textContent: 'Budget in dollars: the helper stops asking when this much has been spent' }), budget, el('div', { className: 'ai-note', textContent: `Spent so far: ${usd(cost.spent)} (${usd(cost.session)} since this page was opened). ${usd(cost.left)} left.` }), el('div', { className: 'ai-actions' }, reset)),
+    ];
+    if (getKey('openrouter')) {
+      parts.push(
+        this.modelPicker(
+          'openrouter',
+          () => new OpenRouterProvider(getSettings().openrouter.model, getKey('openrouter')),
+          s.openrouter.model,
+          (m) => updateSettings((x) => (x.openrouter.model = m)),
+          true,
+        ),
+        el('div', { className: 'ai-note', textContent: s.openrouter.model ? `${s.openrouter.model}: ${priceText(chosen)}${chosen?.context ? `; holds ${Math.round(chosen.context / 1000)}k tokens (the page budgets for at most 64k to keep chats cheap)` : ''}. The list shows the models that can use tools, cheapest first.` : 'Choose a model. The list shows the models that can use tools, cheapest first, with their price per million tokens.' }),
+      );
+      void cost.refreshKey(getKey('openrouter'));
+    }
+    return el('div', { className: 'ai-group' }, ...parts);
   }
 
   private geminiSettings(): HTMLElement {

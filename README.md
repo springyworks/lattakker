@@ -3833,6 +3833,20 @@ Nothing is sent anywhere until a grown-up has chosen a helper in its settings (â
   children's app, and why the settings make you tick *"I am 18 or older"*
   before a key can be entered. The helper was written against Google's API
   description and tested with a stand-in server, not with a real Gemini key.
+- **OpenRouter (adults only, costs money).** One key from
+  [openrouter.ai/keys](https://openrouter.ai/keys), hundreds of models, paid per
+  token. The model list shows every model that can use tools with its **price
+  per million tokens**, cheapest first (type in the filter to narrow it, for
+  example `claude`, `qwen` or `free`). While OpenRouter is the helper, a
+  **money line is always visible at the top of the chat**: what has been spent
+  of your **budget** (default $10, set in âš™), what is left, the cost of the last
+  answer, an estimate that grows while an answer is being written (replaced by
+  the number OpenRouter reports), the price of the chosen model, and the credit
+  left on the key itself. When the budget is used up the helper stops asking
+  until you raise it or reset the counter. The page budgets for at most 64k
+  tokens of conversation, even on models that hold more, to keep chats cheap.
+  Your questions and the cells the helper reads go to OpenRouter and to the
+  maker of the model.
 - **Microsoft Copilot** is not available: it has no free way to be called from
   a web page.
 
@@ -4415,7 +4429,7 @@ src/sheet/svgScene.ts, svgAssets.ts   The animated-SVG engine (the svg global) a
 src/services/system.ts + scripts/system-stats.ts   How this computer is doing (the system global; the dev server reads /proc, /sys, nvidia-smi)
 src/storage.ts    Saves and restores the game and cells in localStorage
 src/ai/           window.mms, WebMCP tools, the text copy for AI helpers, and bridge.ts (the page end of /mcp)
-src/aichat/       The built-in helper: providers.ts (local OpenAI-compatible server, Gemini), tools.ts (what it may do, over the page's MCP), agent.ts, ui.ts (side chat + pop-up + settings), watcher.ts (the // AI: lines), config.ts (settings; keys stay in memory)
+src/aichat/       The built-in helper: providers.ts (local OpenAI-compatible server, Gemini, OpenRouter), cost.ts (prices, budget, the money line), tools.ts (what it may do, over the page's MCP), agent.ts, ui.ts (side chat + pop-up + settings), watcher.ts (the // AI: lines), config.ts (settings; keys stay in memory)
 src/theme.ts      The colour palette
 src/examples.ts   The code cells shown on first load. Like labDemos.ts and recipes.ts, every line is explained by a // comment above it in plain words for beginners: keep it that way when you add or change a cell
 resources/        Piece icons (original) and reference files, see its README

@@ -3,6 +3,7 @@ import { ammo } from './ammo';
 import { describeModel, describeTimings, loadEstimate, parsePs, parseTimings, rememberLoad, setLastRun, setLive, type PsModel, type Timings } from './ollamaLoad';
 import { jobs, type JobHandle } from './jobs';
 import { askToContinue, minutesText } from './patience';
+import { BudgetError, cost, paidWindow, parseModels, setPrices } from './cost';
 
 /**
  * The two kinds of language-model server the helper can talk to, behind one small interface. Messages and tools
@@ -66,6 +67,7 @@ export interface ModelProvider {
 }
 
 const GEMINI = 'https://generativelanguage.googleapis.com/v1beta';
+export const OPENROUTER = 'https://openrouter.ai/api/v1';
 const MAX_OUTPUT_TOKENS = 1400;
 /** Servers already recognised as Ollama (or not), by address. */
 const ollamaSeen = new Map<string, { ok: boolean; at: number }>();
@@ -127,6 +129,7 @@ async function errorMessage(res: Response): Promise<string> {
 }
 
 function fail(status: number, message: string): AiError {
+  if (status === 402) return new AiError('blocked', `OpenRouter says the credit is used up (${message}). Add credit at openrouter.ai/credits, or choose a free model.`);
   if (status === 401 || status === 403) return new AiError('auth', message);
   if (status === 429) return new AiError('rate', message);
   if (status >= 500) return new AiError('server', message);
@@ -157,8 +160,11 @@ export class OpenAiCompatProvider implements ModelProvider {
     private readonly apiKey: string,
     /** The memory (num_ctx) to ask Ollama for; only used when the server turns out to be Ollama. */
     private readonly context = DEFAULT_OLLAMA_CONTEXT,
+    /** OpenRouter: a paid service, so every question is priced and counted against the budget. */
+    private readonly paid = false,
   ) {
-    this.label = model || 'the local model';
+    this.label = model || (paid ? 'the OpenRouter model' : 'the local model');
+    if (paid) this.thinkingOff = false;
   }
 
   private url(path: string): string {
@@ -172,6 +178,7 @@ export class OpenAiCompatProvider implements ModelProvider {
 
   /** Is this Ollama? Then its own API is used, because only that one lets the page ask for a bigger memory (num_ctx). Looked up once, a "no" is re-checked after half a minute. */
   private async isOllama(): Promise<boolean> {
+    if (this.paid) return false;
     const known = ollamaSeen.get(this.root());
     if (known && (known.ok || performance.now() - known.at < 30000)) return known.ok;
     let ok = false;
@@ -188,6 +195,10 @@ export class OpenAiCompatProvider implements ModelProvider {
   private headers(): Record<string, string> {
     const h: Record<string, string> = { 'Content-Type': 'application/json' };
     if (this.apiKey) h.Authorization = `Bearer ${this.apiKey}`;
+    if (this.paid) {
+      h['HTTP-Referer'] = location.origin;
+      h['X-Title'] = 'Lattakker';
+    }
     return h;
   }
 
@@ -206,6 +217,7 @@ export class OpenAiCompatProvider implements ModelProvider {
   }
 
   async complete(system: string, messages: ChatMsg[], tools: ToolDecl[], signal: AbortSignal): Promise<ModelReply> {
+    if (this.paid) cost.assertWithin();
     const job = jobs.start('local-model', this.model || 'local model', { stallAfterSeconds: 120 });
     const started = performance.now();
     try {
@@ -221,6 +233,7 @@ export class OpenAiCompatProvider implements ModelProvider {
 
   /** What Ollama says about its memory right now: is our model in it (and how), which other models are, and how big a window ours has (null for servers without /api/ps). */
   private async ps(): Promise<{ loaded: boolean | null; others: string[]; window: number | null; mine: PsModel | null }> {
+    if (this.paid) return { loaded: null, others: [], window: null, mine: null };
     try {
       const res = await fetch(`${this.root()}/api/ps`, { signal: AbortSignal.timeout(1500) });
       if (!res.ok) return { loaded: null, others: [], window: null, mine: null };
@@ -233,6 +246,7 @@ export class OpenAiCompatProvider implements ModelProvider {
   }
 
   async loadedModels(): Promise<string[]> {
+    if (this.paid) return [];
     try {
       const res = await fetch(`${this.root()}/api/ps`, { signal: AbortSignal.timeout(1500) });
       return res.ok ? parsePs(await res.json()).map((m) => m.name) : [];
@@ -323,7 +337,9 @@ export class OpenAiCompatProvider implements ModelProvider {
         body.tools = declared;
         body.tool_choice = 'auto';
       }
-      ammo.setWindow(null);
+      // OpenRouter then reports what the question really cost, in dollars, in the last piece of the answer.
+      if (this.paid) body.usage = { include: true };
+      ammo.setWindow(this.paid ? paidWindow(this.model) : null);
     }
     // What is really going on while the first word has not come yet: ask the server whether the model is in memory.
     const ctl = new AbortController();
@@ -403,14 +419,17 @@ export class OpenAiCompatProvider implements ModelProvider {
       });
     }, 3000);
     const sentAt = performance.now();
+    const sentBody = JSON.stringify(body);
+    if (this.paid) cost.begin(this.model, sentBody.length);
     let res: Response;
     try {
-      res = await fetch(native ? `${this.root()}/api/chat` : this.url('/chat/completions'), { method: 'POST', headers: this.headers(), body: JSON.stringify(body), signal: ctl.signal });
+      res = await fetch(native ? `${this.root()}/api/chat` : this.url('/chat/completions'), { method: 'POST', headers: this.headers(), body: sentBody, signal: ctl.signal });
     } catch (err) {
       stopWatching();
       signal.removeEventListener('abort', relay);
       waitingForFirst = false;
       setLive(null);
+      if (this.paid) cost.finish(false);
       if (signal.aborted) throw err;
       if (stuck) throw new AiError('patience', stuck);
       throw this.unreachable(err);
@@ -420,6 +439,7 @@ export class OpenAiCompatProvider implements ModelProvider {
       signal.removeEventListener('abort', relay);
       waitingForFirst = false;
       setLive(null);
+      if (this.paid) cost.finish(false);
       const message = await errorMessage(res);
       if (res.status === 400 && this.thinkingOff && /reasoning|think/i.test(message)) {
         this.thinkingOff = false;
@@ -438,7 +458,8 @@ export class OpenAiCompatProvider implements ModelProvider {
     let text = '';
     let finish = '';
     const calls = new Map<number, { id: string; name: string; args: string }>();
-    const take = (chunk: { usage?: { prompt_tokens?: number; completion_tokens?: number }; choices?: Array<{ finish_reason?: string | null; delta?: { content?: string | null; reasoning?: string | null; reasoning_content?: string | null; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> }; message?: { content?: string | null; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: unknown } }> } }> }): void => {
+    const take = (chunk: { usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number }; choices?: Array<{ finish_reason?: string | null; delta?: { content?: string | null; reasoning?: string | null; reasoning_content?: string | null; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> }; message?: { content?: string | null; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: unknown } }> } }> }): void => {
+      if (this.paid && typeof chunk.usage?.cost === 'number') cost.report(chunk.usage.cost);
       if (chunk.usage?.prompt_tokens) ammo.record(chunk.usage.prompt_tokens, chunk.usage.completion_tokens ?? 0);
       const choice = chunk.choices?.[0];
       if (!choice) return;
@@ -456,6 +477,7 @@ export class OpenAiCompatProvider implements ModelProvider {
       }
       if (choice.finish_reason) finish = choice.finish_reason;
       words++;
+      if (this.paid) cost.progress(text.length + [...calls.values()].reduce((n, c) => n + c.args.length, 0));
       lastSign = performance.now();
       waitingForFirst = false;
       if (!askedWindow) {
@@ -526,6 +548,10 @@ export class OpenAiCompatProvider implements ModelProvider {
       stopWatching();
       signal.removeEventListener('abort', relay);
       waitingForFirst = false;
+      if (this.paid) {
+        cost.finish(words > 0);
+        void cost.refreshKey(this.apiKey);
+      }
       if (timings) setLastRun(describeTimings(timings));
       else setLive(null);
     }
@@ -544,8 +570,21 @@ export class OpenAiCompatProvider implements ModelProvider {
       throw this.unreachable(err);
     }
     if (!res.ok) throw fail(res.status, await errorMessage(res));
+    if (this.paid) {
+      // Every model with its price; only the ones that can use tools, since the helper works through tools. Cheapest first.
+      const models = parseModels(await res.json()).filter((m) => m.tools);
+      setPrices(models);
+      return models.sort((a, b) => a.price.prompt + a.price.completion - (b.price.prompt + b.price.completion) || a.id.localeCompare(b.id)).map((m) => m.id);
+    }
     const data = (await res.json()) as { data?: Array<{ id?: string }> };
     return (data.data ?? []).map((m) => m.id ?? '').filter(Boolean).sort();
+  }
+}
+
+/** OpenRouter: the same OpenAI-style door as Ollama, with a key, prices and a budget. */
+export class OpenRouterProvider extends OpenAiCompatProvider {
+  constructor(model: string, apiKey: string) {
+    super(OPENROUTER, model, apiKey, 0, true);
   }
 }
 
@@ -698,6 +737,9 @@ function parseJsonOr(text: string): unknown {
 
 /** The provider the settings ask for, or null when it is not set up. */
 export function makeProvider(settings: AiSettings = getSettings()): ModelProvider | null {
+  if (settings.provider === 'openrouter') {
+    return getKey('openrouter') && settings.openrouter.model ? new OpenRouterProvider(settings.openrouter.model, getKey('openrouter')) : null;
+  }
   if (settings.provider === 'local') {
     return settings.local.baseUrl && settings.local.model ? new OpenAiCompatProvider(settings.local.baseUrl, settings.local.model, getKey('local'), settings.local.context) : null;
   }
@@ -706,6 +748,7 @@ export function makeProvider(settings: AiSettings = getSettings()): ModelProvide
 
 /** A sentence a child can read for what went wrong. */
 export function friendly(err: unknown): string {
+  if (err instanceof BudgetError) return err.message;
   if (err instanceof AiError) {
     switch (err.kind) {
       case 'rate':

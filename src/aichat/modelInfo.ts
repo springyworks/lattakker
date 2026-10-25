@@ -55,11 +55,13 @@ function skillOf(name: string): string {
 export function describeModel(): ModelInfo {
   const s = getSettings();
   const gemini = s.provider === 'gemini';
-  const model = (gemini ? s.gemini.model : s.local.model) || '(no model chosen)';
+  const router = s.provider === 'openrouter';
+  const model = (gemini ? s.gemini.model : router ? s.openrouter.model : s.local.model) || '(no model chosen)';
   const lower = model.toLowerCase();
-  const company = gemini ? 'Google' : (FAMILIES.find(([re]) => re.test(lower))?.[1] ?? 'unknown maker');
+  const maker = router && model.includes('/') ? model.split('/')[0] : 'unknown maker';
+  const company = gemini ? 'Google' : (FAMILIES.find(([re]) => re.test(lower))?.[1] ?? maker);
   const host = destination();
-  const where = gemini ? 'Google (online)' : /^(localhost|127\.|\[::1\])/.test(host) ? 'this computer' : host;
+  const where = gemini ? 'Google (online)' : router ? 'OpenRouter (online, paid)' : /^(localhost|127\.|\[::1\])/.test(host) ? 'this computer' : host;
   const skill = skillOf(model);
   const short = `${company} · ${model}`;
   return { company, model, where, skill, short, line: `${company} · ${model} · ${where} · ${skill} (a guess from the name)` };
