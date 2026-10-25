@@ -128,8 +128,16 @@ async function errorMessage(res: Response): Promise<string> {
   }
 }
 
-function fail(status: number, message: string): AiError {
-  if (status === 402) return new AiError('blocked', `OpenRouter says the credit is used up (${message}). Add credit at openrouter.ai/credits, or choose a free model.`);
+export function fail(status: number, message: string): AiError {
+  if (status === 402) {
+    const url = message.match(/https:\/\/openrouter\.ai\/\S+?(?=[\s)]|$)/)?.[0];
+    const tokens = message.match(/(\d+)\s*>\s*(\d+)/);
+    if (/limit/i.test(message)) {
+      const size = tokens ? ` This question is ${Number(tokens[1]).toLocaleString('en')} tokens long (the helper's instructions and tools go along with every question), but the key may use only ${Number(tokens[2]).toLocaleString('en')} more.` : '';
+      return new AiError('blocked', `OpenRouter stopped the question: the spending limit of this API key is nearly reached, so it is not the account credit and not the page's budget.${size} Raise the key's total limit${url ? ` at ${url}` : ' at openrouter.ai/settings/keys'}, or make a key without a small limit. (OpenRouter said: ${message})`);
+    }
+    return new AiError('blocked', `OpenRouter says there is not enough credit (${message}). Add credit at openrouter.ai/credits, or choose a free model.`);
+  }
   if (status === 401 || status === 403) return new AiError('auth', message);
   if (status === 429) return new AiError('rate', message);
   if (status >= 500) return new AiError('server', message);
