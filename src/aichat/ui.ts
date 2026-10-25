@@ -6,7 +6,7 @@ import { router } from '../mcp/router';
 import { jobs, onJobsChange, type JobNode } from './jobs';
 import { installPopupMenu } from '../editor/EditorContextMenu';
 import type { Conversation, Entry } from './agent';
-import { destination, forgetAll, getKey, getSettings, isConfigured, OLLAMA_CONTEXT_OPTIONS, patienceMs, SERVER_CONTEXT, setKey, updateSettings, WAIT_OPTIONS } from './config';
+import { destination, forgetAll, getKey, getSettings, isConfigured, isPaidProvider, OLLAMA_CONTEXT_OPTIONS, patienceMs, SERVER_CONTEXT, setKey, updateSettings, WAIT_OPTIONS } from './config';
 import { localAssistantReady, localState, localWarning, makeLocalProvider, onLocalChange } from './localAi';
 import { renderMarkdown, linkify } from './markdown';
 import { allNotes, exportJson, forget, importJson, isKeptSafe, keepSafe, memoryInfo, onMemoryChange, wipe } from './memory';
@@ -17,7 +17,7 @@ import { getLive, onLiveChange } from './ollamaLoad';
 import { bellOn, onBellChange, primeBell, ringBell, setBell, soundSources, typewriterSounds } from './bell';
 import { answerCheckpoint, checkpoints, EXTENSIONS, minutesText, onCheckpointChange } from './patience';
 import { memoryFileState } from './memorySync';
-import { GeminiProvider, OpenAiCompatProvider, OpenRouterProvider, friendly, makeProvider, type ModelProvider } from './providers';
+import { EdenProvider, GeminiProvider, OpenAiCompatProvider, OpenRouterProvider, friendly, makeProvider, type ModelProvider } from './providers';
 import { cost, costLine, costWarn, modelLabel, paidWindow, priceOf, priceText, usd } from './cost';
 import type { AiContext, FixResult } from './tools';
 
@@ -98,7 +98,7 @@ function modelLine(): HTMLElement {
   return line;
 }
 
-/** The money line: always in view while OpenRouter is the helper (the price of the model, what was spent, what is left). */
+/** The money line: always in view while OpenRouter or Eden AI is the helper (the price of the model, what was spent, what is left). */
 function costNode(): HTMLElement {
   const line = el('div', { className: 'ai-cost' });
   line.dataset.role = 'cost';
@@ -107,14 +107,15 @@ function costNode(): HTMLElement {
 
 /** Paints every money line; cheap, so it can run on every piece of an answer. */
 function paintCost(nodes: HTMLElement[]): void {
-  const on = getSettings().provider === 'openrouter';
+  const on = isPaidProvider(getSettings().provider);
+  const who = getSettings().provider === 'eden' ? 'Eden AI' : 'OpenRouter';
   for (const node of nodes) {
     const line = node.querySelector<HTMLElement>('[data-role=cost]');
     if (!line) continue;
     line.hidden = !on;
     line.textContent = on ? costLine() : '';
     line.classList.toggle('ai-warn', on && costWarn());
-    line.title = 'Real money. The price of the model, what this page has spent through OpenRouter (the amount is the one OpenRouter reports for each answer), and how much of your budget is left. The helper stops asking when the budget is used up. Change the budget in the settings ⚙.';
+    line.title = `Real money. The price of the model, what this page has spent through ${who} (the amount is the one ${who} reports for each answer, or an estimate from the model's price), and how much of your budget is left. The helper stops asking when the budget is used up. Change the budget in the settings ⚙.`;
   }
 }
 
@@ -797,7 +798,7 @@ export class AiChatUi {
     const s = getSettings();
     const root = el('div', { className: 'ai-settings' });
 
-    const choose = (id: 'local' | 'gemini' | 'openrouter', title: string, detail: string): HTMLElement => {
+    const choose = (id: 'local' | 'gemini' | 'openrouter' | 'eden', title: string, detail: string): HTMLElement => {
       const radio = el('input', { type: 'radio', name: 'ai-provider', checked: s.provider === id });
       radio.onchange = () => {
         updateSettings((x) => (x.provider = id));
@@ -810,11 +811,12 @@ export class AiChatUi {
       el('h3', { textContent: 'Choose the helper' }),
       choose('local', 'A model on this computer (recommended)', 'Ollama or LM Studio. Private and free: nothing leaves this computer. Best for children.'),
       choose('openrouter', 'OpenRouter (adults only, costs money)', 'Hundreds of models with one key, paid per token. The real cost and your budget are always shown at the top of the chat.'),
+      choose('eden', 'Eden AI, France (adults only, costs money)', 'Hundreds of models with one key, paid per token, from a French company. It picks the cheapest working provider for the model you name. The real cost and your budget are always shown at the top of the chat.'),
       choose('gemini', 'Google Gemini (adults only)', 'Runs at Google. Needs your own key, and Google’s rules apply (see below).'),
     );
 
     if (s.provider === 'local') root.append(this.localSettings());
-    else if (s.provider === 'openrouter') root.append(this.openRouterSettings());
+    else if (s.provider === 'openrouter' || s.provider === 'eden') root.append(this.paidSettings(s.provider));
     else root.append(this.geminiSettings());
 
     const remember = el('input', { type: 'checkbox', checked: s.remember });
@@ -823,6 +825,7 @@ export class AiChatUi {
       setKey('local', getKey('local'));
       setKey('gemini', getKey('gemini'));
       setKey('openrouter', getKey('openrouter'));
+      setKey('eden', getKey('eden'));
     };
     const auto = el('input', { type: 'checkbox', checked: s.autoPopup });
     auto.onchange = () => updateSettings((x) => (x.autoPopup = auto.checked));
@@ -974,7 +977,7 @@ export class AiChatUi {
             st.models = models;
             st.note = models.length ? `${models.length} models. Pick one from the list.` : 'The server answered, but has no models.';
             // Without a choice, take the model the server already holds in memory: any other one makes it load (minutes) and push that one out.
-            if (models.length && !current && !(provider instanceof OpenRouterProvider)) set((await provider.loadedModels?.())?.find((m) => models.includes(m)) ?? models[0]);
+            if (models.length && !current && !(provider instanceof OpenRouterProvider || provider instanceof EdenProvider)) set((await provider.loadedModels?.())?.find((m) => models.includes(m)) ?? models[0]);
             this.render();
           },
           (err: unknown) => say(friendly(err)),
@@ -1019,7 +1022,7 @@ export class AiChatUi {
     };
     // The list is fetched by itself the first time, when there is a key (or no key is needed).
     if (auto && !st.models.length && !st.note) window.setTimeout(() => !st.models.length && !st.note && load(), 0);
-    const table = slot === 'openrouter' ? this.modelTable(names, current, (m) => { set(m); this.render(); }) : null;
+    const table = slot === 'openrouter' || slot === 'eden' ? this.modelTable(names, current, (m) => { set(m); this.render(); }) : null;
     return el('div', { className: 'ai-field' }, el('label', { textContent: 'Model' }), ...(table ? [table] : [filter, choices]), el('div', { className: 'ai-inline' }, typed), el('div', { className: 'ai-actions' }, find, test), note);
   }
 
@@ -1135,68 +1138,72 @@ export class AiChatUi {
     );
   }
 
-  private openRouterSettings(): HTMLElement {
+  private paidSettings(id: 'openrouter' | 'eden'): HTMLElement {
     const s = getSettings();
-    const key = el('input', { type: 'password', value: getKey('openrouter'), className: 'ai-wide', placeholder: 'paste your OpenRouter API key (sk-or-…)', autocomplete: 'off' });
+    const eden = id === 'eden';
+    const name = eden ? 'Eden AI' : 'OpenRouter';
+    const slot = s[id];
+    const key = el('input', { type: 'password', value: getKey(id), className: 'ai-wide', placeholder: eden ? 'paste your Eden AI API key' : 'paste your OpenRouter API key (sk-or-…)', autocomplete: 'off' });
     key.onchange = () => {
-      setKey('openrouter', key.value);
-      this.keyRejected = !!key.value.trim() && !getKey('openrouter');
-      void cost.refreshKey(getKey('openrouter'), true);
+      setKey(id, key.value);
+      this.keyRejected = !!key.value.trim() && !getKey(id);
+      void cost.refreshKey(getKey(id), true);
       this.pickers.clear();
       this.render();
     };
-    const budget = el('input', { type: 'number', min: '0.01', step: '0.5', value: String(s.openrouter.budgetUsd), className: 'ai-num' });
+    const budget = el('input', { type: 'number', min: '0.01', step: '0.5', value: String(slot.budgetUsd), className: 'ai-num' });
     budget.onchange = () => {
-      updateSettings((x) => (x.openrouter.budgetUsd = Number(budget.value)));
+      updateSettings((x) => (x[id].budgetUsd = Number(budget.value)));
       paintCost([this.side, this.mini]);
     };
     const reset = el('button', { className: 'ai-stop', textContent: 'Reset the counter' });
-    reset.title = 'Start counting the spent money from zero again (OpenRouter itself keeps its own record at openrouter.ai/activity)';
+    reset.title = 'Start counting the spent money from zero again (' + name + ' itself keeps its own record at ' + (eden ? 'app.edenai.run' : 'openrouter.ai/activity') + ')';
     reset.onclick = () => {
       cost.reset();
       this.render();
     };
-    const chosen = priceOf(s.openrouter.model);
+    const chosen = priceOf(slot.model);
     const memory = el('select', { className: 'ai-wide' });
     const held = chosen?.context || 0;
     const sizes: Array<[number, string]> = [[0, 'Automatic (what the model holds, at most 64k: keeps chats cheap)'], [32768, '32k tokens'], [65536, '64k tokens'], [131072, '128k tokens'], [200000, '200k tokens'], [262144, '256k tokens'], [524288, '512k tokens'], [1000000, '1M tokens (expensive)']];
     for (const [n, label] of sizes) {
       if (n > 0 && held && n > held) continue;
-      memory.append(el('option', { value: String(n), textContent: label, selected: s.openrouter.context === n }));
+      memory.append(el('option', { value: String(n), textContent: label, selected: slot.context === n }));
     }
     memory.onchange = () => {
-      updateSettings((x) => (x.openrouter.context = Number(memory.value)));
-      ammo.setWindow(paidWindow(getSettings().openrouter.model, getSettings().openrouter.context));
+      updateSettings((x) => (x[id].context = Number(memory.value)));
+      ammo.setWindow(paidWindow(getSettings()[id].model, getSettings()[id].context));
     };
     const parts: HTMLElement[] = [
       el(
         'div',
         { className: 'ai-terms' },
-        el('strong', { textContent: 'Before you use OpenRouter, please know:' }),
+        el('strong', { textContent: `Before you use ${name}, please know:` }),
         el(
           'ul',
           {},
           el('li', { textContent: 'It costs real money, per token, at the price shown next to each model. Longer chats and a helper that works on its own cost more. The cost of every answer is added up and shown at the top of the chat.' }),
-          el('li', { textContent: 'Your question and the cells the helper reads go to OpenRouter and to the company that runs the model. Never send names, addresses or other personal information, and not to children.' }),
-          el('li', {}, 'Your key stays in this page (it is sent only to OpenRouter). Get one at ', link('https://openrouter.ai/keys', 'openrouter.ai/keys'), ' and set a spending limit on the key there too.'),
+          el('li', { textContent: 'Your question and the cells the helper reads go to ' + name + ' and to the company that runs the model. Never send names, addresses or other personal information, and not to children.' }),
+          el('li', {}, `Your key stays in this page (it is sent only to ${name}). Get one at `, eden ? link('https://app.edenai.run', 'app.edenai.run') : link('https://openrouter.ai/keys', 'openrouter.ai/keys'), ' and set a spending limit on the key there too.'),
+          ...(eden ? [el('li', { textContent: 'The balance of your Eden AI account is not shown here (their API does not give it): look at app.edenai.run. This page counts what it has spent from the price of each model.' })] : []),
         ),
       ),
-      el('div', { className: 'ai-field' }, el('label', { textContent: 'OpenRouter API key' }), key, ...(this.keyRejected ? [el('div', { className: 'ai-note ai-warn', textContent: 'That is not an OpenRouter key, so it was not kept. A key is one word that starts with sk-or- (copy it from openrouter.ai/keys).' })] : [])),
+      el('div', { className: 'ai-field' }, el('label', { textContent: `${name} API key` }), key, ...(this.keyRejected ? [el('div', { className: 'ai-note ai-warn', textContent: eden ? 'That does not look like an Eden AI key, so it was not kept. A key is one long word (copy it from app.edenai.run).' : 'That is not an OpenRouter key, so it was not kept. A key is one word that starts with sk-or- (copy it from openrouter.ai/keys).' })] : [])),
       el('div', { className: 'ai-field' }, el('label', { textContent: 'Budget in dollars: the helper stops asking when this much has been spent' }), budget, el('div', { className: 'ai-note', textContent: `Spent so far: ${usd(cost.spent)} (${usd(cost.session)} since this page was opened). ${usd(cost.left)} left.` }), el('div', { className: 'ai-actions' }, reset)),
     ];
-    if (getKey('openrouter')) {
+    if (getKey(id)) {
       parts.push(
         this.modelPicker(
-          'openrouter',
-          () => new OpenRouterProvider(getSettings().openrouter.model, getKey('openrouter')),
-          s.openrouter.model,
-          (m) => updateSettings((x) => (x.openrouter.model = m)),
+          id,
+          () => (eden ? new EdenProvider(getSettings().eden.model, getKey(id)) : new OpenRouterProvider(getSettings().openrouter.model, getKey(id))),
+          slot.model,
+          (m) => updateSettings((x) => (x[id].model = m)),
           true,
         ),
-        el('div', { className: 'ai-note', textContent: s.openrouter.model ? `${s.openrouter.model}: ${priceText(chosen)}${chosen?.context ? `; the model can hold ${Math.round(chosen.context / 1000)}k tokens` : ''}. Click a column header to sort (price in, price out, context, name); the list shows only models that can use tools.` : 'Choose a model. Click a column header to sort by price, context or name; the list shows only models that can use tools.' }),
+        el('div', { className: 'ai-note', textContent: slot.model ? `${slot.model}: ${priceText(chosen)}${chosen?.context ? `; the model can hold ${Math.round(chosen.context / 1000)}k tokens` : ''}. Click a column header to sort (price in, price out, context, name); the list shows only models that can use tools.${eden ? ' A model named without a provider is routed by Eden AI to the cheapest working provider; add :latency, :speed or :exact to the name to optimise for that instead, or type provider/model (for example openai/gpt-latest) to pin one.' : ''}` : 'Choose a model. Click a column header to sort by price, context or name; the list shows only models that can use tools.' }),
       );
-      parts.push(el('div', { className: 'ai-field' }, el('label', { textContent: 'Memory of the chat (how much of the conversation is sent with every question)' }), memory, el('div', { className: 'ai-note', textContent: 'OpenRouter has no memory setting of its own: a model simply holds what its maker built it for (the Context column). This choice is the page\'s own limit on how much of the conversation it keeps and sends. You pay for every token sent, with every question, so a bigger memory makes each answer cost more. Automatic keeps it at 64k at most.' })));
-      void cost.refreshKey(getKey('openrouter'));
+      parts.push(el('div', { className: 'ai-field' }, el('label', { textContent: 'Memory of the chat (how much of the conversation is sent with every question)' }), memory, el('div', { className: 'ai-note', textContent: name + ' has no memory setting of its own: a model simply holds what its maker built it for (the Context column). This choice is the page\'s own limit on how much of the conversation it keeps and sends. You pay for every token sent, with every question, so a bigger memory makes each answer cost more. Automatic keeps it at 64k at most.' })));
+      void cost.refreshKey(getKey(id));
     }
     return el('div', { className: 'ai-group' }, ...parts);
   }

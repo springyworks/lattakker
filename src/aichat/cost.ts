@@ -1,4 +1,4 @@
-import { getSettings } from './config';
+import { getSettings, paidSlot, type PaidProviderId } from './config';
 import { estimateTokens } from './ammo';
 
 /**
@@ -21,14 +21,17 @@ export interface PricedModel {
   tools: boolean;
 }
 
+/** OpenRouter's keys keep their old names; Eden AI's get a suffix. Each paid provider has its own prices and its own spent total, since their model names and money are different. */
 const PRICES_KEY = 'lattakker:ai:prices';
 const SPENT_KEY = 'lattakker:ai:spent';
+const stored = (base: string, provider: PaidProviderId): string => (provider === 'eden' ? `${base}:eden` : base);
+const activeProvider = (): PaidProviderId => (getSettings().provider === 'eden' ? 'eden' : 'openrouter');
 /** Never let the page assume a window bigger than this for budgeting: a long chat on a big model gets expensive. */
 export const BUDGET_WINDOW = 65536;
 
-const prices = new Map<string, Price>();
+const prices: Record<PaidProviderId, Map<string, Price>> = { openrouter: new Map(), eden: new Map() };
 
-/** OpenRouter's list of models: prices come as dollars per token, in strings. */
+/** A list of models: OpenRouter gives prices as dollars per token in strings and the tools in `supported_parameters`; Eden AI gives numbers in `pricing.input_cost_per_token` and `capabilities.supports_function_calling`. */
 export function parseModels(json: unknown): PricedModel[] {
   const data = (json as { data?: unknown })?.data;
   if (!Array.isArray(data)) return [];
@@ -41,20 +44,22 @@ export function parseModels(json: unknown): PricedModel[] {
       return Number.isFinite(n) && n > 0 ? n * 1e6 : 0;
     };
     const params = Array.isArray(m.supported_parameters) ? (m.supported_parameters as unknown[]) : [];
+    const caps = (m.capabilities ?? {}) as Record<string, unknown>;
+    if (m.mode !== undefined && m.mode !== 'chat') continue;
     out.push({
       id: m.id,
-      price: { prompt: perM(pricing.prompt), completion: perM(pricing.completion), context: Number(m.context_length) > 0 ? Number(m.context_length) : 0 },
-      tools: params.includes('tools'),
+      price: { prompt: perM(pricing.prompt ?? pricing.input_cost_per_token), completion: perM(pricing.completion ?? pricing.output_cost_per_token), context: Number(m.context_length) > 0 ? Number(m.context_length) : 0 },
+      tools: params.includes('tools') || caps.supports_function_calling === true,
     });
   }
   return out;
 }
 
-export function setPrices(models: PricedModel[]): void {
-  prices.clear();
-  for (const m of models) prices.set(m.id, m.price);
+export function setPrices(models: PricedModel[], provider: PaidProviderId = activeProvider()): void {
+  prices[provider].clear();
+  for (const m of models) prices[provider].set(m.id, m.price);
   try {
-    localStorage.setItem(PRICES_KEY, JSON.stringify(models.map((m) => [m.id, m.price.prompt, m.price.completion, m.price.context])));
+    localStorage.setItem(stored(PRICES_KEY, provider), JSON.stringify(models.map((m) => [m.id, m.price.prompt, m.price.completion, m.price.context])));
   } catch {
     // too big or blocked: the prices are fetched again next time
   }
@@ -62,15 +67,17 @@ export function setPrices(models: PricedModel[]): void {
 }
 
 function loadPrices(): void {
-  try {
-    const raw = JSON.parse(localStorage.getItem(PRICES_KEY) ?? '[]') as Array<[string, number, number, number]>;
-    for (const [id, prompt, completion, context] of raw) prices.set(id, { prompt, completion, context });
-  } catch {
-    // no cache
+  for (const provider of ['openrouter', 'eden'] as const) {
+    try {
+      const raw = JSON.parse(localStorage.getItem(stored(PRICES_KEY, provider)) ?? '[]') as Array<[string, number, number, number]>;
+      for (const [id, prompt, completion, context] of raw) prices[provider].set(id, { prompt, completion, context });
+    } catch {
+      // no cache
+    }
   }
 }
 
-export const priceOf = (model: string): Price | null => prices.get(model) ?? null;
+export const priceOf = (model: string): Price | null => prices[activeProvider()].get(model) ?? null;
 
 /** The window the page budgets for on a paid model. 0 = automatic: what the model holds, but never more than BUDGET_WINDOW. A chosen size is the page's own limit (OpenRouter has no setting for it), never above what the model holds. */
 export const paidWindow = (model: string, chosen = 0): number => {
@@ -147,7 +154,7 @@ export const FREE_MODEL = 'openrouter/free';
 export const MIN_CREDIT = 0.05;
 
 /** The model to really ask: a paid model is swapped for the free router when the account has no credit left, so the helper keeps working. null = keep the chosen model. */
-export function creditFallback(model: string, acct: Account | null = account): string | null {
+export function creditFallback(model: string, acct: Account | null = activeProvider() === 'openrouter' ? account : null): string | null {
   if (!acct || acct.left >= MIN_CREDIT || model === FREE_MODEL) return null;
   const price = priceOf(model);
   return price && !price.prompt && !price.completion ? null : FREE_MODEL;
@@ -162,18 +169,20 @@ async function readCredits(apiKey: string): Promise<Account | null> {
   }
 }
 
-let spent = 0;
-let session = 0;
-let last: number | null = null;
+/** Money counted by this page, per paid provider. */
+const books: Record<PaidProviderId, { spent: number; session: number; last: number | null }> = { openrouter: { spent: 0, session: 0, last: null }, eden: { spent: 0, session: 0, last: null } };
+const book = (): { spent: number; session: number; last: number | null } => books[activeProvider()];
 let keyInfo: KeyInfo | null = null;
 let keyAsked = -Infinity;
 /** The question being answered now: its estimated price so far. */
 let flight: { price: Price | null; promptTokens: number; chars: number; known: number | null } | null = null;
 
-try {
-  spent = Number(localStorage.getItem(SPENT_KEY)) || 0;
-} catch {
-  spent = 0;
+for (const provider of ['openrouter', 'eden'] as const) {
+  try {
+    books[provider].spent = Number(localStorage.getItem(stored(SPENT_KEY, provider))) || 0;
+  } catch {
+    books[provider].spent = 0;
+  }
 }
 loadPrices();
 
@@ -189,26 +198,26 @@ export const cost = {
     listeners.push(listener);
   },
   get spent(): number {
-    return spent;
+    return book().spent;
   },
   get session(): number {
-    return session;
+    return book().session;
   },
   get last(): number | null {
-    return last;
+    return book().last;
   },
   get budget(): number {
-    return getSettings().openrouter.budgetUsd;
+    return paidSlot().budgetUsd;
   },
   get left(): number {
-    return Math.max(0, cost.budget - spent);
+    return Math.max(0, cost.budget - book().spent);
   },
   get key(): KeyInfo | null {
-    return keyInfo;
+    return activeProvider() === 'openrouter' ? keyInfo : null;
   },
   /** The money really in the OpenRouter account (bought credit minus used): the only money a question can be paid from. */
   get account(): Account | null {
-    return account;
+    return activeProvider() === 'openrouter' ? account : null;
   },
   /** What the answer being written has cost so far, as far as it can be told. */
   get inFlight(): number | null {
@@ -221,8 +230,8 @@ export const cost = {
   },
   /** Throws when the budget is used up, so no question is sent that could not be paid for. */
   assertWithin(): void {
-    if (spent >= cost.budget) {
-      throw new BudgetError(`The budget of ${usd(cost.budget)} is used up (${usd(spent)} spent). Raise the budget or reset the counter in the settings ⚙ to go on.`);
+    if (book().spent >= cost.budget) {
+      throw new BudgetError(`The budget of ${usd(cost.budget)} is used up (${usd(book().spent)} spent). Raise the budget or reset the counter in the settings ⚙ to go on.`);
     }
   },
   /** A question goes out. `requestChars` is its size, used for the estimate until the real number arrives. */
@@ -240,17 +249,22 @@ export const cost = {
   report(dollars: number): void {
     if (flight) flight.known = dollars;
   },
+  /** The real token counts for this question (a service that reports tokens but not dollars): priced with the model's price. */
+  tokens(promptTokens: number, completionTokens: number): void {
+    if (flight && flight.known === null && flight.price) flight.known = tokenCost(flight.price, promptTokens, completionTokens);
+  },
   /** The question is over: add it up. Without a real number the estimate counts, since a started answer is paid for. */
   finish(started: boolean): void {
     if (!flight) return;
     const amount = flight.known ?? (started ? cost.inFlight : null);
     flight = null;
     if (amount !== null && amount > 0) {
-      spent += amount;
-      session += amount;
-      last = amount;
+      const b = book();
+      b.spent += amount;
+      b.session += amount;
+      b.last = amount;
       try {
-        localStorage.setItem(SPENT_KEY, String(spent));
+        localStorage.setItem(stored(SPENT_KEY, activeProvider()), String(b.spent));
       } catch {
         // the total lasts until the page is closed
       }
@@ -259,18 +273,20 @@ export const cost = {
   },
   /** Start counting the budget from zero. */
   reset(): void {
-    spent = 0;
-    session = 0;
-    last = null;
+    const b = book();
+    b.spent = 0;
+    b.session = 0;
+    b.last = null;
     try {
-      localStorage.removeItem(SPENT_KEY);
+      localStorage.removeItem(stored(SPENT_KEY, activeProvider()));
     } catch {
       // nothing stored
     }
     notify();
   },
   async refreshKey(apiKey: string, force = false): Promise<void> {
-    if (!apiKey || (!force && performance.now() - keyAsked < 15000)) return;
+    // Only OpenRouter can be asked about its key and its credit; Eden AI does not show a balance through its API (the dashboard does).
+    if (!apiKey || activeProvider() !== 'openrouter' || (!force && performance.now() - keyAsked < 15000)) return;
     keyAsked = performance.now();
     try {
       const res = await fetch('https://openrouter.ai/api/v1/key', { headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(8000) });
@@ -285,20 +301,24 @@ export const cost = {
 
 /** The line that is always in view while OpenRouter answers: what it costs, what was spent, what is left. */
 export function costLine(): string {
+  const { spent, last } = book();
   const percent = cost.budget > 0 ? Math.round((spent / cost.budget) * 100) : 100;
   const parts = [`💶 ${usd(spent)} of ${usd(cost.budget)} budget (${percent}%) · ${usd(cost.left)} left`];
   if (last !== null) parts.push(`last answer ${usd(last)}`);
-  const chosen = getSettings().openrouter.model;
+  const chosen = paidSlot().model;
   const swapped = creditFallback(chosen);
   parts.push(swapped ? `now using the free model ${FREE_MODEL} (no account credit for ${modelLabel(chosen)})` : `this model: ${priceText(priceOf(chosen))}`);
   if (cost.busy) {
     const now = cost.inFlight;
     parts.push(now === null ? '⏳ asking… (price of this model unknown)' : `⏳ this answer ≈ ${usd(now)} so far`);
   }
-  if (account) parts.push(account.left < MIN_CREDIT ? `🏦 ACCOUNT CREDIT ${usd(account.left)}: add credit at openrouter.ai/credits` : `🏦 account credit ${usd(account.left)}`);
-  if (keyInfo) parts.push(keyInfo.left !== null ? `key ceiling ${usd(keyInfo.left)} (not money)` : `key: ${usd(keyInfo.used)} used, no limit`);
+  const acct = cost.account;
+  const keyNow = cost.key;
+  if (activeProvider() === 'eden') parts.push('🏦 balance: see app.edenai.run');
+  if (acct) parts.push(acct.left < MIN_CREDIT ? `🏦 ACCOUNT CREDIT ${usd(acct.left)}: add credit at openrouter.ai/credits` : `🏦 account credit ${usd(acct.left)}`);
+  if (keyNow) parts.push(keyNow.left !== null ? `key ceiling ${usd(keyNow.left)} (not money)` : `key: ${usd(keyNow.used)} used, no limit`);
   return parts.join(' · ');
 }
 
 /** True when more than four fifths of the budget is gone, or the account itself is nearly empty. */
-export const costWarn = (): boolean => cost.budget <= 0 || spent / cost.budget >= 0.8 || (account !== null && account.left < MIN_CREDIT);
+export const costWarn = (): boolean => cost.budget <= 0 || book().spent / cost.budget >= 0.8 || (cost.account !== null && cost.account.left < MIN_CREDIT);

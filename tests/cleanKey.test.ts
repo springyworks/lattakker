@@ -11,6 +11,12 @@ describe('keys', () => {
     expect(cleanKey('openrouter', 'hi and you are? what model do u use')).toBe('');
   });
 
+  it('keeps an Eden AI key (one long word) and refuses a sentence', () => {
+    const key = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.abc-DEF_123.xyz';
+    expect(cleanKey('eden', `  ${key}\n`)).toBe(key);
+    expect(cleanKey('eden', 'hi and you are? what model do u use')).toBe('');
+  });
+
   it('trims the other keys', () => {
     expect(cleanKey('gemini', ' AIza123 ')).toBe('AIza123');
   });

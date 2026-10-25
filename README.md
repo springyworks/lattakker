@@ -3855,6 +3855,20 @@ Nothing is sent anywhere until a grown-up has chosen a helper in its settings (â
   holds. A bigger memory makes every question cost more.
   Your questions and the cells the helper reads go to OpenRouter and to the
   maker of the model.
+- **Eden AI, France (adults only, costs money).** One key from
+  [app.edenai.run](https://app.edenai.run), hundreds of models, paid per token,
+  through an OpenAI-style door (`https://api.edenai.run/v3`). It works like
+  OpenRouter here (the same model table with prices, the money line, the budget
+  and the memory choice, each counted separately from OpenRouter's), with these
+  differences. The list shows one entry per **routable model name**, written
+  without a provider: Eden AI then sends each question to the cheapest working
+  provider of that model and falls back to another when one fails. Add
+  `:latency`, `:speed` or `:exact` to the name to optimise for that instead, or
+  type `provider/model` (for example `openai/gpt-latest`) to pin one provider.
+  Eden AI gives no balance through its API, so the money line shows what this
+  page has spent (the number Eden AI reports for an answer, or an estimate from
+  the model's price) and points to app.edenai.run for the credit; when the
+  credit is gone Eden AI answers with a 402 and the helper says so.
 - **Microsoft Copilot** is not available: it has no free way to be called from
   a web page.
 
@@ -4438,7 +4452,7 @@ src/sheet/svgScene.ts, svgAssets.ts   The animated-SVG engine (the svg global) a
 src/services/system.ts + scripts/system-stats.ts   How this computer is doing (the system global; the dev server reads /proc, /sys, nvidia-smi)
 src/storage.ts    Saves and restores the game and cells in localStorage
 src/ai/           window.mms, WebMCP tools, the text copy for AI helpers, and bridge.ts (the page end of /mcp)
-src/aichat/       The built-in helper: providers.ts (local OpenAI-compatible server, Gemini, OpenRouter), cost.ts (prices, budget, the money line), tools.ts (what it may do, over the page's MCP), agent.ts, ui.ts (side chat + pop-up + settings), watcher.ts (the // AI: lines), config.ts (settings; keys stay in memory)
+src/aichat/       The built-in helper: providers.ts (local OpenAI-compatible server, Gemini, OpenRouter, Eden AI), cost.ts (prices, budget, the money line), tools.ts (what it may do, over the page's MCP), agent.ts, ui.ts (side chat + pop-up + settings), watcher.ts (the // AI: lines), config.ts (settings; keys stay in memory)
 src/theme.ts      The colour palette
 src/examples.ts   The code cells shown on first load. Like labDemos.ts and recipes.ts, every line is explained by a // comment above it in plain words for beginners: keep it that way when you add or change a cell
 resources/        Piece icons (original) and reference files, see its README

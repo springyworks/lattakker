@@ -1,4 +1,4 @@
-import { DEFAULT_OLLAMA_CONTEXT, getKey, getSettings, localWindow, noteServerWindow, patienceMs, type AiSettings } from './config';
+import { DEFAULT_OLLAMA_CONTEXT, getKey, getSettings, localWindow, noteServerWindow, paidSlot, patienceMs, type AiSettings, type PaidProviderId } from './config';
 import { ammo } from './ammo';
 import { describeModel, describeTimings, loadEstimate, parsePs, parseTimings, rememberLoad, setLastRun, setLive, type PsModel, type Timings } from './ollamaLoad';
 import { jobs, type JobHandle } from './jobs';
@@ -68,6 +68,7 @@ export interface ModelProvider {
 
 const GEMINI = 'https://generativelanguage.googleapis.com/v1beta';
 export const OPENROUTER = 'https://openrouter.ai/api/v1';
+export const EDEN = 'https://api.edenai.run/v3';
 const MAX_OUTPUT_TOKENS = 1400;
 /** Servers already recognised as Ollama (or not), by address. */
 const ollamaSeen = new Map<string, { ok: boolean; at: number }>();
@@ -120,15 +121,19 @@ async function fetchWithRetry(
 
 async function errorMessage(res: Response): Promise<string> {
   try {
-    const body = (await res.json()) as { error?: { message?: string } | string };
+    // OpenRouter and OpenAI say {error: {message}}; Eden AI says {error: "…"} or {detail: "…"}.
+    const body = (await res.json()) as { error?: { message?: string } | string; detail?: unknown };
     const e = body.error;
-    return (typeof e === 'string' ? e : e?.message) ?? `HTTP ${res.status}`;
+    return (typeof e === 'string' ? e : e?.message) ?? (typeof body.detail === 'string' ? body.detail : `HTTP ${res.status}`);
   } catch {
     return `HTTP ${res.status}`;
   }
 }
 
-export function fail(status: number, message: string): AiError {
+export function fail(status: number, message: string, who: PaidProviderId = 'openrouter'): AiError {
+  if (status === 402 && who === 'eden') {
+    return new AiError('blocked', `Eden AI has no credit left to pay for this question. Add credit (or switch on auto-refill) at app.edenai.run, under billing; credit is shared by all your keys. (Eden AI said: ${message})`);
+  }
   if (status === 402) {
     // "Prompt tokens limit exceeded: 9303 > 9238" means: this question is 9303 tokens, and what is left in the account pays for 9238. The limit on a key (say $10) is only a ceiling and holds no money.
     const tokens = message.match(/(\d+)\s*>\s*(\d+)/);
@@ -167,10 +172,10 @@ export class OpenAiCompatProvider implements ModelProvider {
     private readonly apiKey: string,
     /** The memory (num_ctx) to ask Ollama for; only used when the server turns out to be Ollama. */
     private readonly context = DEFAULT_OLLAMA_CONTEXT,
-    /** OpenRouter: a paid service, so every question is priced and counted against the budget. */
-    private readonly paid = false,
+    /** OpenRouter or Eden AI: a paid service, so every question is priced and counted against the budget. */
+    readonly paid: PaidProviderId | false = false,
   ) {
-    this.label = model || (paid ? 'the OpenRouter model' : 'the local model');
+    this.label = model || (paid === 'eden' ? 'the Eden AI model' : paid ? 'the OpenRouter model' : 'the local model');
     if (paid) this.thinkingOff = false;
   }
 
@@ -202,7 +207,7 @@ export class OpenAiCompatProvider implements ModelProvider {
   private headers(): Record<string, string> {
     const h: Record<string, string> = { 'Content-Type': 'application/json' };
     if (this.apiKey) h.Authorization = `Bearer ${this.apiKey}`;
-    if (this.paid) {
+    if (this.paid === 'openrouter') {
       h['HTTP-Referer'] = location.origin;
       h['X-Title'] = 'Lattakker';
     }
@@ -217,6 +222,9 @@ export class OpenAiCompatProvider implements ModelProvider {
         return this.baseUrl;
       }
     })();
+    if (this.paid === 'eden') {
+      return new AiError('network', `Could not get an answer from ${where}. Either there is no internet, or the Eden AI key is wrong (Eden AI answers a wrong key in a way the browser reports as a network error): paste the key again in ⚙. ${err instanceof Error ? err.message : ''}`.trim());
+    }
     return new AiError(
       'network',
       `Could not reach ${where}. Is the model server running? If it is, it has to allow this page's address (for Ollama: set OLLAMA_ORIGINS to ${location.origin}). ${err instanceof Error ? err.message : ''}`.trim(),
@@ -345,8 +353,10 @@ export class OpenAiCompatProvider implements ModelProvider {
         body.tool_choice = 'auto';
       }
       // OpenRouter then reports what the question really cost, in dollars, in the last piece of the answer.
-      if (this.paid) body.usage = { include: true };
-      ammo.setWindow(this.paid ? paidWindow(this.model, getSettings().openrouter.context) : null);
+      if (this.paid === 'openrouter') body.usage = { include: true };
+      // Eden AI reports the real token counts in the last piece of the answer when asked, and the page prices them.
+      if (this.paid === 'eden') body.stream_options = { include_usage: true };
+      ammo.setWindow(this.paid ? paidWindow(this.model, paidSlot().context) : null);
     }
     // What is really going on while the first word has not come yet: ask the server whether the model is in memory.
     const ctl = new AbortController();
@@ -457,7 +467,7 @@ export class OpenAiCompatProvider implements ModelProvider {
         this.toolsOk = false;
         return this.send(job, system, messages, [], signal);
       }
-      throw fail(res.status, message);
+      throw fail(res.status, message, this.paid || undefined);
     }
 
     lastSign = performance.now();
@@ -465,9 +475,13 @@ export class OpenAiCompatProvider implements ModelProvider {
     let text = '';
     let finish = '';
     const calls = new Map<number, { id: string; name: string; args: string }>();
-    const take = (chunk: { usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number }; choices?: Array<{ finish_reason?: string | null; delta?: { content?: string | null; reasoning?: string | null; reasoning_content?: string | null; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> }; message?: { content?: string | null; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: unknown } }> } }> }): void => {
-      if (this.paid && typeof chunk.usage?.cost === 'number') cost.report(chunk.usage.cost);
-      if (chunk.usage?.prompt_tokens) ammo.record(chunk.usage.prompt_tokens, chunk.usage.completion_tokens ?? 0);
+    const take = (chunk: { cost?: number; usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number }; choices?: Array<{ finish_reason?: string | null; delta?: { content?: string | null; reasoning?: string | null; reasoning_content?: string | null; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> }; message?: { content?: string | null; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: unknown } }> } }> }): void => {
+      const dollars = chunk.usage?.cost ?? chunk.cost;
+      if (this.paid && typeof dollars === 'number') cost.report(dollars);
+      if (chunk.usage?.prompt_tokens) {
+        ammo.record(chunk.usage.prompt_tokens, chunk.usage.completion_tokens ?? 0);
+        if (this.paid) cost.tokens(chunk.usage.prompt_tokens, chunk.usage.completion_tokens ?? 0);
+      }
       const choice = chunk.choices?.[0];
       if (!choice) return;
       const d = choice.delta;
@@ -572,15 +586,17 @@ export class OpenAiCompatProvider implements ModelProvider {
   async listModels(signal?: AbortSignal): Promise<string[]> {
     let res: Response;
     try {
-      res = await fetch(this.url('/models'), { headers: this.headers(), signal });
+      // Eden AI: one entry per routable name (no provider in it), so the model is named without one and Eden AI picks the cheapest healthy provider.
+      // Eden AI's list is public and answers a keyless request with CORS headers, but answers a wrong key with a 401 the browser cannot read.
+      res = await fetch(this.url(this.paid === 'eden' ? '/models?view=models' : '/models'), { headers: this.paid === 'eden' ? undefined : this.headers(), signal });
     } catch (err) {
       throw this.unreachable(err);
     }
-    if (!res.ok) throw fail(res.status, await errorMessage(res));
+    if (!res.ok) throw fail(res.status, await errorMessage(res), this.paid || undefined);
     if (this.paid) {
       // Every model with its price; only the ones that can use tools, since the helper works through tools. Cheapest first.
       const models = parseModels(await res.json()).filter((m) => m.tools && !m.id.endsWith(':batch'));
-      setPrices(models);
+      setPrices(models, this.paid);
       return models.sort((a, b) => a.price.prompt + a.price.completion - (b.price.prompt + b.price.completion) || a.id.localeCompare(b.id)).map((m) => m.id);
     }
     const data = (await res.json()) as { data?: Array<{ id?: string }> };
@@ -594,7 +610,7 @@ export class OpenRouterProvider extends OpenAiCompatProvider {
     private readonly chosen: string,
     private readonly key: string,
   ) {
-    super(OPENROUTER, creditFallback(chosen) ?? chosen, key, 0, true);
+    super(OPENROUTER, creditFallback(chosen) ?? chosen, key, 0, 'openrouter');
   }
 
   override async complete(system: string, messages: ChatMsg[], tools: ToolDecl[], signal: AbortSignal): Promise<ModelReply> {
@@ -612,6 +628,12 @@ export class OpenRouterProvider extends OpenAiCompatProvider {
   }
 }
 
+/** Eden AI (France): the same OpenAI-style door, with a key, prices and a budget. Models are named without their provider, and Eden AI routes each question to the cheapest healthy provider of that model, falling back to another if one fails. */
+export class EdenProvider extends OpenAiCompatProvider {
+  constructor(model: string, key: string) {
+    super(EDEN, model, key, 0, 'eden');
+  }
+}
 
 // ---------------------------------------------------------------- Google Gemini
 
@@ -764,6 +786,9 @@ function parseJsonOr(text: string): unknown {
 export function makeProvider(settings: AiSettings = getSettings()): ModelProvider | null {
   if (settings.provider === 'openrouter') {
     return getKey('openrouter') && settings.openrouter.model ? new OpenRouterProvider(settings.openrouter.model, getKey('openrouter')) : null;
+  }
+  if (settings.provider === 'eden') {
+    return getKey('eden') && settings.eden.model ? new EdenProvider(settings.eden.model, getKey('eden')) : null;
   }
   if (settings.provider === 'local') {
     return settings.local.baseUrl && settings.local.model ? new OpenAiCompatProvider(settings.local.baseUrl, settings.local.model, getKey('local'), settings.local.context) : null;

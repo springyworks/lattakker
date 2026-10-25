@@ -111,3 +111,60 @@ describe('free fallback when the account has no credit', () => {
     expect(creditFallback('acme/big', null)).toBeNull();
   });
 });
+
+describe('Eden AI', () => {
+  const EDEN_LIST = {
+    data: [
+      { id: 'gpt-5.6-sol', mode: 'chat', context_length: 400000, pricing: { input_cost_per_token: 1.5e-6, output_cost_per_token: 7.5e-6 }, capabilities: { supports_function_calling: true } },
+      { id: 'text-only', mode: 'chat', context_length: 8000, pricing: { input_cost_per_token: 1e-7, output_cost_per_token: 2e-7 }, capabilities: { supports_function_calling: false } },
+      { id: 'an-embedder', mode: 'embedding', pricing: {}, capabilities: {} },
+    ],
+  };
+
+  it('reads Eden AI prices (numbers per token) and tool support, and skips what is not a chat model', () => {
+    const models = parseModels(EDEN_LIST);
+    expect(models.map((m) => m.id)).toEqual(['gpt-5.6-sol', 'text-only']);
+    expect(models[0].price.prompt).toBeCloseTo(1.5, 6);
+    expect(models[0].price.completion).toBeCloseTo(7.5, 6);
+    expect(models.map((m) => m.tools)).toEqual([true, false]);
+  });
+
+  it('keeps prices and the money counted apart from OpenRouter', () => {
+    updateSettings((s) => (s.provider = 'openrouter'));
+    setPrices(parseModels(LIST));
+    updateSettings((s) => (s.provider = 'eden'));
+    setPrices(parseModels(EDEN_LIST));
+    expect(modelLabel('gpt-5.6-sol')).toContain('$1.50 in');
+    expect(modelLabel('acme/big')).toBe('acme/big');
+    updateSettings((s) => (s.eden.budgetUsd = 3));
+    expect(cost.budget).toBe(3);
+    cost.begin('gpt-5.6-sol', 4000);
+    cost.report(0.02);
+    cost.finish(true);
+    expect(cost.spent).toBeCloseTo(0.02, 6);
+    updateSettings((s) => (s.provider = 'openrouter'));
+    expect(cost.spent).not.toBeCloseTo(0.02, 6);
+    expect(modelLabel('acme/big')).toContain('$3.00 in');
+    updateSettings((s) => (s.provider = 'eden'));
+    cost.reset();
+    updateSettings((s) => (s.provider = 'local'));
+  });
+
+  it('prices the real token counts Eden AI reports, and keeps a dollar figure the server gave', () => {
+    updateSettings((s) => (s.provider = 'eden'));
+    setPrices(parseModels(EDEN_LIST));
+    cost.reset();
+    cost.begin('gpt-5.6-sol', 4000);
+    cost.tokens(1000, 200);
+    expect(cost.inFlight).toBeCloseTo((1000 * 1.5 + 200 * 7.5) / 1e6, 9);
+    cost.finish(true);
+    expect(cost.spent).toBeCloseTo(0.003, 6);
+    cost.begin('gpt-5.6-sol', 4000);
+    cost.report(0.5);
+    cost.tokens(1000, 200);
+    cost.finish(true);
+    expect(cost.last).toBeCloseTo(0.5, 6);
+    cost.reset();
+    updateSettings((s) => (s.provider = 'local'));
+  });
+});

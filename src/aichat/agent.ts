@@ -1,7 +1,7 @@
 import { friendly, makeProvider, type ChatMsg, type ToolCall } from './providers';
 import { localAssistantReady, probeLocal } from './localAi';
 import { router } from '../mcp/router';
-import { getSettings, localWindow } from './config';
+import { getSettings, isPaidProvider, localWindow, paidSlot } from './config';
 import { CLIENT, runTool, setTurnTrace, toolsFor, WriteLedger, type AiContext, type FixResult, type ToolHost } from './tools';
 import { workspace } from '../workspace';
 import { jobs } from './jobs';
@@ -258,7 +258,7 @@ export class Conversation {
         let tools = round < rounds ? toolsFor({ small, second, tight: false }) : [];
         const write = tools.some((t) => t.name === 'write_code');
         // A model on this computer has no way to open the README itself: it is given the Bible (the rules and the README chapters that fit) up front.
-        ammo.setWindow(getSettings().provider === 'local' ? localWindow() : getSettings().provider === 'openrouter' ? paidWindow(getSettings().openrouter.model, getSettings().openrouter.context) : null);
+        ammo.setWindow(getSettings().provider === 'local' ? localWindow() : isPaidProvider(getSettings().provider) ? paidWindow(paidSlot().model, paidSlot().context) : null);
         const { system, hasReadme } = await this.systemFor(small, write, second);
         if (hasReadme) markOriented('helper');
         // The model can only hold so much in mind. Make the conversation fit (shortening old, long tool answers first) and say so.

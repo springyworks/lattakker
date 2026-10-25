@@ -1,5 +1,5 @@
 import { ammo } from './ammo';
-import { destination, getSettings, isConfigured } from './config';
+import { destination, getSettings, isConfigured, isPaidProvider, paidSlot } from './config';
 import { cost, paidWindow, priceOf, usd } from './cost';
 import { memoryInfo } from './memory';
 import { describeModel } from './modelInfo';
@@ -143,10 +143,10 @@ export function feelings(s: Signals): { mood: 'happy' | 'calm' | 'uneasy' | 'sad
 /** Everything the helper can know about itself, as one object for the model. */
 export function selfReport(extra: { messages?: number; busy?: boolean } = {}): Record<string, unknown> {
   const settings = getSettings();
-  const paid = settings.provider === 'openrouter';
+  const paid = isPaidProvider(settings.provider);
   const configured = isConfigured();
   const info = configured ? describeModel() : null;
-  const price = paid ? priceOf(settings.openrouter.model) : null;
+  const price = paid ? priceOf(paidSlot().model) : null;
   const budgetUsed = paid && cost.budget > 0 ? Math.min(1, cost.spent / cost.budget) : paid ? 1 : null;
   const fullness = ammo.fullness();
   const felt = feelings({
@@ -178,11 +178,11 @@ export function selfReport(extra: { messages?: number; busy?: boolean } = {}): R
         }
       : { note: settings.provider === 'local' ? 'This model runs on the person\'s computer: it costs no money, only electricity and waiting time.' : 'Google Gemini through the person\'s own key; this page does not count its cost.' },
     memory_window: {
-      tokens_it_can_hold: ammo.state.window ?? (paid ? paidWindow(settings.openrouter.model, settings.openrouter.context) : null),
+      tokens_it_can_hold: ammo.state.window ?? (paid ? paidWindow(paidSlot().model, paidSlot().context) : null),
       tokens_in_the_last_question: ammo.state.used,
       tokens_in_the_last_answer: ammo.state.reply,
       full: fullness === null ? null : pct(fullness),
-      chosen_size: paid ? (settings.openrouter.context || 'automatic (at most 64k)') : undefined,
+      chosen_size: paid ? (paidSlot().context || 'automatic (at most 64k)') : undefined,
       model_holds: price?.context || undefined,
     },
     work_so_far: {

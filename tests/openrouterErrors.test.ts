@@ -19,3 +19,17 @@ describe('OpenRouter 402', () => {
     expect(parseCredits({})).toBeNull();
   });
 });
+
+describe('Eden AI errors', () => {
+  it('says the Eden AI account has no credit and where to add it', () => {
+    const e = fail(402, 'Insufficient credits', 'eden');
+    expect(e.kind).toBe('blocked');
+    expect(e.message).toContain('Eden AI has no credit left');
+    expect(e.message).toContain('app.edenai.run');
+    expect(e.message).not.toContain('openrouter');
+  });
+
+  it('a bad key is an auth error', () => {
+    expect(fail(401, 'Invalid token', 'eden').kind).toBe('auth');
+  });
+});

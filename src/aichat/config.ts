@@ -5,7 +5,10 @@
  * with a cost, and the settings window says so.
  */
 
-export type ProviderId = 'local' | 'gemini' | 'openrouter';
+export type ProviderId = 'local' | 'gemini' | 'openrouter' | 'eden';
+/** The providers that charge per token: every question is priced and counted against a budget. */
+export type PaidProviderId = 'openrouter' | 'eden';
+export const isPaidProvider = (p: ProviderId): p is PaidProviderId => p === 'openrouter' || p === 'eden';
 
 /** 0 = "as the server runs it": no num_ctx is sent, so Ollama never starts a new instance because of this page (a different num_ctx always does). */
 export const SERVER_CONTEXT = 0;
@@ -32,6 +35,12 @@ export function localWindow(chosen: number = getSettings().local.context): numbe
   return chosen || serverWindow || ASSUMED_SERVER_WINDOW;
 }
 
+export interface PaidSlot {
+  model: string;
+  budgetUsd: number;
+  context: number;
+}
+
 export interface AiSettings {
   provider: ProviderId;
   /** An OpenAI-compatible server, for example Ollama (http://localhost:11434/v1) or LM Studio (http://localhost:1234/v1). */
@@ -39,7 +48,9 @@ export interface AiSettings {
   gemini: { model: string; adultAck: boolean };
   /** OpenRouter: one key, hundreds of models, paid per token. `budgetUsd` is the most the person wants to spend through this page. */
   /** context: how many tokens of the conversation the page keeps and sends (0 = automatic, at most 64k). Longer memory costs more per question. */
-  openrouter: { model: string; budgetUsd: number; context: number };
+  openrouter: PaidSlot;
+  /** Eden AI (France): one key, hundreds of models, paid per token; a model named without its provider is routed by Eden AI to the cheapest healthy one. */
+  eden: PaidSlot;
   /** Keep the key in this browser (localStorage) instead of only until the page is closed. */
   remember: boolean;
   /** Pop the little chat up by itself when a "// AI:" question has been left alone for a while. */
@@ -63,6 +74,7 @@ export const DEFAULT_SETTINGS: AiSettings = {
   local: { baseUrl: 'http://localhost:11434/v1', model: '', context: DEFAULT_OLLAMA_CONTEXT, waitMinutes: DEFAULT_WAIT_MINUTES },
   gemini: { model: 'gemini-flash-latest', adultAck: false },
   openrouter: { model: '', budgetUsd: DEFAULT_BUDGET_USD, context: 0 },
+  eden: { model: '', budgetUsd: DEFAULT_BUDGET_USD, context: 0 },
   remember: false,
   autoPopup: true,
   autoSeconds: 3,
@@ -76,19 +88,24 @@ const SETTINGS_KEY = 'lattakker:ai:v1';
 const KEYS_KEY = 'lattakker:ai:keys';
 
 /** Keys, by provider. Module-private on purpose. */
-const keys: Record<ProviderId, string> = { local: '', gemini: '', openrouter: '' };
+const keys: Record<ProviderId, string> = { local: '', gemini: '', openrouter: '', eden: '' };
 let settings: AiSettings = structuredClone(DEFAULT_SETTINGS);
 const listeners: Array<() => void> = [];
+
+function mergeSlot(saved: Partial<PaidSlot> | undefined, base: PaidSlot): PaidSlot {
+  return { model: String(saved?.model ?? ''), budgetUsd: Number.isFinite(Number(saved?.budgetUsd)) && Number(saved?.budgetUsd) > 0 ? Number(saved?.budgetUsd) : base.budgetUsd, context: Number(saved?.context) > 0 ? Math.round(Number(saved?.context)) : 0 };
+}
 
 function merge(base: AiSettings, saved: Partial<AiSettings> | null): AiSettings {
   if (!saved || typeof saved !== 'object') return base;
   // Settings saved before version 2 that still hold the old default of 22 seconds get the new default.
   const seconds = (saved as { v?: number }).v === 2 || Number(saved.autoSeconds) !== 22 ? Number(saved.autoSeconds) : base.autoSeconds;
   return {
-    provider: saved.provider === 'gemini' || saved.provider === 'openrouter' ? saved.provider : 'local',
+    provider: saved.provider === 'gemini' || saved.provider === 'openrouter' || saved.provider === 'eden' ? saved.provider : 'local',
     local: { baseUrl: String(saved.local?.baseUrl || base.local.baseUrl), model: String(saved.local?.model ?? ''), context: OLLAMA_CONTEXT_OPTIONS.includes(Number(saved.local?.context)) ? Number(saved.local?.context) : base.local.context, waitMinutes: WAIT_OPTIONS.includes(Number(saved.local?.waitMinutes)) ? Number(saved.local?.waitMinutes) : base.local.waitMinutes },
     gemini: { model: String(saved.gemini?.model || base.gemini.model), adultAck: saved.gemini?.adultAck === true },
-    openrouter: { model: String(saved.openrouter?.model ?? ''), budgetUsd: Number.isFinite(Number(saved.openrouter?.budgetUsd)) && Number(saved.openrouter?.budgetUsd) > 0 ? Number(saved.openrouter?.budgetUsd) : base.openrouter.budgetUsd, context: Number(saved.openrouter?.context) > 0 ? Math.round(Number(saved.openrouter?.context)) : 0 },
+    openrouter: mergeSlot(saved.openrouter, base.openrouter),
+    eden: mergeSlot(saved.eden, base.eden),
     remember: saved.remember === true,
     autoPopup: saved.autoPopup !== false,
     allowOutside: saved.allowOutside === true,
@@ -108,6 +125,7 @@ export function loadSettings(): void {
       keys.local = typeof saved.local === 'string' ? saved.local : '';
       keys.gemini = typeof saved.gemini === 'string' ? saved.gemini : '';
       keys.openrouter = typeof saved.openrouter === 'string' ? cleanKey('openrouter', saved.openrouter) : '';
+      keys.eden = typeof saved.eden === 'string' ? cleanKey('eden', saved.eden) : '';
     }
   } catch {
     settings = structuredClone(DEFAULT_SETTINGS);
@@ -131,6 +149,8 @@ export const getSettings = (): AiSettings => settings;
 
 /** May the helper write code itself? Yes when the person allowed it, or when it may work on its own. */
 export const canWrite = (): boolean => settings.allowWrite || settings.autonomous;
+/** The settings of the paid provider in use (OpenRouter's when the helper is not a paid one, so callers always get something). */
+export const paidSlot = (): PaidSlot => (settings.provider === 'eden' ? settings.eden : settings.openrouter);
 export const getKey = (provider: ProviderId): string => keys[provider];
 
 export function updateSettings(change: (s: AiSettings) => void): void {
@@ -143,6 +163,8 @@ export function updateSettings(change: (s: AiSettings) => void): void {
 /** What may be kept as a key. An OpenRouter key is the one word that starts with sk-or-: anything else that was pasted (a sentence, a second line) is not a key and would make the request fail with "Missing Authentication header". */
 export function cleanKey(provider: ProviderId, raw: string): string {
   if (provider === 'openrouter') return raw.match(/sk-or-[\w-]+/)?.[0] ?? '';
+  // An Eden AI key is one long word (a token of letters, digits, dots, dashes and underscores).
+  if (provider === 'eden') return raw.match(/[\w.-]{20,}/)?.[0] ?? '';
   return raw.trim();
 }
 
@@ -157,6 +179,7 @@ export function forgetAll(): void {
   keys.local = '';
   keys.gemini = '';
   keys.openrouter = '';
+  keys.eden = '';
   settings = structuredClone(DEFAULT_SETTINGS);
   try {
     localStorage.removeItem(SETTINGS_KEY);
@@ -175,6 +198,7 @@ export function onSettingsChange(listener: () => void): void {
 export function isConfigured(): boolean {
   if (settings.provider === 'local') return !!settings.local.baseUrl && !!settings.local.model;
   if (settings.provider === 'openrouter') return !!keys.openrouter && !!settings.openrouter.model;
+  if (settings.provider === 'eden') return !!keys.eden && !!settings.eden.model;
   return !!keys.gemini && settings.gemini.adultAck && !!settings.gemini.model;
 }
 
@@ -188,5 +212,6 @@ export function destination(): string {
     }
   }
   if (settings.provider === 'openrouter') return 'OpenRouter (openrouter.ai), which passes it on to the model\'s maker';
+  if (settings.provider === 'eden') return 'Eden AI (api.edenai.run, France), which passes it on to the company that runs the model';
   return 'Google (generativelanguage.googleapis.com)';
 }
