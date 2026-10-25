@@ -115,7 +115,7 @@ export function feelings(s: Signals): { mood: 'happy' | 'calm' | 'uneasy' | 'sad
     out.push({ feeling: 'frustrated', strength: level(s.recentFailRate, 0.2), because: `${pct(s.recentFailRate)} of the latest tool calls failed`, purpose: 'Slow down, read the error texts, and change the approach.' });
   }
   if (s.accountLeft !== undefined && s.accountLeft !== null && s.accountLeft < 0.05) {
-    out.push({ feeling: 'broke', strength: 1, because: `the OpenRouter account has only $${s.accountLeft.toFixed(2)} of real credit left (the budget and the key limit are ceilings, not money)`, purpose: 'Questions will be refused soon. Tell the person to buy credit at openrouter.ai/credits, or to choose a free model.' });
+    out.push({ feeling: 'broke', strength: 1, because: `the OpenRouter account has only $${s.accountLeft.toFixed(2)} of real credit left (the budget and the key limit are ceilings, not money)`, purpose: 'Paid questions are swapped for the free model openrouter/free until credit is bought (openrouter.ai/credits). Tell the person.' });
   }
   if (s.budgetUsed !== null && s.budgetUsed >= 0.5) {
     out.push({

@@ -140,6 +140,19 @@ export function parseCredits(json: unknown): Account | null {
 
 let account: Account | null = null;
 
+/** OpenRouter's own free router: it picks a free model that can use tools. No credit needed. */
+export const FREE_MODEL = 'openrouter/free';
+
+/** Below this much real credit a paid model is not asked any more. */
+export const MIN_CREDIT = 0.05;
+
+/** The model to really ask: a paid model is swapped for the free router when the account has no credit left, so the helper keeps working. null = keep the chosen model. */
+export function creditFallback(model: string, acct: Account | null = account): string | null {
+  if (!acct || acct.left >= MIN_CREDIT || model === FREE_MODEL) return null;
+  const price = priceOf(model);
+  return price && !price.prompt && !price.completion ? null : FREE_MODEL;
+}
+
 async function readCredits(apiKey: string): Promise<Account | null> {
   try {
     const res = await fetch('https://openrouter.ai/api/v1/credits', { headers: { Authorization: 'Bearer ' + apiKey }, signal: AbortSignal.timeout(8000) });
@@ -275,15 +288,17 @@ export function costLine(): string {
   const percent = cost.budget > 0 ? Math.round((spent / cost.budget) * 100) : 100;
   const parts = [`💶 ${usd(spent)} of ${usd(cost.budget)} budget (${percent}%) · ${usd(cost.left)} left`];
   if (last !== null) parts.push(`last answer ${usd(last)}`);
-  parts.push(`this model: ${priceText(priceOf(getSettings().openrouter.model))}`);
+  const chosen = getSettings().openrouter.model;
+  const swapped = creditFallback(chosen);
+  parts.push(swapped ? `now using the free model ${FREE_MODEL} (no account credit for ${modelLabel(chosen)})` : `this model: ${priceText(priceOf(chosen))}`);
   if (cost.busy) {
     const now = cost.inFlight;
     parts.push(now === null ? '⏳ asking… (price of this model unknown)' : `⏳ this answer ≈ ${usd(now)} so far`);
   }
-  if (account) parts.push(account.left < 0.05 ? `🏦 ACCOUNT CREDIT ${usd(account.left)}: add credit at openrouter.ai/credits` : `🏦 account credit ${usd(account.left)}`);
+  if (account) parts.push(account.left < MIN_CREDIT ? `🏦 ACCOUNT CREDIT ${usd(account.left)}: add credit at openrouter.ai/credits` : `🏦 account credit ${usd(account.left)}`);
   if (keyInfo) parts.push(keyInfo.left !== null ? `key ceiling ${usd(keyInfo.left)} (not money)` : `key: ${usd(keyInfo.used)} used, no limit`);
   return parts.join(' · ');
 }
 
 /** True when more than four fifths of the budget is gone, or the account itself is nearly empty. */
-export const costWarn = (): boolean => cost.budget <= 0 || spent / cost.budget >= 0.8 || (account !== null && account.left < 0.05);
+export const costWarn = (): boolean => cost.budget <= 0 || spent / cost.budget >= 0.8 || (account !== null && account.left < MIN_CREDIT);

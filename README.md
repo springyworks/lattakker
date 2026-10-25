@@ -3845,7 +3845,9 @@ Nothing is sent anywhere until a grown-up has chosen a helper in its settings (â
   the number OpenRouter reports), the price of the chosen model, and the **real
   credit left in the OpenRouter account** (the limit of a key and this page's
   budget are only ceilings, not money: credit is bought at
-  openrouter.ai/credits). When the budget is used up the helper stops asking
+  openrouter.ai/credits). When that credit is below $0.05, a paid model is
+  swapped for OpenRouter's free router (`openrouter/free`) so the helper keeps
+  working without paying; the money line says so. When the budget is used up the helper stops asking
   until you raise it or reset the counter. OpenRouter has no memory setting of
   its own (a model holds what its maker built it for, the Context column), so
   the page has its own **Memory of the chat** choice: automatic (at most 64k

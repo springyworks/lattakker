@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BudgetError, cost, costLine, modelLabel, paidWindow, parseKeyInfo, parseModels, priceText, setPrices, tokenCost, usd } from '../src/aichat/cost';
+import { BudgetError, cost, costLine, creditFallback, FREE_MODEL, modelLabel, paidWindow, parseKeyInfo, parseModels, priceText, setPrices, tokenCost, usd } from '../src/aichat/cost';
 import { updateSettings } from '../src/aichat/config';
 
 const LIST = {
@@ -97,5 +97,17 @@ describe('budget', () => {
     cost.finish(true);
     expect(cost.spent).toBeGreaterThan(0);
     cost.reset();
+  });
+});
+
+describe('free fallback when the account has no credit', () => {
+  it('swaps a paid model for the free router only when the credit is gone', () => {
+    setPrices(parseModels(LIST));
+    const empty = { credits: 0, used: 0.13, left: 0 };
+    expect(creditFallback('acme/big', empty)).toBe(FREE_MODEL);
+    expect(creditFallback('acme/big', { credits: 5, used: 1, left: 4 })).toBeNull();
+    expect(creditFallback('acme/free:free', empty)).toBeNull();
+    expect(creditFallback(FREE_MODEL, empty)).toBeNull();
+    expect(creditFallback('acme/big', null)).toBeNull();
   });
 });

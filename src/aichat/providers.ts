@@ -3,7 +3,7 @@ import { ammo } from './ammo';
 import { describeModel, describeTimings, loadEstimate, parsePs, parseTimings, rememberLoad, setLastRun, setLive, type PsModel, type Timings } from './ollamaLoad';
 import { jobs, type JobHandle } from './jobs';
 import { askToContinue, minutesText } from './patience';
-import { BudgetError, cost, paidWindow, parseModels, setPrices, usd } from './cost';
+import { BudgetError, cost, creditFallback, FREE_MODEL, paidWindow, parseModels, setPrices, usd } from './cost';
 
 /**
  * The two kinds of language-model server the helper can talk to, behind one small interface. Messages and tools
@@ -588,12 +588,30 @@ export class OpenAiCompatProvider implements ModelProvider {
   }
 }
 
-/** OpenRouter: the same OpenAI-style door as Ollama, with a key, prices and a budget. */
+/** OpenRouter: the same OpenAI-style door as Ollama, with a key, prices and a budget. When the account has no real credit left, a paid model is swapped for OpenRouter's free router. */
 export class OpenRouterProvider extends OpenAiCompatProvider {
-  constructor(model: string, apiKey: string) {
-    super(OPENROUTER, model, apiKey, 0, true);
+  constructor(
+    private readonly chosen: string,
+    private readonly key: string,
+  ) {
+    super(OPENROUTER, creditFallback(chosen) ?? chosen, key, 0, true);
+  }
+
+  override async complete(system: string, messages: ChatMsg[], tools: ToolDecl[], signal: AbortSignal): Promise<ModelReply> {
+    try {
+      return await super.complete(system, messages, tools, signal);
+    } catch (err) {
+      // the account balance was not read yet, so only OpenRouter's 402 tells that the credit is gone
+      const noCredit = err instanceof AiError && err.kind === 'blocked' && err.message.includes('no credit left');
+      if (!noCredit || this.label === FREE_MODEL || creditFallback(this.chosen, { credits: 0, used: 0, left: 0 }) === null) throw err;
+      this.onNote?.(`No credit left in the OpenRouter account: switching to the free model ${FREE_MODEL}.`);
+      const free = new OpenRouterProvider(FREE_MODEL, this.key);
+      free.onNote = this.onNote;
+      return free.complete(system, messages, tools, signal);
+    }
   }
 }
+
 
 // ---------------------------------------------------------------- Google Gemini
 
