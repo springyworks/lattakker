@@ -569,6 +569,7 @@ export class AiChatUi {
     const sent = `Your question and the cells the helper reads are sent to ${destination()}.`;
     const info = describeModel();
     paintCost([this.side, this.mini]);
+    if (getSettings().provider === 'openrouter' && getKey('openrouter')) void cost.refreshKey(getKey('openrouter'));
     for (const node of [this.side, this.mini]) {
       const line = node.querySelector<HTMLElement>('[data-role=sent]');
       if (line) line.textContent = configured ? sent : '';

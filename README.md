@@ -3842,8 +3842,10 @@ Nothing is sent anywhere until a grown-up has chosen a helper in its settings (â
   **money line is always visible at the top of the chat**: what has been spent
   of your **budget** (default $10, set in âš™), what is left, the cost of the last
   answer, an estimate that grows while an answer is being written (replaced by
-  the number OpenRouter reports), the price of the chosen model, and the credit
-  left on the key itself. When the budget is used up the helper stops asking
+  the number OpenRouter reports), the price of the chosen model, and the **real
+  credit left in the OpenRouter account** (the limit of a key and this page's
+  budget are only ceilings, not money: credit is bought at
+  openrouter.ai/credits). When the budget is used up the helper stops asking
   until you raise it or reset the counter. OpenRouter has no memory setting of
   its own (a model holds what its maker built it for, the Context column), so
   the page has its own **Memory of the chat** choice: automatic (at most 64k

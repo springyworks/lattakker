@@ -3,7 +3,7 @@ import { ammo } from './ammo';
 import { describeModel, describeTimings, loadEstimate, parsePs, parseTimings, rememberLoad, setLastRun, setLive, type PsModel, type Timings } from './ollamaLoad';
 import { jobs, type JobHandle } from './jobs';
 import { askToContinue, minutesText } from './patience';
-import { BudgetError, cost, paidWindow, parseModels, setPrices } from './cost';
+import { BudgetError, cost, paidWindow, parseModels, setPrices, usd } from './cost';
 
 /**
  * The two kinds of language-model server the helper can talk to, behind one small interface. Messages and tools
@@ -130,13 +130,12 @@ async function errorMessage(res: Response): Promise<string> {
 
 export function fail(status: number, message: string): AiError {
   if (status === 402) {
-    const url = message.match(/https:\/\/openrouter\.ai\/\S+?(?=[\s)]|$)/)?.[0];
+    // "Prompt tokens limit exceeded: 9303 > 9238" means: this question is 9303 tokens, and what is left in the account pays for 9238. The limit on a key (say $10) is only a ceiling and holds no money.
     const tokens = message.match(/(\d+)\s*>\s*(\d+)/);
-    if (/limit/i.test(message)) {
-      const size = tokens ? ` This question is ${Number(tokens[1]).toLocaleString('en')} tokens long (the helper's instructions and tools go along with every question), but the key may use only ${Number(tokens[2]).toLocaleString('en')} more.` : '';
-      return new AiError('blocked', `OpenRouter stopped the question: the spending limit of this API key is nearly reached, so it is not the account credit and not the page's budget.${size} Raise the key's total limit${url ? ` at ${url}` : ' at openrouter.ai/settings/keys'}, or make a key without a small limit. (OpenRouter said: ${message})`);
-    }
-    return new AiError('blocked', `OpenRouter says there is not enough credit (${message}). Add credit at openrouter.ai/credits, or choose a free model.`);
+    const size = tokens ? ` This question is ${Number(tokens[1]).toLocaleString('en')} tokens long (the helper's instructions and tools go along with every question); what is left in the account pays for only ${Number(tokens[2]).toLocaleString('en')}.` : '';
+    const acc = cost.account;
+    const money = acc ? ` The account has bought ${usd(acc.credits)} of credit and used ${usd(acc.used)}.` : '';
+    return new AiError('blocked', `OpenRouter has no credit left to pay for this question.${size}${money} The "limit" of a key (and the budget in this page) is only a ceiling: it is not money. Buy credit at openrouter.ai/credits, or choose a free model. (OpenRouter said: ${message})`);
   }
   if (status === 401 || status === 403) return new AiError('auth', message);
   if (status === 429) return new AiError('rate', message);

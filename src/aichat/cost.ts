@@ -124,6 +124,31 @@ export function parseKeyInfo(json: unknown): KeyInfo | null {
 const listeners: Array<() => void> = [];
 const notify = (): void => listeners.forEach((l) => l());
 
+/** What OpenRouter's /credits says: the credit bought so far and the part used. The limit on a key is only a ceiling; this is the real money. */
+export interface Account {
+  credits: number;
+  used: number;
+  left: number;
+}
+
+export function parseCredits(json: unknown): Account | null {
+  const d = (json as { data?: Record<string, unknown> })?.data;
+  const credits = Number(d?.total_credits);
+  const used = Number(d?.total_usage);
+  return d && Number.isFinite(credits) && Number.isFinite(used) ? { credits, used, left: Math.max(0, credits - used) } : null;
+}
+
+let account: Account | null = null;
+
+async function readCredits(apiKey: string): Promise<Account | null> {
+  try {
+    const res = await fetch('https://openrouter.ai/api/v1/credits', { headers: { Authorization: 'Bearer ' + apiKey }, signal: AbortSignal.timeout(8000) });
+    return res.ok ? parseCredits(await res.json()) : null;
+  } catch {
+    return null;
+  }
+}
+
 let spent = 0;
 let session = 0;
 let last: number | null = null;
@@ -167,6 +192,10 @@ export const cost = {
   },
   get key(): KeyInfo | null {
     return keyInfo;
+  },
+  /** The money really in the OpenRouter account (bought credit minus used): the only money a question can be paid from. */
+  get account(): Account | null {
+    return account;
   },
   /** What the answer being written has cost so far, as far as it can be told. */
   get inFlight(): number | null {
@@ -233,6 +262,7 @@ export const cost = {
     try {
       const res = await fetch('https://openrouter.ai/api/v1/key', { headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(8000) });
       keyInfo = res.ok ? parseKeyInfo(await res.json()) : null;
+      account = await readCredits(apiKey);
     } catch {
       keyInfo = null;
     }
@@ -250,9 +280,10 @@ export function costLine(): string {
     const now = cost.inFlight;
     parts.push(now === null ? '⏳ asking… (price of this model unknown)' : `⏳ this answer ≈ ${usd(now)} so far`);
   }
-  if (keyInfo) parts.push(keyInfo.left !== null ? `key: ${usd(keyInfo.left)} credit left` : `key: ${usd(keyInfo.used)} used, no limit`);
+  if (account) parts.push(account.left < 0.05 ? `🏦 ACCOUNT CREDIT ${usd(account.left)}: add credit at openrouter.ai/credits` : `🏦 account credit ${usd(account.left)}`);
+  if (keyInfo) parts.push(keyInfo.left !== null ? `key ceiling ${usd(keyInfo.left)} (not money)` : `key: ${usd(keyInfo.used)} used, no limit`);
   return parts.join(' · ');
 }
 
-/** True when more than four fifths of the budget is gone. */
-export const costWarn = (): boolean => cost.budget <= 0 || spent / cost.budget >= 0.8;
+/** True when more than four fifths of the budget is gone, or the account itself is nearly empty. */
+export const costWarn = (): boolean => cost.budget <= 0 || spent / cost.budget >= 0.8 || (account !== null && account.left < 0.05);

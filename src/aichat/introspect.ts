@@ -78,6 +78,8 @@ export const vitals = new Vitals();
 export interface Signals {
   /** Share of the budget spent, 0 to 1, or null when this model costs nothing to the page. */
   budgetUsed: number | null;
+  /** Dollars really left in the account (the budget and the key limit are only ceilings), or null when unknown. */
+  accountLeft?: number | null;
   /** How full the model's memory was at the last question, 0 to 1, or null when unknown. */
   memoryFull: number | null;
   /** Memory was cut (long answers shortened or old turns dropped) to make a question fit. */
@@ -111,6 +113,9 @@ export function feelings(s: Signals): { mood: 'happy' | 'calm' | 'uneasy' | 'sad
     });
   } else if (s.recentFailRate >= 0.4) {
     out.push({ feeling: 'frustrated', strength: level(s.recentFailRate, 0.2), because: `${pct(s.recentFailRate)} of the latest tool calls failed`, purpose: 'Slow down, read the error texts, and change the approach.' });
+  }
+  if (s.accountLeft !== undefined && s.accountLeft !== null && s.accountLeft < 0.05) {
+    out.push({ feeling: 'broke', strength: 1, because: `the OpenRouter account has only $${s.accountLeft.toFixed(2)} of real credit left (the budget and the key limit are ceilings, not money)`, purpose: 'Questions will be refused soon. Tell the person to buy credit at openrouter.ai/credits, or to choose a free model.' });
   }
   if (s.budgetUsed !== null && s.budgetUsed >= 0.5) {
     out.push({
@@ -146,6 +151,7 @@ export function selfReport(extra: { messages?: number; busy?: boolean } = {}): R
   const fullness = ammo.fullness();
   const felt = feelings({
     budgetUsed,
+    accountLeft: paid && cost.account ? cost.account.left : null,
     memoryFull: fullness,
     memoryCut: vitals.shortened + vitals.dropped > 0,
     failStreak: vitals.failStreak,
@@ -166,6 +172,7 @@ export function selfReport(extra: { messages?: number; busy?: boolean } = {}): R
           last_answer: cost.last === null ? null : usd(cost.last),
           left_of_budget: usd(cost.left),
           budget_used: budgetUsed === null ? null : pct(budgetUsed),
+          account: cost.account ? { credit_bought: usd(cost.account.credits), credit_used: usd(cost.account.used), credit_left: usd(cost.account.left), note: 'This is the only real money. The budget above and the limit of the key are ceilings, not funds.' } : 'not read yet',
           key: cost.key ? { used: usd(cost.key.used), credit_left: cost.key.left === null ? 'no limit' : usd(cost.key.left), free_tier: cost.key.free } : 'not read yet',
           answer_in_progress: cost.busy,
         }

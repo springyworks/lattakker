@@ -24,6 +24,13 @@ describe('the helper feels, with a purpose', () => {
     expect(broke.mood).toBe('sad');
   });
 
+  it('is broke when the account itself has no credit, whatever the budget says', () => {
+    const r = feelings({ ...calm, accountLeft: 0.02 });
+    expect(r.feelings.map((f) => f.feeling)).toContain('broke');
+    expect(r.mood).toBe('sad');
+    expect(names({ accountLeft: 12 })).not.toContain('broke');
+  });
+
   it('feels crowded when the memory is nearly full or was cut', () => {
     expect(names({ memoryFull: 0.9 })).toContain('crowded');
     expect(names({ memoryCut: true, memoryFull: null })).toContain('crowded');
