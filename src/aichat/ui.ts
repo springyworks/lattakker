@@ -18,7 +18,7 @@ import { bellOn, onBellChange, primeBell, ringBell, setBell, soundSources, typew
 import { answerCheckpoint, checkpoints, EXTENSIONS, minutesText, onCheckpointChange } from './patience';
 import { memoryFileState } from './memorySync';
 import { GeminiProvider, OpenAiCompatProvider, OpenRouterProvider, friendly, makeProvider, type ModelProvider } from './providers';
-import { cost, costLine, costWarn, modelLabel, priceOf, priceText, usd } from './cost';
+import { cost, costLine, costWarn, modelLabel, paidWindow, priceOf, priceText, usd } from './cost';
 import type { AiContext, FixResult } from './tools';
 
 /**
@@ -1154,6 +1154,17 @@ export class AiChatUi {
       this.render();
     };
     const chosen = priceOf(s.openrouter.model);
+    const memory = el('select', { className: 'ai-wide' });
+    const held = chosen?.context || 0;
+    const sizes: Array<[number, string]> = [[0, 'Automatic (what the model holds, at most 64k: keeps chats cheap)'], [32768, '32k tokens'], [65536, '64k tokens'], [131072, '128k tokens'], [200000, '200k tokens'], [262144, '256k tokens'], [524288, '512k tokens'], [1000000, '1M tokens (expensive)']];
+    for (const [n, label] of sizes) {
+      if (n > 0 && held && n > held) continue;
+      memory.append(el('option', { value: String(n), textContent: label, selected: s.openrouter.context === n }));
+    }
+    memory.onchange = () => {
+      updateSettings((x) => (x.openrouter.context = Number(memory.value)));
+      ammo.setWindow(paidWindow(getSettings().openrouter.model, getSettings().openrouter.context));
+    };
     const parts: HTMLElement[] = [
       el(
         'div',
@@ -1179,8 +1190,9 @@ export class AiChatUi {
           (m) => updateSettings((x) => (x.openrouter.model = m)),
           true,
         ),
-        el('div', { className: 'ai-note', textContent: s.openrouter.model ? `${s.openrouter.model}: ${priceText(chosen)}${chosen?.context ? `; holds ${Math.round(chosen.context / 1000)}k tokens (the page budgets for at most 64k to keep chats cheap)` : ''}. Click a column header to sort (price in, price out, context, name); the list shows only models that can use tools.` : 'Choose a model. Click a column header to sort by price, context or name; the list shows only models that can use tools.' }),
+        el('div', { className: 'ai-note', textContent: s.openrouter.model ? `${s.openrouter.model}: ${priceText(chosen)}${chosen?.context ? `; the model can hold ${Math.round(chosen.context / 1000)}k tokens` : ''}. Click a column header to sort (price in, price out, context, name); the list shows only models that can use tools.` : 'Choose a model. Click a column header to sort by price, context or name; the list shows only models that can use tools.' }),
       );
+      parts.push(el('div', { className: 'ai-field' }, el('label', { textContent: 'Memory of the chat (how much of the conversation is sent with every question)' }), memory, el('div', { className: 'ai-note', textContent: 'OpenRouter has no memory setting of its own: a model simply holds what its maker built it for (the Context column). This choice is the page\'s own limit on how much of the conversation it keeps and sends. You pay for every token sent, with every question, so a bigger memory makes each answer cost more. Automatic keeps it at 64k at most.' })));
       void cost.refreshKey(getKey('openrouter'));
     }
     return el('div', { className: 'ai-group' }, ...parts);

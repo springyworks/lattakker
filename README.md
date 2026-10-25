@@ -3844,8 +3844,11 @@ Nothing is sent anywhere until a grown-up has chosen a helper in its settings (â
   answer, an estimate that grows while an answer is being written (replaced by
   the number OpenRouter reports), the price of the chosen model, and the credit
   left on the key itself. When the budget is used up the helper stops asking
-  until you raise it or reset the counter. The page budgets for at most 64k
-  tokens of conversation, even on models that hold more, to keep chats cheap.
+  until you raise it or reset the counter. OpenRouter has no memory setting of
+  its own (a model holds what its maker built it for, the Context column), so
+  the page has its own **Memory of the chat** choice: automatic (at most 64k
+  tokens, to keep chats cheap) or 32k up to 1M, never above what the model
+  holds. A bigger memory makes every question cost more.
   Your questions and the cells the helper reads go to OpenRouter and to the
   maker of the model.
 - **Microsoft Copilot** is not available: it has no free way to be called from

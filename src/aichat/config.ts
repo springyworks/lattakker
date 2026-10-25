@@ -38,7 +38,8 @@ export interface AiSettings {
   local: { baseUrl: string; model: string; /** How many tokens the model may remember at once (Ollama's num_ctx). More is smarter but uses more memory. */ context: number; /** Silent minutes before the person is asked whether to keep waiting (0 = never ask). */ waitMinutes: number };
   gemini: { model: string; adultAck: boolean };
   /** OpenRouter: one key, hundreds of models, paid per token. `budgetUsd` is the most the person wants to spend through this page. */
-  openrouter: { model: string; budgetUsd: number };
+  /** context: how many tokens of the conversation the page keeps and sends (0 = automatic, at most 64k). Longer memory costs more per question. */
+  openrouter: { model: string; budgetUsd: number; context: number };
   /** Keep the key in this browser (localStorage) instead of only until the page is closed. */
   remember: boolean;
   /** Pop the little chat up by itself when a "// AI:" question has been left alone for a while. */
@@ -61,7 +62,7 @@ export const DEFAULT_SETTINGS: AiSettings = {
   provider: 'local',
   local: { baseUrl: 'http://localhost:11434/v1', model: '', context: DEFAULT_OLLAMA_CONTEXT, waitMinutes: DEFAULT_WAIT_MINUTES },
   gemini: { model: 'gemini-flash-latest', adultAck: false },
-  openrouter: { model: '', budgetUsd: DEFAULT_BUDGET_USD },
+  openrouter: { model: '', budgetUsd: DEFAULT_BUDGET_USD, context: 0 },
   remember: false,
   autoPopup: true,
   autoSeconds: 3,
@@ -87,7 +88,7 @@ function merge(base: AiSettings, saved: Partial<AiSettings> | null): AiSettings 
     provider: saved.provider === 'gemini' || saved.provider === 'openrouter' ? saved.provider : 'local',
     local: { baseUrl: String(saved.local?.baseUrl || base.local.baseUrl), model: String(saved.local?.model ?? ''), context: OLLAMA_CONTEXT_OPTIONS.includes(Number(saved.local?.context)) ? Number(saved.local?.context) : base.local.context, waitMinutes: WAIT_OPTIONS.includes(Number(saved.local?.waitMinutes)) ? Number(saved.local?.waitMinutes) : base.local.waitMinutes },
     gemini: { model: String(saved.gemini?.model || base.gemini.model), adultAck: saved.gemini?.adultAck === true },
-    openrouter: { model: String(saved.openrouter?.model ?? ''), budgetUsd: Number.isFinite(Number(saved.openrouter?.budgetUsd)) && Number(saved.openrouter?.budgetUsd) > 0 ? Number(saved.openrouter?.budgetUsd) : base.openrouter.budgetUsd },
+    openrouter: { model: String(saved.openrouter?.model ?? ''), budgetUsd: Number.isFinite(Number(saved.openrouter?.budgetUsd)) && Number(saved.openrouter?.budgetUsd) > 0 ? Number(saved.openrouter?.budgetUsd) : base.openrouter.budgetUsd, context: Number(saved.openrouter?.context) > 0 ? Math.round(Number(saved.openrouter?.context)) : 0 },
     remember: saved.remember === true,
     autoPopup: saved.autoPopup !== false,
     allowOutside: saved.allowOutside === true,

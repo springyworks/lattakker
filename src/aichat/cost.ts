@@ -72,8 +72,12 @@ function loadPrices(): void {
 
 export const priceOf = (model: string): Price | null => prices.get(model) ?? null;
 
-/** The window the page budgets for on a paid model: what the model holds, but never more than BUDGET_WINDOW. */
-export const paidWindow = (model: string): number => Math.min(priceOf(model)?.context || BUDGET_WINDOW, BUDGET_WINDOW);
+/** The window the page budgets for on a paid model. 0 = automatic: what the model holds, but never more than BUDGET_WINDOW. A chosen size is the page's own limit (OpenRouter has no setting for it), never above what the model holds. */
+export const paidWindow = (model: string, chosen = 0): number => {
+  const held = priceOf(model)?.context || 0;
+  if (chosen > 0) return held ? Math.min(chosen, held) : chosen;
+  return Math.min(held || BUDGET_WINDOW, BUDGET_WINDOW);
+};
 
 export const tokenCost = (price: Price, promptTokens: number, completionTokens: number): number => (promptTokens * price.prompt + completionTokens * price.completion) / 1e6;
 

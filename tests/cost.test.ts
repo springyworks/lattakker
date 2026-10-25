@@ -31,6 +31,13 @@ describe('OpenRouter model list', () => {
     expect(paidWindow('acme/big')).toBe(65536);
     expect(paidWindow('acme/free:free')).toBe(32768);
   });
+
+  it('lets the person choose the memory, never above what the model holds', () => {
+    setPrices(parseModels(LIST));
+    expect(paidWindow('acme/big', 200000)).toBe(200000);
+    expect(paidWindow('acme/big', 500000)).toBe(200000);
+    expect(paidWindow('acme/free:free', 16384)).toBe(16384);
+  });
 });
 
 describe('money formatting', () => {

@@ -339,7 +339,7 @@ export class OpenAiCompatProvider implements ModelProvider {
       }
       // OpenRouter then reports what the question really cost, in dollars, in the last piece of the answer.
       if (this.paid) body.usage = { include: true };
-      ammo.setWindow(this.paid ? paidWindow(this.model) : null);
+      ammo.setWindow(this.paid ? paidWindow(this.model, getSettings().openrouter.context) : null);
     }
     // What is really going on while the first word has not come yet: ask the server whether the model is in memory.
     const ctl = new AbortController();
