@@ -8,6 +8,7 @@ import { RECIPES, exampleRecipes } from '../recipes';
 import { coachFor } from './coachHints';
 import { THEME } from '../theme';
 import { installEditorContextMenu } from './EditorContextMenu';
+import { answered as waitForEngine } from './engineWait';
 
 declare global {
   interface Window {
@@ -529,29 +530,11 @@ export interface TranspileResult {
 
 /**
  * The worker of the TypeScript engine can fail to load (the dev server was busy or restarting at that moment): its calls then never answer,
- * and every cell would wait for ever. So each call has a time to answer; when it does not, the page is told ('lattakker:engine-stuck',
- * see the watchdog in main.ts) and it recovers by itself.
+ * and every cell would wait for ever. So the engine has a time to answer (see engineWait.ts: it counts the time with no answer at all, not
+ * the time in the queue); when it runs out the page is told ('lattakker:engine-stuck', see stallWatch.ts) and recovers by itself.
  */
 const ENGINE_WAIT_MS = 15000;
-
-function answered<T>(work: Promise<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = window.setTimeout(() => {
-      window.dispatchEvent(new Event('lattakker:engine-stuck'));
-      reject(new Error('The TypeScript engine did not answer in time'));
-    }, ENGINE_WAIT_MS);
-    work.then(
-      (value) => {
-        window.clearTimeout(timer);
-        resolve(value);
-      },
-      (err) => {
-        window.clearTimeout(timer);
-        reject(err);
-      },
-    );
-  });
-}
+const answered = <T>(work: Promise<T>): Promise<T> => waitForEngine(work, ENGINE_WAIT_MS, () => window.dispatchEvent(new Event('lattakker:engine-stuck')));
 
 /** The TypeScript language service starts lazily; the first request can arrive before it has registered. */
 export async function typescriptWorker(): Promise<Awaited<ReturnType<typeof ts.getTypeScriptWorker>>> {

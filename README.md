@@ -95,6 +95,7 @@ Live demo: https://springyworks.github.io/lattakker/
     - [11.4.6 What is going on? The status service](#1146-what-is-going-on-the-status-service)
     - [11.4.7 Help and “show me”, everywhere](#1147-help-and-show-me-everywhere)
     - [11.4.8 Documents for AIs: rules, API, examples, README](#1148-documents-for-ais-rules-api-examples-readme)
+    - [11.4.9 Which Eden AI model? A shootout you can run yourself](#1149-which-eden-ai-model-a-shootout-you-can-run-yourself)
   - [11.5 Rules for AI helpers](#115-rules-for-ai-helpers)
 - [12 Rows](#12-rows)
 - [13 Project layout](#13-project-layout)
@@ -3868,7 +3869,8 @@ Nothing is sent anywhere until a grown-up has chosen a helper in its settings (�
   Eden AI gives no balance through its API, so the money line shows what this
   page has spent (the number Eden AI reports for an answer, or an estimate from
   the model's price) and points to app.edenai.run for the credit; when the
-  credit is gone Eden AI answers with a 402 and the helper says so.
+  credit is gone Eden AI answers with a 402 and the helper says so. Not sure which of the models to pick?
+  See [11.4.9](#1149-which-eden-ai-model-a-shootout-you-can-run-yourself): a tool tests them for you.
 - **Microsoft Copilot** is not available: it has no free way to be called from
   a web page.
 
@@ -4302,6 +4304,47 @@ showing its sign of life, and the helper writing code with the local model, with
 model part), `--out DIR`, `--model NAME`. The result is `resources/demo/lattakker-demo.webm` and, with ffmpeg installed, an `.mp4` (about 3½ minutes); the folder is kept out of git. The first time,
 Playwright needs its small recording tool: `npx playwright-core install ffmpeg`.
 
+#### 11.4.9 Which Eden AI model? A shootout you can run yourself
+
+Eden AI lists hundreds of models and no public site scores most of them: the well-known programming leaderboards
+(Aider's, for one) stop at older models. So the project has a small tool that asks the models itself:
+`scripts/eden-shootout.ts` (started by `scripts/shootout.mjs`, so it runs on any Node that runs this project).
+
+```
+EDEN_KEY=<your key from app.edenai.run> npm run shootout                              # the default shortlist of 8
+EDEN_KEY=<your key> npm run shootout -- gpt-oss-20b claude-sonnet-5 kimi-k2.7-code    # your own list of model names
+```
+
+Every model gets the same six tasks. Three are JavaScript functions (longest strictly increasing subsequence, merging
+intervals, a calculator without `eval`) that the tool **runs against hidden test cases**; three are maths questions with
+one exact answer (counting multiples, the digit sum of 2^100, a conditional probability on two dice). The tool prints
+a mark for each task, the score, the average seconds per task and the real cost, worked out from the token counts Eden AI
+returns times the model's listed price. It spends your own credit: the default shortlist costs about **3 cents** in all.
+The key is read from the environment only; the tool never writes it to a file. Add your own tasks at the top of
+`scripts/eden-shootout.ts`, where `codeTask` and `mathTask` show how.
+
+**Result of a run on 25 October 2026. Valid until 26 October 2026 only:** Eden AI changes its model list, its prices
+and the models behind the names all the time, and one run of six easy tasks is a hint, not a ranking. Run the tool
+again before you trust this table.
+
+| model | score | seconds per task | cost for the six tasks |
+|---|---|---|---|
+| gpt-oss-20b | 6/6 | 2.9 | $0.0002 |
+| deepseek-v4-flash | 6/6 | 7.5 | $0.0004 |
+| claude-haiku-5.5 | 6/6 | 2.3 | $0.0014 |
+| minimax-m3.1-flash | 6/6 | 7.9 | $0.0029 |
+| deepseek-v4-pro | 6/6 | 6.2 | $0.0062 |
+| kimi-k2.7-code | 6/6 | 6.2 | $0.0110 |
+| gpt-oss-120b | 5/6 | 4.6 | $0.0006 |
+| glm-5.3-flash | 5/6 | 6.9 | $0.0035 |
+
+What to take from it: six of the eight got everything right, so the tasks do not separate the strong models, but they do
+show that the cheap ones are good enough for the helper's everyday work. `gpt-oss-20b` was both the cheapest (about a
+hundredth of a cent per task) and perfect, which is why it is a good first choice; `claude-haiku-5.5` was the fastest.
+The two that failed both missed the digit-sum question. Speed varies a lot from run to run (a second run of
+`deepseek-v4-flash` took more than twice as long), so read the seconds as a rough guide. Models such as
+`claude-sonnet-5` were not in this run: add them with the second command above for harder work.
+
 ### 11.5 Rules for AI helpers
 
 This chapter is the one home of the rules: there is no separate rules file. The built-in helper gets exactly these sections in its
@@ -4456,7 +4499,7 @@ src/aichat/       The built-in helper: providers.ts (local OpenAI-compatible ser
 src/theme.ts      The colour palette
 src/examples.ts   The code cells shown on first load. Like labDemos.ts and recipes.ts, every line is explained by a // comment above it in plain words for beginners: keep it that way when you add or change a cell
 resources/        Piece icons (original) and reference files, see its README
-scripts/          make-piece-svgs.mjs writes resources/pieces/; mcp-bridge.ts is the dev-server /mcp endpoint; mcp-smoke.mjs plays a scripted outside AI against it; ollama-persistent.sh keeps one Ollama model loaded at one context size (run with sudo, once)
+scripts/          make-piece-svgs.mjs writes resources/pieces/; mcp-bridge.ts is the dev-server /mcp endpoint; mcp-smoke.mjs plays a scripted outside AI against it; ollama-persistent.sh keeps one Ollama model loaded at one context size (run with sudo, once); eden-shootout.ts (run by shootout.mjs, `npm run shootout`) tests Eden AI models on the same tasks and prices them, see [11.4.9](#1149-which-eden-ai-model-a-shootout-you-can-run-yourself)
 ```
 
 ## 14 Licence and artwork
