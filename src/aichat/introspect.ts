@@ -1,6 +1,6 @@
 import { ammo } from './ammo';
 import { destination, getSettings, isConfigured } from './config';
-import { cost, priceOf, usd } from './cost';
+import { cost, paidWindow, priceOf, usd } from './cost';
 import { memoryInfo } from './memory';
 import { describeModel } from './modelInfo';
 
@@ -171,7 +171,7 @@ export function selfReport(extra: { messages?: number; busy?: boolean } = {}): R
         }
       : { note: settings.provider === 'local' ? 'This model runs on the person\'s computer: it costs no money, only electricity and waiting time.' : 'Google Gemini through the person\'s own key; this page does not count its cost.' },
     memory_window: {
-      tokens_it_can_hold: ammo.state.window,
+      tokens_it_can_hold: ammo.state.window ?? (paid ? paidWindow(settings.openrouter.model, settings.openrouter.context) : null),
       tokens_in_the_last_question: ammo.state.used,
       tokens_in_the_last_answer: ammo.state.reply,
       full: fullness === null ? null : pct(fullness),

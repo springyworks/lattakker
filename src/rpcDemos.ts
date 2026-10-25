@@ -23,7 +23,7 @@ color('#ece3f6')
 /** Shows the title and a map of which cell uses which. */
 print('🔗 Cells that talk')
 print('export in one cell, import in another')
-print('A4 → G4 · A8 → G8 · A11 → G11 · A15 → G15 · A43 → G43 (a Roman bakery feeds the philosophers)')`,
+print('A4 → G4 · A8 → G8 · A11 → G11 · A15 → G15 · A43 → G43 · A43 → A52 (a Roman bakery feeds the philosophers, and a herald reads the helper's state)')`,
   ],
   [
     'A4',
@@ -1079,6 +1079,84 @@ every('150ms', () => {
   const eating = phils.filter((p) => p.doing === 'eats').length
   const hungry = phils.filter((p) => p.doing === 'hungry').length
   footer.text('🍞 shelf ' + shelf.size + ' · hungry ' + hungry + ' · eating ' + eating + ' · meals ' + phils.reduce((n, p) => n + p.meals, 0))
+})`,
+  ],
+  [
+    'A52',
+    String.raw`// ROME, the herald (praeco) of the bakery. Every few seconds he asks THE HELPER about itself over MCP (the tool helper / introspect),
+// walks to the forum and reads the answer aloud: which model it is, what it costs, how full its memory is, and how it feels, with a purpose.
+// THIS CELL USES THE WALKING ENGINE AND THE SHELF OF THE BAKERY (A43), the same figures and the same bread.
+
+/** Sets the size and the colour of this cell. */
+span(16, 6)
+color('#f3e3c3')
+
+/** Brings in the walking engine and the shelf from A43. */
+import { makeMover, shelf } from './A43'
+
+/** The parts of the helper's answer that are read aloud (the full answer has more: print it to see). */
+interface Inside {
+  who?: { model?: string; where?: string; configured?: boolean }
+  money?: { budget?: string; spent_in_total?: string; left_of_budget?: string; budget_used?: string; price_per_million_tokens?: { in: number; out: number } | string; note?: string }
+  memory_window?: { tokens_it_can_hold?: number | null; full?: string | null }
+  work_so_far?: { answered?: number; tool_calls_that_failed?: number }
+  mood?: 'happy' | 'calm' | 'uneasy' | 'sad'
+  feelings?: Array<{ feeling: string; because: string; purpose: string }>
+}
+
+/** The drawing: its size, the floor and the red border, and the walking engine. */
+const W = 720
+const H = 280
+const pic = svg({ width: W, height: H })
+pic.add('rect', { x: 0, y: 0, width: W, height: H, fill: '#f3e3c3' })
+pic.add('rect', { x: 0, y: 62, width: W, height: 70, fill: '#e6cf9f' })
+pic.add('rect', { x: 0, y: 0, width: W, height: 8, fill: '#a4302a' })
+const mv = makeMover(pic)
+const text = (x: number, y: number, words: string, size = 11, fill = '#5a3a14', anchor = 'start') =>
+  pic.write(x, y, words, { 'font-size': size, 'text-anchor': anchor, fill, 'font-family': 'Georgia, serif' })
+
+text(W / 2, 30, '🏛 PRAECO · the herald reads what the helper says about itself', 16, '#7b1e1a', 'middle')
+
+/** The herald, the scroll he reads from, and a face for the mood of the helper. */
+const herald = mv.sprite('🧑‍⚖️', 60, 100, 30)
+pic.add('rect', { x: 120, y: 56, width: 290, height: 84, rx: 6, fill: '#fff6df', stroke: '#b98b4a', 'stroke-width': 2 })
+const face = mv.sprite('🙂', 440, 98, 40)
+const bread = text(440, 140, '', 10, '#5a3a14', 'middle')
+const lines = [0, 1, 2, 3].map((i) => text(130, 76 + i * 18, '', 11))
+const rows = [0, 1, 2].map((i) => text(40, 172 + i * 36, '', 11, '#3a2a12'))
+const footer = text(W / 2, 266, '', 10, '#6b3e12', 'middle')
+
+/** The face for each mood the helper can have. */
+const FACES = { happy: '😊', calm: '🙂', uneasy: '😟', sad: '😢' }
+
+/** A long text cut to fit the scroll. */
+const cut = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s)
+
+/** One round: ask the helper, walk to the scroll, read, walk back. */
+async function round(): Promise<void> {
+  const inside = (await mcp.tool('helper', 'introspect')) as Inside
+  const money = inside.money
+  const price = money?.price_per_million_tokens
+  await mv.goTo(herald, 100, 100, 90)
+  face.el.text(FACES[inside.mood ?? 'calm'])
+  lines[0].text(cut((inside.who?.model ?? 'no model chosen yet') + ' · ' + (inside.who?.where ?? ''), 48))
+  lines[1].text(
+    money?.budget
+      ? '💶 ' + money.spent_in_total + ' spent of ' + money.budget + ' · ' + money.left_of_budget + ' left (' + money.budget_used + ')'
+      : cut(money?.note ?? 'no money counted', 52),
+  )
+  lines[2].text(typeof price === 'object' ? 'price per million tokens: in $' + price.in + ' · out $' + price.out : '')
+  lines[3].text('🔋 memory ' + (inside.memory_window?.tokens_it_can_hold ?? '?') + ' tokens, ' + (inside.memory_window?.full ? inside.memory_window.full + ' full' : 'use not measured yet'))
+  const felt = inside.feelings ?? []
+  rows.forEach((r, i) => r.text(felt[i] ? cut(felt[i].feeling.toUpperCase() + ': ' + felt[i].because + ' → ' + felt[i].purpose, 118) : i === 0 ? 'No feelings to report: nothing needs attention.' : ''))
+  footer.text('answered ' + (inside.work_so_far?.answered ?? 0) + ' · failed tool calls ' + (inside.work_so_far?.tool_calls_that_failed ?? 0) + ' · mood ' + (inside.mood ?? '?'))
+  await mv.goTo(herald, 60, 100, 90)
+}
+
+/** The herald goes again every five seconds; a helper that is silent is told in the scroll, not in the console. */
+every('5s', () => {
+  bread.text('🍞 ' + shelf.size + ' on the shelf')
+  round().catch((e: unknown) => lines[0].text(cut('The helper is silent: ' + (e instanceof Error ? e.message : String(e)), 52)))
 })`,
   ],
 ];

@@ -1316,6 +1316,10 @@ body.ai-open .sheet-tab-panel {
   border-radius: 10px;
   background: #f1f8f3;
 }
+.ai-note.ai-warn {
+  color: #b42318;
+  font-weight: 700;
+}
 .ai-models-bar {
   display: flex;
   gap: 6px;

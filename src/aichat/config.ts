@@ -107,7 +107,7 @@ export function loadSettings(): void {
       const saved = JSON.parse(localStorage.getItem(KEYS_KEY) ?? '{}') as Partial<Record<ProviderId, string>>;
       keys.local = typeof saved.local === 'string' ? saved.local : '';
       keys.gemini = typeof saved.gemini === 'string' ? saved.gemini : '';
-      keys.openrouter = typeof saved.openrouter === 'string' ? saved.openrouter : '';
+      keys.openrouter = typeof saved.openrouter === 'string' ? cleanKey('openrouter', saved.openrouter) : '';
     }
   } catch {
     settings = structuredClone(DEFAULT_SETTINGS);
@@ -140,8 +140,14 @@ export function updateSettings(change: (s: AiSettings) => void): void {
   listeners.forEach((l) => l());
 }
 
+/** What may be kept as a key. An OpenRouter key is the one word that starts with sk-or-: anything else that was pasted (a sentence, a second line) is not a key and would make the request fail with "Missing Authentication header". */
+export function cleanKey(provider: ProviderId, raw: string): string {
+  if (provider === 'openrouter') return raw.match(/sk-or-[\w-]+/)?.[0] ?? '';
+  return raw.trim();
+}
+
 export function setKey(provider: ProviderId, key: string): void {
-  keys[provider] = key.trim();
+  keys[provider] = cleanKey(provider, key);
   persist();
   listeners.forEach((l) => l());
 }

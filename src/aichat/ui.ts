@@ -1022,6 +1022,7 @@ export class AiChatUi {
     return el('div', { className: 'ai-field' }, el('label', { textContent: 'Model' }), ...(table ? [table] : [filter, choices]), el('div', { className: 'ai-inline' }, typed), el('div', { className: 'ai-actions' }, find, test), note);
   }
 
+  private keyRejected = false;
   private tableSort: { key: 'name' | 'in' | 'out' | 'context'; dir: 1 | -1 } = { key: 'in', dir: 1 };
   private tableKind: 'all' | 'free' | 'paid' = 'all';
   private tableFilter = '';
@@ -1138,6 +1139,7 @@ export class AiChatUi {
     const key = el('input', { type: 'password', value: getKey('openrouter'), className: 'ai-wide', placeholder: 'paste your OpenRouter API key (sk-or-…)', autocomplete: 'off' });
     key.onchange = () => {
       setKey('openrouter', key.value);
+      this.keyRejected = !!key.value.trim() && !getKey('openrouter');
       void cost.refreshKey(getKey('openrouter'), true);
       this.pickers.clear();
       this.render();
@@ -1178,7 +1180,7 @@ export class AiChatUi {
           el('li', {}, 'Your key stays in this page (it is sent only to OpenRouter). Get one at ', link('https://openrouter.ai/keys', 'openrouter.ai/keys'), ' and set a spending limit on the key there too.'),
         ),
       ),
-      el('div', { className: 'ai-field' }, el('label', { textContent: 'OpenRouter API key' }), key),
+      el('div', { className: 'ai-field' }, el('label', { textContent: 'OpenRouter API key' }), key, ...(this.keyRejected ? [el('div', { className: 'ai-note ai-warn', textContent: 'That is not an OpenRouter key, so it was not kept. A key is one word that starts with sk-or- (copy it from openrouter.ai/keys).' })] : [])),
       el('div', { className: 'ai-field' }, el('label', { textContent: 'Budget in dollars: the helper stops asking when this much has been spent' }), budget, el('div', { className: 'ai-note', textContent: `Spent so far: ${usd(cost.spent)} (${usd(cost.session)} since this page was opened). ${usd(cost.left)} left.` }), el('div', { className: 'ai-actions' }, reset)),
     ];
     if (getKey('openrouter')) {

@@ -2,6 +2,7 @@ import { ERR, McpError, type Json, type McpServer } from '../mcp/router';
 import type { Conversation } from './agent';
 import { getSettings, isConfigured } from './config';
 import { describeModel } from './modelInfo';
+import { workspace } from '../workspace';
 import { selfReport } from './introspect';
 import type { AiContext } from './tools';
 
@@ -73,7 +74,7 @@ export class HelperServer implements McpServer {
     const settings = getSettings();
     if (name === 'status') return reply({ configured: isConfigured(), allowOutsideQuestions: settings.allowOutside, busy: this.convo.busy, model: isConfigured() ? describeModel().line : null });
     if (name === 'introspect') {
-      if (from !== INSIDER && !settings.allowOutside) return failure('The person has not allowed outside AIs to look inside the helper. They can tick "Let an outside AI ask the helper" in the helper settings (⚙ in the AI chat).');
+      if (from !== INSIDER && !workspace.get(from.split(':')[0]) && !settings.allowOutside) return failure('The person has not allowed outside AIs to look inside the helper. They can tick "Let an outside AI ask the helper" in the helper settings (⚙ in the AI chat). Cells of this page may always ask.');
       return reply(selfReport({ busy: this.convo.busy }));
     }
     if (name === 'click_fix_button') {
