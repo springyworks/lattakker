@@ -11,7 +11,7 @@ import { localAssistantReady, localState, localWarning, makeLocalProvider, onLoc
 import { renderMarkdown, linkify } from './markdown';
 import { allNotes, exportJson, forget, importJson, isKeptSafe, keepSafe, memoryInfo, onMemoryChange, wipe } from './memory';
 import { describeModel } from './modelInfo';
-import { ammo, gaugeText } from './ammo';
+import { ammo, gaugeText, kilo } from './ammo';
 import { diagnose } from './diagnose';
 import { getLive, onLiveChange } from './ollamaLoad';
 import { bellOn, onBellChange, primeBell, ringBell, setBell, soundSources, typewriterSounds } from './bell';
@@ -1018,7 +1018,84 @@ export class AiChatUi {
     };
     // The list is fetched by itself the first time, when there is a key (or no key is needed).
     if (auto && !st.models.length && !st.note) window.setTimeout(() => !st.models.length && !st.note && load(), 0);
-    return el('div', { className: 'ai-field' }, el('label', { textContent: 'Model' }), filter, choices, el('div', { className: 'ai-inline' }, typed), el('div', { className: 'ai-actions' }, find, test), note);
+    const table = slot === 'openrouter' ? this.modelTable(names, current, (m) => { set(m); this.render(); }) : null;
+    return el('div', { className: 'ai-field' }, el('label', { textContent: 'Model' }), ...(table ? [table] : [filter, choices]), el('div', { className: 'ai-inline' }, typed), el('div', { className: 'ai-actions' }, find, test), note);
+  }
+
+  private tableSort: { key: 'name' | 'in' | 'out' | 'context'; dir: 1 | -1 } = { key: 'in', dir: 1 };
+  private tableKind: 'all' | 'free' | 'paid' = 'all';
+  private tableFilter = '';
+
+  /** The models as a table with a header: click a column to sort by it (again to reverse), narrow by free or paid and by text. */
+  private modelTable(names: string[], current: string, pick: (m: string) => void): HTMLElement {
+    const isFree = (m: string): boolean => {
+      const p = priceOf(m);
+      return !!p && !p.prompt && !p.completion;
+    };
+    const wrap = el('div', { className: 'ai-models' });
+    const count = el('span', { className: 'ai-note' });
+    const head = el('div', { className: 'ai-models-head' });
+    const body = el('div', { className: 'ai-models-body' });
+    const columns: Array<['name' | 'in' | 'out' | 'context', string, string]> = [
+      ['name', 'Model', 'Sort alphabetically'],
+      ['in', 'In $/M', 'Price per million tokens you send: sort by it'],
+      ['out', 'Out $/M', 'Price per million tokens the model writes: sort by it'],
+      ['context', 'Context', 'How many tokens the model can hold: sort by it'],
+    ];
+    const valueOf = (m: string, key: 'name' | 'in' | 'out' | 'context'): string | number => {
+      const p = priceOf(m);
+      return key === 'name' ? m : key === 'in' ? (p?.prompt ?? Infinity) : key === 'out' ? (p?.completion ?? Infinity) : (p?.context ?? 0);
+    };
+    const num = (n: number): string => (n === Infinity ? '?' : n === 0 ? 'free' : n < 0.1 ? n.toFixed(3) : n.toFixed(2));
+    const paintBody = (): void => {
+      const needle = this.tableFilter.trim().toLowerCase();
+      const shown = names
+        .filter((m) => (this.tableKind === 'all' || (this.tableKind === 'free') === isFree(m)) && (!needle || m.toLowerCase().includes(needle)))
+        .sort((a, b) => {
+          const x = valueOf(a, this.tableSort.key);
+          const y = valueOf(b, this.tableSort.key);
+          const c = typeof x === 'string' ? x.localeCompare(y as string) : x === y ? 0 : x < (y as number) ? -1 : 1;
+          return c * this.tableSort.dir || a.localeCompare(b);
+        });
+      count.textContent = `${shown.length} of ${names.length} models`;
+      body.textContent = '';
+      for (const m of shown) {
+        const p = priceOf(m);
+        const row = el('div', { className: `ai-models-row${m === current ? ' picked' : ''}`, title: m });
+        row.append(el('span', { className: 'c-name', textContent: m }), el('span', { className: 'c-num', textContent: num(p?.prompt ?? Infinity) }), el('span', { className: 'c-num', textContent: num(p?.completion ?? Infinity) }), el('span', { className: 'c-num', textContent: p?.context ? kilo(p.context) : '?' }));
+        row.onclick = () => pick(m);
+        body.append(row);
+      }
+      if (!shown.length) body.append(el('div', { className: 'ai-note', textContent: names.length ? 'No model matches.' : 'Press “Find models”.' }));
+    };
+    const paintHead = (): void => {
+      head.textContent = '';
+      for (const [key, label, tip] of columns) {
+        const on = this.tableSort.key === key;
+        const cell = el('button', { className: `${key === 'name' ? 'c-name' : 'c-num'}${on ? ' on' : ''}`, textContent: `${label}${on ? (this.tableSort.dir === 1 ? ' ▲' : ' ▼') : ''}`, title: tip });
+        cell.onclick = () => {
+          this.tableSort = on ? { key, dir: this.tableSort.dir === 1 ? -1 : 1 } : { key, dir: key === 'context' ? -1 : 1 };
+          paintHead();
+          paintBody();
+        };
+        head.append(cell);
+      }
+    };
+    const kind = el('select', {});
+    for (const [v, t] of [['all', 'Free and paid'], ['free', 'Free only'], ['paid', 'Paid only']] as const) kind.append(el('option', { value: v, textContent: t, selected: this.tableKind === v }));
+    kind.onchange = () => {
+      this.tableKind = kind.value as 'all' | 'free' | 'paid';
+      paintBody();
+    };
+    const filter = el('input', { type: 'text', value: this.tableFilter, placeholder: 'filter by name (claude, qwen, …)', className: 'ai-wide' });
+    filter.oninput = () => {
+      this.tableFilter = filter.value;
+      paintBody();
+    };
+    paintHead();
+    paintBody();
+    wrap.append(el('div', { className: 'ai-models-bar' }, filter, kind), count, head, body);
+    return wrap;
   }
 
   private localSettings(): HTMLElement {
@@ -1102,7 +1179,7 @@ export class AiChatUi {
           (m) => updateSettings((x) => (x.openrouter.model = m)),
           true,
         ),
-        el('div', { className: 'ai-note', textContent: s.openrouter.model ? `${s.openrouter.model}: ${priceText(chosen)}${chosen?.context ? `; holds ${Math.round(chosen.context / 1000)}k tokens (the page budgets for at most 64k to keep chats cheap)` : ''}. The list shows the models that can use tools, cheapest first.` : 'Choose a model. The list shows the models that can use tools, cheapest first, with their price per million tokens.' }),
+        el('div', { className: 'ai-note', textContent: s.openrouter.model ? `${s.openrouter.model}: ${priceText(chosen)}${chosen?.context ? `; holds ${Math.round(chosen.context / 1000)}k tokens (the page budgets for at most 64k to keep chats cheap)` : ''}. Click a column header to sort (price in, price out, context, name); the list shows only models that can use tools.` : 'Choose a model. Click a column header to sort by price, context or name; the list shows only models that can use tools.' }),
       );
       void cost.refreshKey(getKey('openrouter'));
     }

@@ -1316,6 +1316,73 @@ body.ai-open .sheet-tab-panel {
   border-radius: 10px;
   background: #f1f8f3;
 }
+.ai-models-bar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+.ai-models-head,
+.ai-models-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 58px 58px 52px;
+  gap: 4px;
+  align-items: center;
+}
+.ai-models-head {
+  position: sticky;
+  top: 0;
+  background: #e4e7eb;
+  border: 1px solid #cbd2d9;
+  border-radius: 4px 4px 0 0;
+}
+.ai-models-head button {
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  border: 0;
+  background: none;
+  padding: 3px 4px;
+  cursor: pointer;
+  color: #323f4b;
+}
+.ai-models-head button.c-name {
+  text-align: left;
+}
+.ai-models-head button:hover,
+.ai-models-head button.on {
+  background: #cfe3ff;
+}
+.ai-models-body {
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid #cbd2d9;
+  border-top: 0;
+  border-radius: 0 0 4px 4px;
+  background: #fff;
+}
+.ai-models-row {
+  padding: 2px 4px;
+  font-size: 11px;
+  cursor: pointer;
+  border-bottom: 1px solid #f0f2f5;
+}
+.ai-models-row:hover {
+  background: #f0f6ff;
+}
+.ai-models-row.picked {
+  background: #d6f0dc;
+  font-weight: 700;
+}
+.ai-models-row .c-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-models-row .c-num,
+.ai-models-head .c-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
 .ai-actions {
   display: flex;
   flex-wrap: wrap;

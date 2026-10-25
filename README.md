@@ -3836,8 +3836,9 @@ Nothing is sent anywhere until a grown-up has chosen a helper in its settings (â
 - **OpenRouter (adults only, costs money).** One key from
   [openrouter.ai/keys](https://openrouter.ai/keys), hundreds of models, paid per
   token. The model list shows every model that can use tools with its **price
-  per million tokens**, cheapest first (type in the filter to narrow it, for
-  example `claude`, `qwen` or `free`). While OpenRouter is the helper, a
+  per million tokens** in a table: click a column header to sort by name, price
+  in, price out or context (click again to reverse), narrow it to free or paid
+  models, and type in the filter (for example `claude` or `qwen`). While OpenRouter is the helper, a
   **money line is always visible at the top of the chat**: what has been spent
   of your **budget** (default $10, set in âš™), what is left, the cost of the last
   answer, an estimate that grows while an answer is being written (replaced by
