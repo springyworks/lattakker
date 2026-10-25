@@ -1,6 +1,7 @@
 import { router, type Trace } from '../mcp/router';
 import { mailbox } from '../mcp/mailbox';
 import { isOriented, markOriented, orientation } from '../ai/orientation';
+import { selfReport } from './introspect';
 
 /** The message the running chat turn is answering: what the tools ask the router is marked as caused by it (see mcp/router.ts, Trace). */
 /** The built-in helper, as a participant that has to read the README once (see ai/orientation.ts). */
@@ -178,6 +179,11 @@ export const TOOL_DECLS: ToolDecl[] = [
     parameters: { type: 'object', properties: {} },
   },
   {
+    name: 'look_inside',
+    description: 'Look at yourself: which model you are and who makes it, what it costs (price per million tokens, the budget, what is spent and what is left, in dollars), how full your memory window is, how this chat is going (answers, failed tool calls, errors), what you keep in long-term memory, what you may do, and your feelings: signals worked out from those measurements, each with a purpose (for example thrifty when the money runs out, crowded when the memory is full, sad when calls keep failing). Call it when the person asks about you, your cost, your budget, your model or how you are doing, and when you are unsure whether to go on: never guess these things.',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
     name: 'read_guide',
     description: 'A short overview of the CODE a cell can contain, with the cell rules. For exact names, signatures and working examples use read_docs instead. (This is not the window.mms API: that is only for outside AIs.)',
     parameters: { type: 'object', properties: {} },
@@ -318,7 +324,7 @@ export const TOOL_DECLS: ToolDecl[] = [
 ];
 
 /** What a small model is offered: the tools for looking, going there, trying and suggesting. More tools make small models fumble. */
-const SMALL_MODEL_TOOLS = new Set(['check_mail', 'send_mail', 'look_around', 'check_cell', 'focus_points', 'list_cells', 'read_cell', 'game_state', 'board_text', 'legal_moves', 'make_move', 'start_battle', 'goto_cell', 'flash_cell', 'run_cell', 'check_cell', 'find_free_cell', 'write_code', 'suggest_code', 'click_fix_button', 'put_in_input', 'read_docs', 'ask_rules', 'find_tools', 'mcp_call']);
+const SMALL_MODEL_TOOLS = new Set(['check_mail', 'send_mail', 'look_around', 'check_cell', 'focus_points', 'list_cells', 'read_cell', 'game_state', 'board_text', 'legal_moves', 'make_move', 'start_battle', 'goto_cell', 'flash_cell', 'run_cell', 'check_cell', 'find_free_cell', 'write_code', 'suggest_code', 'click_fix_button', 'put_in_input', 'read_docs', 'ask_rules', 'find_tools', 'mcp_call', 'look_inside']);
 
 /** The shortest list that still lets a model look, go there, try and suggest: for a model whose memory is tiny. */
 const TIGHT_TOOLS = new Set(['look_around', 'check_cell', 'read_cell', 'game_state', 'legal_moves', 'make_move', 'start_battle', 'goto_cell', 'run_cell', 'write_code', 'suggest_code', 'click_fix_button', 'put_in_input']);
@@ -638,6 +644,8 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
         return limit(asText(await host.move(String(args.from ?? ''), String(args.to ?? ''))));
       case 'start_battle':
         return limit(asText(host.startBattle()));
+      case 'look_inside':
+        return limit(asText(selfReport({ busy: true })));
       case 'read_guide':
         return limit(await cellGuide(), 9500);
       case 'read_docs': {

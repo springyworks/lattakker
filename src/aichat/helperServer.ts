@@ -2,6 +2,7 @@ import { ERR, McpError, type Json, type McpServer } from '../mcp/router';
 import type { Conversation } from './agent';
 import { getSettings, isConfigured } from './config';
 import { describeModel } from './modelInfo';
+import { selfReport } from './introspect';
 import type { AiContext } from './tools';
 
 /**
@@ -9,6 +10,7 @@ import type { AiContext } from './tools';
  * question to it: the small helper that lives in the page, knows the cells and keeps the memory.
  *
  *   tools/call status        who the helper is, and whether outside AIs may ask it
+ *   tools/call introspect    its self-knowledge: model, price, budget, memory window, how the work goes, feelings with a purpose
  *   tools/call ask {question, tab?, address?}    ask the helper, wait for its answer
  *   tools/call click_fix_button {text?}          press the "✏ fix" button of the question box (spelling corrected in place)
  *
@@ -24,6 +26,11 @@ const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'obj
 
 const TOOLS = [
   { name: 'status', description: 'Who the helper is (company, model), whether it is set up, and whether outside AIs may ask it.', inputSchema: { type: 'object', properties: {} } },
+  {
+    name: 'introspect',
+    description: "The helper's self-knowledge: its model and price per million tokens, the budget (spent, left, in dollars), how full its memory window is, how its work is going (failed tool calls, errors), its long-term memory, and its feelings: signals calculated from those measurements, each with a purpose. Refused for outside AIs unless the person allowed outside questions.",
+    inputSchema: { type: 'object', properties: {} },
+  },
   {
     name: 'ask',
     description: "Ask the page's built-in helper a question and wait for its answer. It can read the cells and keeps a memory (see the `memory` server). Refused unless the person allowed outside questions.",
@@ -65,6 +72,10 @@ export class HelperServer implements McpServer {
     const failure = (message: string) => ({ content: [{ type: 'text', text: message }], isError: true });
     const settings = getSettings();
     if (name === 'status') return reply({ configured: isConfigured(), allowOutsideQuestions: settings.allowOutside, busy: this.convo.busy, model: isConfigured() ? describeModel().line : null });
+    if (name === 'introspect') {
+      if (from !== INSIDER && !settings.allowOutside) return failure('The person has not allowed outside AIs to look inside the helper. They can tick "Let an outside AI ask the helper" in the helper settings (⚙ in the AI chat).');
+      return reply(selfReport({ busy: this.convo.busy }));
+    }
     if (name === 'click_fix_button') {
       if (from !== INSIDER && !settings.allowOutside) return failure('The person has not allowed outside AIs to use the helper. They can tick "Let an outside AI ask the helper" in the helper settings (⚙ in the AI chat).');
       if (!this.convo.clickFix) return failure('The chat window is not there.');
@@ -72,7 +83,7 @@ export class HelperServer implements McpServer {
       const r = await this.convo.clickFix(given);
       return r.ok ? reply({ before: r.before ?? '', after: r.after ?? '', changed: !!r.changed }) : failure(r.error ?? 'The fix button did not work.');
     }
-    if (name !== 'ask') throw new McpError(ERR.methodNotFound, `helper has no tool "${name}". Tools: status, ask, click_fix_button`);
+    if (name !== 'ask') throw new McpError(ERR.methodNotFound, `helper has no tool "${name}". Tools: status, introspect, ask, click_fix_button`);
     if (!settings.allowOutside) return failure('The person has not allowed outside AIs to ask the helper. They can tick "Let an outside AI ask the helper" in the helper settings (⚙ in the AI chat).');
     if (!isConfigured()) return failure('The helper is not set up yet (no model chosen in its settings).');
     if (this.convo.busy) return failure('The helper is busy with another question. Try again in a moment.');

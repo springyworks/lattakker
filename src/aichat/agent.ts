@@ -7,6 +7,7 @@ import { workspace } from '../workspace';
 import { jobs } from './jobs';
 import { describeModel, isSmallModel } from './modelInfo';
 import { memoryInfo } from './memory';
+import { vitals } from './introspect';
 import { addressHints } from './cellPaths';
 import { focusPoints } from '../editor/focusPoints';
 import { ammo, fit, kilo } from './ammo';
@@ -104,6 +105,7 @@ export class Conversation {
     this.entries.length = 0;
     this.messages = [];
     this.ledger.reset();
+    vitals.reset();
     this.changed();
   }
 
@@ -229,6 +231,7 @@ export class Conversation {
     this.messages.push({ role: 'user', text: `[Asked from ${ctx.address ? `${workspace.pathOf(ctx.tab, ctx.address)}${ctx.line ? `, line ${ctx.line} of its code` : ''}` : `the ${ctx.tab} tab`}]${hints}\n${question}${focus ? `\n${focus}` : ''}${picked}` });
     this.trim();
     this.busy = true;
+    vitals.asked();
     const askedAt = performance.now();
     this.abort = new AbortController();
     // The seconds of "last sign of life" are re-drawn once a second; they are measured, not invented (see jobs.ts).
@@ -272,6 +275,7 @@ export class Conversation {
           fitNoted = true;
           this.note(`🔋 The model’s memory was nearly full, so I shortened ${fitted.shortened ? `${fitted.shortened} long answer${fitted.shortened === 1 ? '' : 's'}` : ''}${fitted.shortened && fitted.dropped ? ' and ' : ''}${fitted.dropped ? 'the oldest part of this chat' : ''} to make room.`);
         }
+        vitals.fitted(fitted.shortened, fitted.dropped);
         chat.say(`memory check: about ${kilo(fitted.estimate)} of ${fitted.room ? kilo(fitted.room) : '?'} tokens${fitted.shortened || fitted.dropped ? ' (shortened to fit)' : ''}`, false);
         // The model is reached by fetch, not over the router, so the router is told: the chat shows up in its traffic.
         const modelBox = getSettings().provider === 'local' ? 'ollama' : 'helper';
@@ -306,12 +310,14 @@ export class Conversation {
           try {
             result = await guarded(runTool(host, call.name, call.args), this.abort.signal, call.name);
             tool.done(`${result.length} characters back`);
+            vitals.tool(call.name, !result.startsWith('{"error"'));
           } catch (err) {
             if (this.abort.signal.aborted) throw err;
             // A tool that hangs must not leave a child waiting: say so to the model, which then answers with what it has.
             const message = err instanceof Error ? err.message : String(err);
             result = JSON.stringify({ error: message });
             tool.fail(message);
+            vitals.tool(call.name, false);
           }
           this.messages.push({ role: 'tool', toolCallId: call.id, toolName: call.name, text: result });
           if (this.playGoal) this.tally(call.name, result);
@@ -321,6 +327,7 @@ export class Conversation {
       if (!answer) answer = 'I do not have an answer for that one. Could you ask it in another way?';
       this.entries.push({ kind: 'ai', text: answer, via: info.short });
       bellForAnswer(performance.now() - askedAt);
+      vitals.answered((performance.now() - askedAt) / 1000);
       // If the helper's own code still does not run, say it in calm words: the person should not be left guessing.
       const mine = this.entries.slice(turnStart).filter((e): e is Extract<Entry, { kind: 'wrote' }> => e.kind === 'wrote');
       const last = mine[mine.length - 1];
@@ -344,6 +351,7 @@ export class Conversation {
         return { ok: false, text: 'Stopped.' };
       }
       const text = friendly(err);
+      vitals.failed(text);
       chat.fail(text);
       this.entries.push({ kind: 'error', text });
       const last = this.messages.map((m) => m.role).lastIndexOf('user');
