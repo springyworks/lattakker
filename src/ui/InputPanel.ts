@@ -427,8 +427,8 @@ class InputPanel {
         if (!this.claims.size || (e.altKey && !typed) || e.metaKey || typing(e.target)) return;
         // Shift + Enter stays the sheet's: it opens the editor of the cell.
         if (e.key === 'Enter' && e.shiftKey) return;
-        // A terminal also gets Ctrl-C and Ctrl-D (the browser would copy, or bookmark the page).
-        const control = e.ctrlKey && !typed && !e.shiftKey && /^[cd]$/i.test(e.key);
+        // A terminal also gets Ctrl-C and Ctrl-D (the browser would copy, or bookmark the page); but Ctrl-C with text selected is a copy.
+        const control = e.ctrlKey && !typed && !e.shiftKey && /^[cd]$/i.test(e.key) && !(e.key.toLowerCase() === 'c' && window.getSelection()?.toString());
         if (e.ctrlKey && !control && !typed) return;
         if (!control && !(e.key.length === 1 || /^(Enter|Backspace|Delete|Arrow(Up|Down|Left|Right)|Home|End|PageUp|PageDown)$/.test(e.key))) return;
         hear(e);

@@ -564,6 +564,17 @@ export class Sheet {
       },
       true,
     );
+    // maxGraph cancels the default of every press it handles, which also stops the browser from starting a text selection; on the printed text of a picked block the press keeps its default so the text can be selected.
+    container.addEventListener(
+      'pointerdown',
+      (e: PointerEvent) => {
+        if (e.button !== 0 || e.altKey || e.shiftKey || e.pointerType !== 'mouse' || !(e.target as Element | null)?.closest?.('.cell-text')) return;
+        const address = this.hoveredAddress;
+        if (!address || !this.picked.has(this.ownerOf(address))) return;
+        e.preventDefault = () => {};
+      },
+      true,
+    );
     container.addEventListener('pointercancel', () => {
       this.cancelContentDrag();
       this.cancelRubber();
@@ -2239,6 +2250,8 @@ export class Sheet {
       this.groupPress = { ...group, startX: me.getGraphX(), startY: me.getGraphY(), grab: { x: p.x - origin.x, y: p.y - origin.y } };
       return;
     }
+    // A press on the printed text of a block that is picked already selects text, so it can be copied; the grip, the border and unpicked blocks still carry it.
+    if (event.button === 0 && !event.altKey && !event.shiftKey && this.picked.has(this.ownerOf(address)) && (event.target as Element | null)?.closest?.('.cell-text')) return;
     if (!this.draggable(address) || event.altKey) {
       // Not a block to carry (an empty cell, or Alt held): a press and drag here draws a rubber band around cells.
       if (event.button === 0 && !this.isBoardAddress(address) && !this.fingerIsScrolling(me)) {

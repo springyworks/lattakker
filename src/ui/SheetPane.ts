@@ -9,6 +9,7 @@ import { GAME_NODE, clickNode, codeNode, describeNode, sizeNode } from '../sheet
 import { buildApi } from '../sheet/api';
 import { runCell } from '../sheet/runtime';
 import { inputPanel } from './InputPanel';
+import { screenRows, trimEnd } from '../mcp/outputRead';
 import { CellEditor } from '../editor/CellEditor';
 import { CellCodeView } from '../editor/CellCodeView';
 import { ContextPopups } from '../editor/ContextPopups';
@@ -288,6 +289,28 @@ export class SheetPane {
       } else return;
       e.preventDefault();
     });
+    // Ctrl+C copies the output of the picked cells (or of the cell under the mouse), and Ctrl+V pastes into a picked cell. Text the person selected with the mouse stays the browser's own.
+    const idle = (target: EventTarget | null): boolean =>
+      workspace.current === this.sheet.id && !this.editor.isOpen && !(target as HTMLElement | null)?.closest?.('input, textarea, select, [contenteditable="true"], .monaco-editor, .ai-side, .ai-mini, .help-card, .input-panel');
+    window.addEventListener('keydown', (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== 'c' || !idle(e.target)) return;
+      if (window.getSelection()?.toString()) return;
+      const picked = this.sheet.getPicked();
+      const from = picked.length ? picked : this.sheet.hoveredAddress ? [this.sheet.hoveredAddress] : [];
+      const text = from.map((a) => this.outputOf(a)).filter(Boolean).join('\n\n');
+      if (!text) return;
+      e.preventDefault();
+      this.copy(text, from.length > 1 ? `the output of ${from.length} cells` : `the output of ${from[0]}`);
+    });
+    window.addEventListener('paste', (e) => {
+      if (!idle(e.target)) return;
+      const text = e.clipboardData?.getData('text/plain') ?? '';
+      const picked = this.sheet.getPicked();
+      const address = picked.length === 1 ? picked[0] : !picked.length && this.sheet.hoveredAddress && inputPanel.hasPaste(this.sheet.id, this.sheet.hoveredAddress) ? this.sheet.hoveredAddress : '';
+      if (!text || !address || this.sheet.isBoardAddress(address)) return;
+      e.preventDefault();
+      void this.pasteInto(address, text);
+    });
   }
 
   // ------------------------------------------------------------------ clicks
@@ -470,7 +493,7 @@ export class SheetPane {
           const path = workspace.pathOf(sheet.id, address);
           menu.addItem('Everything: path, code and output', null, () => this.copy(this.everythingOf(address), 'everything'), copyMenu, undefined, !!copied?.code || !!copied?.output.length);
           menu.addItem('Code', null, () => this.copy(copied?.code ?? '', 'the code'), copyMenu, undefined, !!copied?.code);
-          menu.addItem('Output', null, () => this.copy(copied?.output.join('\n') ?? '', 'the output'), copyMenu, undefined, !!copied?.output.length);
+          menu.addItem('Output', null, () => this.copy(this.outputOf(address), 'the output'), copyMenu, undefined, !!this.outputOf(address));
           menu.addItem(`Path  ${path}`, null, () => this.copy(path, 'the path'), copyMenu);
           menu.addItem(inputPanel.hasPaste(sheet.id, address) ? `⧉ Paste into the input of ${address}` : `⧉ Paste code into ${address}`, null, () => void this.pasteInto(address));
           const tasks = sheet.taskCount(address);
@@ -686,15 +709,24 @@ export class SheetPane {
     );
   }
 
-  /** Takes the code from the clipboard: what "Copy → everything" made (its code part), or any text, which then is the code. */
-  private async pasteInto(address: string): Promise<void> {
+  /** What a cell shows as text: its output lines, or (a terminal drawn on tiles, which prints nothing) the rows of its screen. */
+  private outputOf(address: string): string {
+    const d = this.sheet.dataAt(address);
+    if (d?.output.length) return d.output.join('\n');
+    return d?.tiles ? trimEnd(screenRows(d.tiles)).join('\n') : '';
+  }
+
+  /** Takes the code from the clipboard (or from `given`, what a paste event brought): what "Copy → everything" made (its code part), or any text, which then is the code. */
+  private async pasteInto(address: string, given?: string): Promise<void> {
     const { sheet, hooks } = this;
-    let text = '';
-    try {
-      text = await navigator.clipboard.readText();
-    } catch {
-      hooks.say('Could not read the clipboard (the browser said no). Open the editor and press Ctrl+V there.', 'bad');
-      return;
+    let text = given ?? '';
+    if (given === undefined) {
+      try {
+        text = await navigator.clipboard.readText();
+      } catch {
+        hooks.say('Could not read the clipboard (the browser said no). Open the editor and press Ctrl+V there.', 'bad');
+        return;
+      }
     }
     // A cell with an input of its own (a terminal) gets the text there; the others get it as their code.
     if (inputPanel.hasPaste(sheet.id, address)) {
