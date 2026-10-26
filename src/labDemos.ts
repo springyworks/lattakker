@@ -2239,6 +2239,7 @@ function help(): void {
   say('Ctrl-C throws the line away (twice: stops a running one), .clear wipes the screen, Esc gives the keyboard back.', INK.dim)
   say('print() and log() write here; at("A1").text reads a cell; await sleep("1s") waits.', INK.dim)
   say('Dot-commands (a line that starts with a dot): ' + ts.dot.list().map((c) => '.' + c.name).join(' ') + '. .help <name> says more.', INK.dim)
+  say('Find out what the page can do, through MCP: .discover  .tools <server>  .find <words>  .mcp <server> <tool> {json}  .out <path>', INK.dim)
   say('Add your own, in TypeScript, right here: dot("hi", (args) => "hello " + args, "greets")  then  .hi bob', INK.dim)
 }
 
@@ -2249,6 +2250,45 @@ ts.dot('help', (name) => {
   if (one) say('.' + one.name + '  ' + (one.help || '(no help text)'), INK.dim)
   else help()
 }, 'what this terminal can do; .help <name> for one command')
+
+/** Commands that find things out through MCP, from inside this code: the same mcp object any cell has. Lines stay inside the 72 columns of the screen. */
+const COLS = 72
+const flat = (text: unknown): string => String(text ?? '').replace(/\s+/g, ' ').trim()
+const clip = (text: string, n = COLS): string => (text.length > n ? text.slice(0, n - 1) + '…' : text)
+const firstSentence = (text: unknown): string => flat(text).split(/(?<=[.!?])\s/)[0]
+ts.dot('discover', async () => {
+  const all = await mcp.catalog()
+  return all.map((s) => clip(s.server.padEnd(10) + String(s.tools.length).padStart(2) + '  ' + flat(s.description))).join('\n')
+}, 'every MCP server, how many tools, and what it is for')
+ts.dot('tools', async (server) => {
+  const name = server.trim()
+  if (!name) return 'usage: .tools <server>   (.discover lists the servers)'
+  const list = await mcp.tools(name)
+  return list.map((t) => clip(t.name.padEnd(18) + firstSentence(t.description))).join('\n')
+}, 'the tools of one MCP server: .tools weather')
+ts.dot('find', async (words) => {
+  if (!words.trim()) return 'usage: .find <words>   e.g. .find weather forecast'
+  const found = await mcp.tool('router', 'find_tools', { query: words.trim() })
+  const hits = found.hits ?? []
+  if (!hits.length) return 'nothing found for "' + words.trim() + '"; try other words, or .discover'
+  return hits.map((h) => clip(h.server + '.' + h.tool + '  ' + firstSentence(h.about ?? h.description))).join('\n')
+}, 'search every tool by words: .find weather forecast')
+ts.dot('mcp', async (rest) => {
+  const m = rest.trim().match(/^(\S+)\s+(\S+)\s*(.*)$/)
+  if (!m) return 'usage: .mcp <server> <tool> [json]  e.g. .mcp weather now {"place":"Oslo"}'
+  const answer = await mcp.tool(m[1], m[2], m[3].trim() ? JSON.parse(m[3]) : {})
+  const text = typeof answer === 'string' ? answer : JSON.stringify(answer)
+  const rows: string[] = answer && typeof answer.summary === 'string' ? [clip(flat(answer.summary)), ''] : []
+  const room = 12 * COLS
+  for (let i = 0; i < Math.min(text.length, room); i += COLS) rows.push(text.slice(i, i + COLS))
+  return rows.join('\n') + (text.length > room ? '\n… ' + (text.length - room) + ' more characters' : '')
+}, 'call any MCP tool: .mcp weather now {"place":"Oslo"}')
+ts.dot('out', async (rest) => {
+  const [path, n] = rest.trim().split(/\s+/)
+  if (!path) return 'usage: .out <path> [lines]   e.g. .out /lab/J24'
+  const r = await mcp.tool('lab', 'cell_output', { address: path, last: Number(n) || 1 })
+  return r.error ? '?? ' + r.error : r.text
+}, 'read what another cell shows: .out /lab/J24 3')
 
 /** While the mouse is over the screen, Enter and the typing keys belong to it (claimKeys keeps Enter from opening the editor; Shift+Enter still does). */
 let give = (): void => {}
