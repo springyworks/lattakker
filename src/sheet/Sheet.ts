@@ -1519,7 +1519,7 @@ export class Sheet {
     const d = this.data.get(address);
     if (!d || this.isBoardAddress(address)) return null;
     const wanted = { cols: Math.max(1, Math.floor(cols) || 1), rows: Math.max(1, Math.floor(rows) || 1) };
-    const fit = this.fitFree(d, wanted);
+    const fit = this.makeRoomFor(d, wanted);
     this.forceSpan(address, fit.cols, fit.rows);
     d.shape = { ...d.shape, user: fit };
     const rewrote = d.code.trim() ? this.rewriteSpanLine(address, fit) : false;
@@ -1528,6 +1528,66 @@ export class Sheet {
     if (!rewrote && d.code.trim()) this.codeChangedHandlers.forEach((h) => h(address));
     this.syncHandles();
     return fit;
+  }
+
+  /**
+   * The size the person asked for, made room for: blocks in the way step aside (down when the block grew taller and
+   * they lie below it, else to the right), and the sheet grows when it must. Only the board cannot move, and a block
+   * that finds no spot stays: then the biggest size that fits is given.
+   */
+  private makeRoomFor(d: SheetCellData, want: Size): Size {
+    let cols = Math.max(1, Math.min(want.cols, MAX_COLS - d.col));
+    let rows = Math.max(1, Math.min(want.rows, MAX_ROWS - d.row));
+    const onBoard = (c: number, r: number): boolean => {
+      for (let rr = d.row; rr < d.row + r; rr++) for (let cc = d.col; cc < d.col + c; cc++) if (this.isBoardAddress(formatAddress(cc, rr))) return true;
+      return false;
+    };
+    while (onBoard(cols, rows) && (cols > d.span.cols || rows > d.span.rows)) {
+      if (cols > d.span.cols && cols >= rows) cols--;
+      else if (rows > d.span.rows) rows--;
+      else cols--;
+    }
+    const dst = this.blockRect(d, cols, rows);
+    const owners = this.occupantsOf(dst, d.address);
+    if (owners.length === 0) return this.fitFree(d, { cols, rows });
+    const avoid = [dst];
+    const plan: Array<{ address: string; col: number; row: number }> = [];
+    for (const owner of owners) {
+      const od = this.data.get(owner)!;
+      const below = od.row >= d.row + d.span.rows && rows > d.span.rows;
+      const down = (): { col: number; row: number } | null => {
+        for (let r = dst.r2 + 1; r + od.span.rows <= MAX_ROWS; r++) {
+          const rect = { c1: od.col, r1: r, c2: od.col + od.span.cols - 1, r2: r + od.span.rows - 1 };
+          if (avoid.some((v) => rect.c1 <= v.c2 && v.c1 <= rect.c2 && rect.r1 <= v.r2 && v.r1 <= rect.r2)) continue;
+          const inside = Math.min(od.span.rows, this.rowCount - r);
+          if (inside <= 0 || this.rectFree(od.col, r, od.span.cols, inside, [])) return { col: od.col, row: r };
+        }
+        return null;
+      };
+      const right = (): { col: number; row: number } | null => {
+        const col = this.findSpot(od.row, od.span.cols, od.span.rows, dst.c2 + 1, avoid);
+        return col === null ? null : { col, row: od.row };
+      };
+      const spot = below ? (down() ?? right()) : (right() ?? down());
+      if (!spot) return this.fitFree(d, { cols, rows });
+      avoid.push({ c1: spot.col, r1: spot.row, c2: spot.col + od.span.cols - 1, r2: spot.row + od.span.rows - 1 });
+      plan.push({ address: owner, ...spot });
+    }
+    const grew = this.ensureRoom(dst.c2, dst.r2);
+    const shifts: ShiftGhost[] = [];
+    for (const p of plan) {
+      const od = this.data.get(p.address)!;
+      const more = this.ensureRoom(p.col + od.span.cols - 1, p.row + od.span.rows - 1);
+      grew.cols += more.cols;
+      grew.rows += more.rows;
+      const to = formatAddress(p.col, p.row);
+      const ghost = this.captureGhost(p.address, to);
+      this.moveBlockRaw(p.address, to);
+      if (ghost) shifts.push(this.landGhost(ghost));
+    }
+    this.playShifts(shifts, dst);
+    this.roomMadeHandlers.forEach((h) => h({ displaced: plan.length, addedCols: grew.cols, addedRows: grew.rows, shifts: shifts.map((g) => ({ from: g.from, to: g.to })) }));
+    return this.fitFree(d, { cols, rows });
   }
 
   /** The biggest size not larger than `want` that does not run over other code, merged blocks or the board. */

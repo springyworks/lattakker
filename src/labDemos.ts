@@ -2058,8 +2058,8 @@ const BG = '#1e1e1e', BAR = '#2d2d2d'
 const INK = { text: '#cccccc', prompt: '#3fb950', result: '#79c0ff', error: '#f85149', dim: '#8b949e', bar: '#e0e0e0' }
 color(BG)
 
-/** The screen: 72 letters across, 31 lines down, small like a real terminal. Row 0 is the title bar. { lines: false } leaves out the seams between tiles. */
-const g = grid(72, 31, { lines: false })
+/** The screen follows the size of the block (cell.cols and cell.rows, so resizing it wakes this cell): 8 letters per column and about 4 lines per row, small like a real terminal; 9 x 8 gives 72 x 31. Row 0 is the title bar. { lines: false } leaves out the seams between tiles. */
+const g = grid(cell.cols * 8, Math.round(cell.rows * 60 / 15.5), { lines: false })
 const W = g.cols, H = g.rows
 
 /** A piece of a line (some text in one colour) and a line (a list of pieces). */
@@ -2251,8 +2251,8 @@ ts.dot('help', (name) => {
   else help()
 }, 'what this terminal can do; .help <name> for one command')
 
-/** Commands that find things out through MCP, from inside this code: the same mcp object any cell has. Lines stay inside the 72 columns of the screen. */
-const COLS = 72
+/** Commands that find things out through MCP, from inside this code: the same mcp object any cell has. Lines stay inside the columns of the screen. */
+const COLS = W
 const flat = (text: unknown): string => String(text ?? '').replace(/\s+/g, ' ').trim()
 const clip = (text: string, n = COLS): string => (text.length > n ? text.slice(0, n - 1) + '…' : text)
 const firstSentence = (text: unknown): string => flat(text).split(/(?<=[.!?])\s/)[0]
