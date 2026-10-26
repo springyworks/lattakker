@@ -1080,7 +1080,7 @@ one, and they all sit on the same router:
 
 | Server | What it is for | Tools |
 | --- | --- | --- |
-| `board`, `lab`, `examples` | the cells of a tab | `list_cells`, `get_cell`, `run_cell`, `set_code`, `click`, `cell_input`, `cell_output`, `flash`, `signal` |
+| `board`, `lab`, `examples` | the cells of a tab | `list_cells`, `get_cell`, `run_cell`, `set_code`, `click`, `cell_input`, `cell_output` (last line; `cell_output_all`, `_since`, `_screen`, `_find`), `flash`, `signal` |
 | `router` | the router itself | `stats`, `catalog`, `find_tools`, `servers`, `recent`, `packets`, `analyze`, `ask`, `callers`, `reset_stats`, `trace`, `history`, `change`, `endpoints`, `self_check` |
 | `code` | all the TypeScript of the page as text for a small AI ([8.11.3](#8113-the-code-of-the-page-for-a-small-ai)) | `overview`, `dump`, `search`, `read`, `list` |
 | `mail` | letters between the person, the helper, outside AI chats and cells ([8.19](#819-mail-letters-between-the-person-ais-and-cells)) | `check`, `inbox`, `read`, `send`, `reply`, `sent`, `delete`, `boxes` |
@@ -2380,7 +2380,7 @@ interface Mcp {
   read(path: string): Promise<McpCell>;
   /** The cells of a tab that hold code. */
   list(tab: string): Promise<any[]>;
-  /** Ask a tab to do something. Tools: list_cells, get_cell, run_cell, set_code, click, cell_input, cell_output, insert_column, flash, zoom, signal. */
+  /** Ask a tab to do something. Tools: list_cells, get_cell, run_cell, set_code, click, cell_input, cell_output (and cell_output_all, _since, _screen, _find), insert_column, flash, zoom, signal. */
   tool(tab: string, name: string, args?: object): Promise<any>;
   /** Trigger a cell's click event from anywhere, as if it had been clicked: mcp.click('/lab/J24'). */
   click(path: string): Promise<any>;

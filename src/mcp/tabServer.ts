@@ -1,6 +1,7 @@
 import { colToLetters, lettersToCol } from '../sheet/address';
 import { clickNode } from '../sheet/reactivity';
 import { inputPanel } from '../ui/InputPanel';
+import { findLines, lastLines, screenAdded, screenRows, trimEnd } from './outputRead';
 import { parsePath, workspace, type WorkspaceTab } from '../workspace';
 import { ERR, McpError, type Json, type McpRouter, type McpServer, type Trace } from './router';
 
@@ -17,7 +18,8 @@ import { ERR, McpError, type Json, type McpRouter, type McpServer, type Trace } 
  *   tools/call set_code | run_cell       change a cell / run it again
  *   tools/call click                     trigger the cell's click event (wakes its on(cell, 'click') handlers)
  *   tools/call cell_input                type or paste text into the input of a cell that has one (a terminal), and wait for it
- *   tools/call cell_output               read what a cell has written (all of it, or only what is new since a position)
+ *   tools/call cell_output               the last line a cell has written (or the last n lines, or what is new since a position)
+ *   tools/call cell_output_all | _since | _screen | _find     everything / only what is new / the letters on a tile screen / the lines that contain some text
  *   tools/call flash                     make a cell blink
  *   tools/call zoom                      fly the view: to a cell's block, back out, fit to content, or to a scale
  *   tools/call signal                    tell every listener in the page something (a custom event)
@@ -68,8 +70,28 @@ const TOOLS: ToolSpec[] = [
   {
     name: 'cell_output',
     description:
-      "What a cell has written: its output lines joined by newlines (text), its error, and length (the number of characters in text). With since: only the text after that many characters, so a second call gives just what is new (when the output was cleared and is shorter, all of it). With last: only the last that many lines.",
-    inputSchema: { type: 'object', properties: { address, since: { type: 'number' }, last: { type: 'number' } }, required: ['address'] },
+      "The last line a cell has written (text), with its error and length (the number of characters of all its output). With last: the last that many lines. With since: only the text after that many characters, so a second call gives just what is new. A cell that draws a terminal on tiles (like /lab/K1) has no output lines: its screen is read instead (screen: true in the answer). More: cell_output_all, cell_output_since, cell_output_screen, cell_output_find.",
+    inputSchema: { type: 'object', properties: { address, last: { type: 'number', description: 'How many lines from the end (default 1)' }, since: { type: 'number' } }, required: ['address'] },
+  },
+  {
+    name: 'cell_output_all',
+    description: "All of what a cell has written, lines joined by newlines (a tile terminal: its whole screen, blank lines at the end left out).",
+    inputSchema: { type: 'object', properties: { address }, required: ['address'] },
+  },
+  {
+    name: 'cell_output_since',
+    description: "Only what is new: the text after position since (a number of characters, the length that cell_input or an earlier call gave). When the output was cleared and is shorter, all of it. A screen scrolls and has no history: for a tile terminal use the added of cell_input.",
+    inputSchema: { type: 'object', properties: { address, since: { type: 'number' } }, required: ['address', 'since'] },
+  },
+  {
+    name: 'cell_output_screen',
+    description: "The letters on a cell's tile screen (a terminal made with grid() and g.text(..., { snap: true }), like /lab/K1) as rows: rows (every row, from the top) and text (the last non-blank rows, default all of them; last: how many).",
+    inputSchema: { type: 'object', properties: { address, last: { type: 'number' } }, required: ['address'] },
+  },
+  {
+    name: 'cell_output_find',
+    description: "The lines of a cell's output (or tile screen) that contain some text, each with its line number from 1. Not case sensitive unless case: true. With last: only the last that many matches.",
+    inputSchema: { type: 'object', properties: { address, text: { type: 'string' }, case: { type: 'boolean' }, last: { type: 'number' } }, required: ['address', 'text'] },
   },
   { name: 'flash', description: 'Make a cell blink so a person sees which one is meant.', inputSchema: { type: 'object', properties: { address, color: { type: 'string' } }, required: ['address'] } },
   {
@@ -185,8 +207,16 @@ export class TabServer implements McpServer {
     }
   }
 
-  private outputOf(addr: string): string {
-    return (this.tab.sheet.dataAt(addr)?.output ?? []).join('\n');
+  /** What a cell shows as text: its output lines, or (a terminal drawn on tiles, which prints nothing) the rows of its screen. */
+  private readOf(addr: string): { lines: string[]; text: string; screen: boolean } {
+    const d = this.tab.sheet.dataAt(addr);
+    const out = d?.output ?? [];
+    if (!out.length && d?.tiles) {
+      const rows = screenRows(d.tiles);
+      if (trimEnd(rows).length) return { lines: rows, text: trimEnd(rows).join('\n'), screen: true };
+    }
+    const text = out.join('\n');
+    return { lines: text ? text.split('\n') : [], text, screen: false };
   }
 
   private async callTool(name: string, args: Record<string, unknown>, from: string, trace?: Trace): Promise<Json> {
@@ -222,7 +252,7 @@ export class TabServer implements McpServer {
           if (typeof args.text !== 'string' || args.text.length > MAX_INPUT_CHARS) return failure(`text must be text of at most ${MAX_INPUT_CHARS} characters`);
           if (!inputPanel.hasPaste(sheet.id, addr)) return failure(`${addr} has no input: only a cell that called input.onPaste(fn) takes typed text (the terminal at /lab/A1 does)`);
           const waitMs = typeof args.wait_ms === 'number' && args.wait_ms >= 0 ? Math.min(args.wait_ms, MAX_WAIT_MS) : DEFAULT_WAIT_MS;
-          const before = this.outputOf(addr);
+          const before = this.readOf(addr);
           let timer = 0;
           const settled = await Promise.race([
             inputPanel.pasteTo(sheet.id, addr, args.text + (args.enter === true ? '\n' : '')).then(() => true),
@@ -231,17 +261,45 @@ export class TabServer implements McpServer {
             }),
           ]);
           window.clearTimeout(timer);
-          const after = this.outputOf(addr);
+          const after = this.readOf(addr);
+          const added = before.screen || after.screen ? screenAdded(before.lines, after.lines).join('\n') : after.text.startsWith(before.text) ? after.text.slice(before.text.length) : after.text;
           this.router.noteChange(trace, { subject: `${this.tab.id}/${addr}`, action: 'cell_input', before: '', after: args.text.slice(0, 200) });
-          return reply({ path: workspace.pathOf(this.tab.id, addr), delivered: true, settled, length: after.length, added: after.startsWith(before) ? after.slice(before.length) : after, error: sheet.dataAt(addr)?.error ?? null });
+          return reply({ path: workspace.pathOf(this.tab.id, addr), delivered: true, settled, length: after.text.length, added, screen: after.screen, error: sheet.dataAt(addr)?.error ?? null });
         }
-        case 'cell_output': {
+        case 'cell_output':
+        case 'cell_output_all':
+        case 'cell_output_since':
+        case 'cell_output_screen':
+        case 'cell_output_find': {
           const addr = this.cellOf(args.address);
-          const all = this.outputOf(addr);
-          let text = all;
-          if (typeof args.since === 'number' && args.since >= 0 && args.since <= all.length) text = all.slice(args.since);
-          else if (typeof args.last === 'number' && args.last > 0) text = all.split('\n').slice(-Math.floor(args.last)).join('\n');
-          return reply({ path: workspace.pathOf(this.tab.id, addr), text, length: all.length, error: sheet.dataAt(addr)?.error ?? null, input: inputPanel.hasPaste(sheet.id, addr) });
+          const read = this.readOf(addr);
+          const count = (v: unknown): number | null => (typeof v === 'number' && v > 0 ? Math.floor(v) : null);
+          const answer = (extra: Record<string, unknown>) =>
+            reply({ path: workspace.pathOf(this.tab.id, addr), ...extra, length: read.text.length, screen: read.screen, error: sheet.dataAt(addr)?.error ?? null, input: inputPanel.hasPaste(sheet.id, addr) });
+          const since = (): number | null => (typeof args.since === 'number' && args.since >= 0 ? Math.floor(args.since) : null);
+          const after = (from: number): string => (from <= read.text.length ? read.text.slice(from) : read.text);
+          if (name === 'cell_output_all') return answer({ text: read.text });
+          if (name === 'cell_output_since') {
+            const from = since();
+            return from === null ? failure('cell_output_since needs since: a number of characters (the length an earlier call gave)') : answer({ text: after(from) });
+          }
+          if (name === 'cell_output_screen') {
+            const tiles = sheet.dataAt(addr)?.tiles;
+            if (!tiles) return failure(`${addr} has no tile screen: only a cell that called grid(cols, rows) has one. For other cells use cell_output.`);
+            const rows = screenRows(tiles);
+            const last = count(args.last);
+            return answer({ text: (last ? lastLines(rows, last) : trimEnd(rows)).join('\n'), rows, cols: tiles.cols });
+          }
+          if (name === 'cell_output_find') {
+            if (typeof args.text !== 'string' || !args.text) return failure('cell_output_find needs text: what the lines must contain');
+            const found = findLines(read.lines, args.text, args.case !== true);
+            const last = count(args.last);
+            const matches = last ? found.slice(-last) : found;
+            return answer({ text: matches.map((m) => m.text).join('\n'), matches, count: found.length });
+          }
+          const from = since();
+          if (from !== null) return answer({ text: after(from) });
+          return answer({ text: lastLines(read.lines, count(args.last) ?? 1).join('\n') });
         }
         case 'click': {
           const addr = this.cellOf(args.address);

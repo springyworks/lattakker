@@ -502,7 +502,7 @@ interface Mcp {
   read(path: string): Promise<McpCell>;
   /** The cells of a tab that hold code. */
   list(tab: string): Promise<any[]>;
-  /** Ask a tab to do something. Tools: list_cells, get_cell, run_cell, set_code, click, cell_input, cell_output, insert_column, flash, zoom, signal. */
+  /** Ask a tab to do something. Tools: list_cells, get_cell, run_cell, set_code, click, cell_input, cell_output (and cell_output_all, _since, _screen, _find), insert_column, flash, zoom, signal. */
   tool(tab: string, name: string, args?: object): Promise<any>;
   /** Trigger a cell's click event from anywhere, as if it had been clicked: mcp.click('/lab/J24'). */
   click(path: string): Promise<any>;
