@@ -1578,8 +1578,11 @@ const PROMPT = '>> '
 /** TS alone opens a TypeScript session with its own prompt (see tsMode); Ctrl-D or .exit leaves it. */
 let tsMode = false
 
-/** The prompt to type now: the TypeScript one inside a TS session, the normal one otherwise. */
-const prompt = (): string => (tsMode ? 'TS> ' : PROMPT)
+/** The lines of a TypeScript statement that is not finished yet (an open bracket, a trailing operator ...): the prompt is "... " until it is, or until an empty line sends it anyway. */
+let pending: string[] = []
+
+/** The prompt to type now: the TypeScript one inside a TS session ("... " while a statement is open), the normal one otherwise. */
+const prompt = (): string => (tsMode ? (pending.length ? '... ' : 'TS> ') : PROMPT)
 
 /** When the roll grows past this many letters, a new roll is started. */
 const ROLL = 4000
@@ -1733,7 +1736,7 @@ const commands: Record<string, Command> = {
     run: (code) => {
       if (code) return ts(code)
       tsMode = true
-      return 'TYPESCRIPT, VARIABLES STAY. CTRL-D OR .EXIT LEAVES,\nCTRL-C CANCELS A LINE, TWICE KILLS. interrupted() IS TRUE AFTER ^C. CASE COUNTS.'
+      return 'TYPESCRIPT, VARIABLES STAY. CASE COUNTS. A LINE MAY HOLD SEVERAL STATEMENTS: a = 1; a + 1\nAN OPEN { ( [ OR OPERATOR GIVES "... ": AN EMPTY LINE SENDS IT. CTRL-D OR .EXIT LEAVES,\nCTRL-C CANCELS A LINE, TWICE KILLS. interrupted() IS TRUE AFTER ^C. TYPE { } [ ] WITH ALTGR.'
     },
   },
 
@@ -1788,11 +1791,32 @@ let buf = ''
 /** Counts the lines sent; Ctrl-C while a line is still running abandons it, and its late answer is thrown away. */
 let turn = 0
 
+/** Counts the Ctrl-C presses: a paste that is still being typed stops when it changes. */
+let breaks = 0
+
 /** enter sends the typed line: it is answered, and the answer is typed on the paper. */
 const enter = async (): Promise<void> => {
-  const line = buf.trim()
+  let line = buf.trim()
   buf = ''
   put('\n')
+
+  /** In TypeScript a statement that is not finished waits for more lines; an empty line sends what there is, finished or not. */
+  let joined: string | null = null
+  if (tsMode && (pending.length || !/^(\.?(exit|quit)|ai\s.*)$/i.test(line))) {
+    if (!pending.length && !line) {
+      put(prompt())
+      return
+    }
+    if (line) pending.push(line)
+    const code = pending.join('\n')
+    if (line && ts.incomplete(code)) {
+      put(prompt())
+      return
+    }
+    pending = []
+    joined = code
+    line = code
+  }
   busy = true
   sigint = new AbortController()
   const mine = ++turn
@@ -1803,7 +1827,7 @@ const enter = async (): Promise<void> => {
 
   /** Answer the line and type the answer, unless Ctrl-C abandoned it meanwhile; an error is typed after ??. */
   try {
-    const said = await answer(line)
+    const said = joined === null ? await answer(line) : await ts(joined)
     if (mine !== turn) return
     if (said) put(loud(said) + '\n')
   } catch (e) {
@@ -1826,6 +1850,7 @@ const enter = async (): Promise<void> => {
 const leave = (): boolean => {
   const was = tsMode || chatting !== null
   tsMode = false
+  pending = []
   chatting = null
   return was
 }
@@ -1853,11 +1878,13 @@ const interrupt = (): void => {
     return
   }
   lastInt = now
-  const idle = !busy && !buf
+  const idle = !busy && !buf && !pending.length
   sigint.abort()
+  breaks++
   turn++
   busy = false
   buf = ''
+  pending = []
   put('^C\n')
   if (idle && leave()) put('LEFT.\n')
   else if (!idle) put('INTERRUPTED. ^C AGAIN KILLS.\n')
@@ -1916,12 +1943,37 @@ on(cell, 'click', () => {
   grab()
 })
 
-/** The cell menu's Paste item lands here: the first line of the clipboard is typed after the prompt (Enter is left to the person). */
-input.onPaste((pasted) => {
-  if (busy) return
-  const line = pasted.split(/\r?\n/).find((l) => l.trim()) ?? ''
-  buf += line
-  put(line)
+/** What goes on the paper from the outside: a line is typed after the prompt as if by hand. The paper only has the letters 0x20 to 0x7e of the ASCII table: a tab becomes two spaces, anything else a question mark. */
+const typeIn = (chunk: string): void => {
+  const clean = chunk.replace(/\t/g, '  ').replace(/[^\x20-\x7e]/g, '?')
+  buf += clean
+  put(clean)
+}
+
+/** Pasted text (the cell menu's Paste item, or the MCP tool cell_input) is typed like a person would: every line break is an Enter, so a pasted program runs line by line; the last line stays after the prompt until Enter. A raw Ctrl-C (character 3) or Ctrl-D (character 4) in the text works as the key does. The answer is awaited, so the sender knows when the machine is done. */
+input.onPaste(async (pasted) => {
+  const mine = breaks
+  let chunk = ''
+  const flush = (): void => {
+    if (chunk) typeIn(chunk)
+    chunk = ''
+  }
+  for (const ch of pasted.replace(/\r\n?/g, '\n')) {
+    while (busy && mine === breaks) await sleep(40)
+    if (mine !== breaks) return
+    if (ch === '\n') {
+      flush()
+      await enter()
+    } else if (ch === '\x03') {
+      flush()
+      interrupt()
+      return
+    } else if (ch === '\x04') {
+      flush()
+      endOfFile()
+    } else chunk += ch
+  }
+  flush()
 })
 
 /** Every key: Ctrl-C and Ctrl-D, Escape, Enter, Backspace and plain letters are handled here. */

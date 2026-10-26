@@ -54,7 +54,7 @@ export interface Packet {
   cause: string | null;
 }
 
-const CHANGING_TOOLS = new Set(['set_code', 'run_cell', 'set_cells', 'delete_cell', 'move_cell', 'insert_column', 'click', 'signal', 'create_tab', 'close_tab']);
+const CHANGING_TOOLS = new Set(['set_code', 'run_cell', 'set_cells', 'delete_cell', 'move_cell', 'insert_column', 'click', 'cell_input', 'signal', 'create_tab', 'close_tab']);
 
 function typeOf(method: string, tool: string): TrafficType {
   if (method === 'ping') return 'heartbeat';

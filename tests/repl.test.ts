@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createRepl, formatResult, type ReplTranspile } from '../src/sheet/repl';
+import { createRepl, formatResult, isIncomplete, scan, type ReplTranspile } from '../src/sheet/repl';
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (code: string) => unknown;
 
@@ -49,5 +49,31 @@ describe('repl()', () => {
     expect(formatResult(undefined)).toBe('');
     expect(formatResult({ a: 1 })).toBe('{"a":1}');
     expect(formatResult(() => 1)).toBe('[function anonymous]');
+  });
+
+  it('runs several statements on one line and gives the last value', async () => {
+    const run = createRepl(transpile, () => ({}));
+    expect(await run('const a = 1; const b = a + 1; a + b')).toBe('3');
+    expect(await run('let t = 0; for (let i = 0; i < 4; i++) { t += i }; t')).toBe('6');
+    expect(await run('const s = "a;b"; s.length')).toBe('3');
+    expect(await run('const f = (x) => { return x; }; f(7);')).toBe('7');
+    expect(await run('const m = `x${1;}`')).toMatch(/^\?\? /);
+    expect(await run('1; nothing.at; 2')).toMatch(/^\?\? /);
+  });
+
+  it('knows when code is not finished', () => {
+    const run = createRepl(transpile, () => ({}));
+    for (const open of ['function f() {', 'const a = [1,', 'foo(', '1 +', 'a.', 'const g = () =>', '/* open', 'const t = `x', 'const o = { a: 1,\n b: 2,']) {
+      expect(run.incomplete(open), open).toBe(true);
+    }
+    for (const done of ['', '1 + 1', 'i++', 'const s = "{"', "const r = /[{(]/", 'a // {', 'const t = `${1}`', 'x = { a: [1, 2] };', 'f(a) / 2']) {
+      expect(isIncomplete(done), done).toBe(false);
+    }
+  });
+
+  it('splits only at top-level semicolons', () => {
+    expect(scan('a; b').parts).toEqual(['a', 'b']);
+    expect(scan('for (;;) {}; c').parts).toEqual(['for (;;) {}', 'c']);
+    expect(scan('x = "a;b"; y = /;/; z').parts).toEqual(['x = "a;b"', 'y = /;/', 'z']);
   });
 });

@@ -699,7 +699,7 @@ export class SheetPane {
     // A cell with an input of its own (a terminal) gets the text there; the others get it as their code.
     if (inputPanel.hasPaste(sheet.id, address)) {
       if (!text.trim()) hooks.say('The clipboard has no text to paste.', 'bad');
-      else inputPanel.pasteTo(sheet.id, address, text);
+      else void inputPanel.pasteTo(sheet.id, address, text);
       return;
     }
     if (hooks.mayEdit && !hooks.mayEdit(address)) return;

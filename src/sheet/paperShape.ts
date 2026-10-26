@@ -29,11 +29,12 @@ class PaperRollShape extends RectangleShape {
 
   override paintBackground(c: AbstractCanvas2D, x: number, y: number, w: number, h: number): void {
     super.paintBackground(c, x, y, w, h);
-    const s = this.scale || 1;
+    // The canvas multiplies every coordinate by the zoom itself (Shape.configureCanvas: c.scale(this.scale)), and the bounds arrive unscaled: measures here are in px at 100%.
+    const s = 1;
     if (w < 6 || h < 6) return;
-    const travelled = (Number((this.style as Record<string, unknown> | undefined)?.[PAPER_SCROLL]) || 0) * s;
+    const travelled = Number((this.style as Record<string, unknown> | undefined)?.[PAPER_SCROLL]) || 0;
     const rnd = seeded(this.state?.cell.getId() ?? 'paper');
-    const count = Math.min(MAX_SPECKS, Math.round(((w / s) * (h / s)) / 48));
+    const count = Math.min(MAX_SPECKS, Math.round((w * h) / 48));
     const speck = (alpha: number, color: string, min: number, max: number, n: number): void => {
       c.setFillColor(color);
       c.setFillAlpha(alpha);
@@ -80,8 +81,10 @@ class PaperRollShape extends RectangleShape {
     if (!Number.isFinite(at) || at < 0) return;
     const bw = Math.max(2, Number(style?.[PAPER_HEAD_W]) || 7) * s;
     const bh = PAPER_LINE_PX * s;
-    const bx = x + at * s;
-    const by = y + h - 4 * s - bh;
+    // maxGraph draws a shape half a device pixel to the right and down when its line width is odd (crisp lines); the label text is never moved: take it back.
+    const half = this.getSvgScreenOffset() / (this.scale || 1);
+    const bx = x + at * s - half;
+    const by = y + h - 2 * s - bh - half;
     if (bx + bw > x + w) return;
     c.save();
     c.setFillColor('#2b6cb0');

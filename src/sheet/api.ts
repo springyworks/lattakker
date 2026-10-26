@@ -1270,9 +1270,7 @@ export function buildApi(
         forget();
       };
       const run = callback(fn as (...args: unknown[]) => unknown, stop);
-      off = inputPanel.onPaste(sheet.id, () => data.address, (text) => {
-        if (!ctx.cancelled) void run(text);
-      });
+      off = inputPanel.onPaste(sheet.id, () => data.address, (text) => (ctx.cancelled ? undefined : run(text)));
       forget = ctx.addTask(stop);
       return stop;
     },

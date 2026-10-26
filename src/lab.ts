@@ -24,8 +24,8 @@ export function createLab(view: GameView, smallScreen: boolean): Lab {
     restoreHint: 'Put every demo back as it was written (your own cells stay)',
     containerId: 'lab',
     panelId: 'lab-panel',
-    // The terminal at A1 before it learned input.onPaste, before Ctrl-C skipped the slow typing, and before the AI command.
-    olderVersions: { A1: ['a408c3cb', 'ae1b9f14', '7b4a89e0'] },
+    // The terminal at A1 before it learned input.onPaste, before Ctrl-C skipped the slow typing, before the AI command, and before TypeScript lines could be continued, typed with AltGr or pasted whole.
+    olderVersions: { A1: ['a408c3cb', 'ae1b9f14', '7b4a89e0', '8aae4900'] },
     load: () => upgradeLabStorage(loadLabSaved(), TERMINAL_DEMOS[0][1], saveLabSaved),
     startSave: startLabAutoSave,
   });

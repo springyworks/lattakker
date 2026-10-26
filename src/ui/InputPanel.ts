@@ -113,9 +113,9 @@ class InputPanel {
   /** Cells that took the keyboard (input.claimKeys), each with what to tell it when the keyboard is taken away again. While there is one, the typing keys do not reach the sheet's own shortcuts. */
   private readonly claims = new Set<() => void>();
   /** Cells that take pasted text into their own input (a terminal), found by tab and address. */
-  private readonly pasters = new Set<{ tab: string; address: () => string; fn: (text: string) => void }>();
+  private readonly pasters = new Set<{ tab: string; address: () => string; fn: (text: string) => unknown }>();
 
-  onPaste(tab: string, address: () => string, fn: (text: string) => void): () => void {
+  onPaste(tab: string, address: () => string, fn: (text: string) => unknown): () => void {
     const entry = { tab, address, fn };
     this.pasters.add(entry);
     return () => void this.pasters.delete(entry);
@@ -125,10 +125,10 @@ class InputPanel {
     return [...this.pasters].some((p) => p.tab === tab && p.address() === address);
   }
 
-  /** Hands the text to the cell's input; false when the cell has none. */
-  pasteTo(tab: string, address: string, text: string): boolean {
+  /** Hands the text to the cell's input and waits until the cell has dealt with all of it; false when the cell has none. */
+  async pasteTo(tab: string, address: string, text: string): Promise<boolean> {
     const found = [...this.pasters].filter((p) => p.tab === tab && p.address() === address);
-    for (const p of found) p.fn(text);
+    await Promise.all(found.map((p) => p.fn(text)));
     return found.length > 0;
   }
 
@@ -406,25 +406,30 @@ class InputPanel {
       const node = target as HTMLElement | null;
       return !!node && (/^(INPUT|TEXTAREA|SELECT)$/.test(node.tagName) || node.isContentEditable || !!node.closest?.('.monaco-editor, .ai-side, .input-card'));
     };
+    // AltGr (Option on a Mac) makes { } [ ] \\ | @ ~: the browser may call that Alt, or Ctrl+Alt, but the key is a plain typed symbol.
+    const composed = (e: KeyboardEvent): boolean =>
+      e.key.length === 1 && !e.metaKey && (e.altKey || e.getModifierState('AltGraph')) && !/[a-z0-9 ]/i.test(e.key);
     const handled = new WeakSet<Event>();
     const hear = (e: KeyboardEvent): void => {
       if (handled.has(e) || typing(e.target)) return;
       handled.add(e);
       const key = keyName(e.key);
       this.down.add(key);
-      const info: KeyInfo = { shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey, alt: e.altKey, repeat: e.repeat, text: e.key.length === 1 ? e.key : '' };
+      const typed = composed(e);
+      const info: KeyInfo = { shift: e.shiftKey, ctrl: !typed && (e.ctrlKey || e.metaKey), alt: !typed && e.altKey, repeat: e.repeat, text: e.key.length === 1 ? e.key : '' };
       for (const listener of [...this.keyListeners]) listener(key, info);
     };
     // A cell that took the keyboard hears the typing keys first, and nothing else on the page (Enter opening the editor, Delete clearing a cell, Space scrolling) gets them.
     window.addEventListener(
       'keydown',
       (e) => {
-        if (!this.claims.size || e.altKey || e.metaKey || typing(e.target)) return;
+        const typed = composed(e);
+        if (!this.claims.size || (e.altKey && !typed) || e.metaKey || typing(e.target)) return;
         // Shift + Enter stays the sheet's: it opens the editor of the cell.
         if (e.key === 'Enter' && e.shiftKey) return;
         // A terminal also gets Ctrl-C and Ctrl-D (the browser would copy, or bookmark the page).
-        const control = e.ctrlKey && !e.shiftKey && /^[cd]$/i.test(e.key);
-        if (e.ctrlKey && !control) return;
+        const control = e.ctrlKey && !typed && !e.shiftKey && /^[cd]$/i.test(e.key);
+        if (e.ctrlKey && !control && !typed) return;
         if (!control && !(e.key.length === 1 || /^(Enter|Backspace|Delete|Arrow(Up|Down|Left|Right)|Home|End|PageUp|PageDown)$/.test(e.key))) return;
         hear(e);
         e.preventDefault();

@@ -1,5 +1,6 @@
 import { colToLetters, lettersToCol } from '../sheet/address';
 import { clickNode } from '../sheet/reactivity';
+import { inputPanel } from '../ui/InputPanel';
 import { parsePath, workspace, type WorkspaceTab } from '../workspace';
 import { ERR, McpError, type Json, type McpRouter, type McpServer, type Trace } from './router';
 
@@ -15,6 +16,8 @@ import { ERR, McpError, type Json, type McpRouter, type McpServer, type Trace } 
  *   tools/call get_cell | list_cells     read
  *   tools/call set_code | run_cell       change a cell / run it again
  *   tools/call click                     trigger the cell's click event (wakes its on(cell, 'click') handlers)
+ *   tools/call cell_input                type or paste text into the input of a cell that has one (a terminal), and wait for it
+ *   tools/call cell_output               read what a cell has written (all of it, or only what is new since a position)
  *   tools/call flash                     make a cell blink
  *   tools/call zoom                      fly the view: to a cell's block, back out, fit to content, or to a scale
  *   tools/call signal                    tell every listener in the page something (a custom event)
@@ -22,6 +25,9 @@ import { ERR, McpError, type Json, type McpRouter, type McpServer, type Trace } 
 
 const PROTOCOL = '2025-06-18';
 const MAX_CODE_CHARS = 20000;
+const MAX_INPUT_CHARS = 20000;
+const DEFAULT_WAIT_MS = 15000;
+const MAX_WAIT_MS = 60000;
 const SIGNAL = 'notifications/lattakker/signal';
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -52,6 +58,18 @@ const TOOLS: ToolSpec[] = [
     name: 'insert_column',
     description: 'Insert a blank column next to a column letter, like a spreadsheet: the cells to the right move over and the addresses written in code are rewritten.',
     inputSchema: { type: 'object', properties: { column: { type: 'string', description: "A column letter like 'C'" }, side: { type: 'string', enum: ['left', 'right'], description: "Default 'right'" } }, required: ['column'] },
+  },
+  {
+    name: 'cell_input',
+    description:
+      "Type or paste text into the input of a cell that has one, like the ASR-33 terminal at /lab/A1 (a cell that called input.onPaste). Every line break in the text counts as Enter, so a pasted program runs line by line; the last line stays typed after the prompt unless enter: true, which sends one more Enter. Waits until the cell has dealt with the text (at most wait_ms, default 15000) and gives back what its output gained meanwhile (added) and its new length, which cell_output can use as since.",
+    inputSchema: { type: 'object', properties: { address, text: { type: 'string' }, enter: { type: 'boolean', description: 'Press Enter after the text' }, wait_ms: { type: 'number' } }, required: ['address', 'text'] },
+  },
+  {
+    name: 'cell_output',
+    description:
+      "What a cell has written: its output lines joined by newlines (text), its error, and length (the number of characters in text). With since: only the text after that many characters, so a second call gives just what is new (when the output was cleared and is shorter, all of it). With last: only the last that many lines.",
+    inputSchema: { type: 'object', properties: { address, since: { type: 'number' }, last: { type: 'number' } }, required: ['address'] },
   },
   { name: 'flash', description: 'Make a cell blink so a person sees which one is meant.', inputSchema: { type: 'object', properties: { address, color: { type: 'string' } }, required: ['address'] } },
   {
@@ -167,7 +185,11 @@ export class TabServer implements McpServer {
     }
   }
 
-  private callTool(name: string, args: Record<string, unknown>, from: string, trace?: Trace): Json {
+  private outputOf(addr: string): string {
+    return (this.tab.sheet.dataAt(addr)?.output ?? []).join('\n');
+  }
+
+  private async callTool(name: string, args: Record<string, unknown>, from: string, trace?: Trace): Promise<Json> {
     const sheet = this.tab.sheet;
     const reply = (value: Record<string, unknown>) => ({ content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: value });
     const failure = (message: string) => ({ content: [{ type: 'text', text: message }], isError: true });
@@ -194,6 +216,32 @@ export class TabServer implements McpServer {
           // Written down for whoever asks later who changed this cell (router tool 'history'), with the old code so it can be put back.
           this.router.noteChange(trace, { subject: `${this.tab.id}/${addr}`, action: 'set_code', before, after: args.code });
           return reply({ path: workspace.pathOf(this.tab.id, addr), written: args.code.length });
+        }
+        case 'cell_input': {
+          const addr = this.cellOf(args.address);
+          if (typeof args.text !== 'string' || args.text.length > MAX_INPUT_CHARS) return failure(`text must be text of at most ${MAX_INPUT_CHARS} characters`);
+          if (!inputPanel.hasPaste(sheet.id, addr)) return failure(`${addr} has no input: only a cell that called input.onPaste(fn) takes typed text (the terminal at /lab/A1 does)`);
+          const waitMs = typeof args.wait_ms === 'number' && args.wait_ms >= 0 ? Math.min(args.wait_ms, MAX_WAIT_MS) : DEFAULT_WAIT_MS;
+          const before = this.outputOf(addr);
+          let timer = 0;
+          const settled = await Promise.race([
+            inputPanel.pasteTo(sheet.id, addr, args.text + (args.enter === true ? '\n' : '')).then(() => true),
+            new Promise<boolean>((resolve) => {
+              timer = window.setTimeout(() => resolve(false), waitMs);
+            }),
+          ]);
+          window.clearTimeout(timer);
+          const after = this.outputOf(addr);
+          this.router.noteChange(trace, { subject: `${this.tab.id}/${addr}`, action: 'cell_input', before: '', after: args.text.slice(0, 200) });
+          return reply({ path: workspace.pathOf(this.tab.id, addr), delivered: true, settled, length: after.length, added: after.startsWith(before) ? after.slice(before.length) : after, error: sheet.dataAt(addr)?.error ?? null });
+        }
+        case 'cell_output': {
+          const addr = this.cellOf(args.address);
+          const all = this.outputOf(addr);
+          let text = all;
+          if (typeof args.since === 'number' && args.since >= 0 && args.since <= all.length) text = all.slice(args.since);
+          else if (typeof args.last === 'number' && args.last > 0) text = all.split('\n').slice(-Math.floor(args.last)).join('\n');
+          return reply({ path: workspace.pathOf(this.tab.id, addr), text, length: all.length, error: sheet.dataAt(addr)?.error ?? null, input: inputPanel.hasPaste(sheet.id, addr) });
         }
         case 'click': {
           const addr = this.cellOf(args.address);

@@ -502,7 +502,7 @@ interface Mcp {
   read(path: string): Promise<McpCell>;
   /** The cells of a tab that hold code. */
   list(tab: string): Promise<any[]>;
-  /** Ask a tab to do something. Tools: list_cells, get_cell, run_cell, set_code, click, insert_column, flash, zoom, signal. */
+  /** Ask a tab to do something. Tools: list_cells, get_cell, run_cell, set_code, click, cell_input, cell_output, insert_column, flash, zoom, signal. */
   tool(tab: string, name: string, args?: object): Promise<any>;
   /** Trigger a cell's click event from anywhere, as if it had been clicked: mcp.click('/lab/J24'). */
   click(path: string): Promise<any>;
@@ -1196,8 +1196,8 @@ declare const game: GameApi;
 declare const mode: 'run' | 'view';
 /** Wait a bit: await sleep(500) or await sleep('2s'). Other cells keep running meanwhile. */
 declare function sleep(time?: Interval): Promise<void>;
-/** A TypeScript read-eval-print loop that keeps its variables between lines. const ts = repl(); await ts('const x = 6 * 7'); await ts('x + 1') gives '43'. Every line is compiled by the editor's own compiler, so it is TypeScript, and the cell API (print, at, mcp ...) is in reach. Expressions give their value (as text; errors start with '??'; the optional object replaces names of the cell API, repl({ print: (...v) => paper.add(v) }), so print can go somewhere else); const, let, var, function and class declarations stay for the next lines. */
-declare function repl(overrides?: Record<string, unknown>): (line: string) => Promise<string>;
+/** A TypeScript read-eval-print loop that keeps its variables between lines. const ts = repl(); await ts('const x = 6 * 7'); await ts('x + 1') gives '43'. Every line is compiled by the editor's own compiler, so it is TypeScript, and the cell API (print, at, mcp ...) is in reach. Expressions give their value (as text; errors start with '??'; the optional object replaces names of the cell API, repl({ print: (...v) => paper.add(v) }), so print can go somewhere else); const, let, var, function and class declarations stay for the next lines. Several statements on one line (separated by ;) all run and the last value is given. ts.incomplete(code) says true while a bracket, string or comment is open or the code ends on an operator: a terminal then asks for another line, and an empty line sends it anyway. */
+declare function repl(overrides?: Record<string, unknown>): ((line: string) => Promise<string>) & { incomplete(source: string): boolean };
 /** console.log that also shows up in the cell */
 declare function log(...values: unknown[]): void;
 
