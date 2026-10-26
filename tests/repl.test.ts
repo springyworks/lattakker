@@ -77,3 +77,56 @@ describe('repl()', () => {
     expect(scan('x = "a;b"; y = /;/; z').parts).toEqual(['x = "a;b"', 'y = /;/', 'z']);
   });
 });
+
+describe('dot-commands', () => {
+  it('has .help made from the list of commands', async () => {
+    const run = createRepl(transpile, () => ({}));
+    const help = await run('.help');
+    expect(help).toContain('.help  this list');
+    expect(help).toContain('.dots');
+    run.dot('hi', () => 'hello', 'greets');
+    expect(await run('.help')).toContain('.hi  greets');
+  });
+
+  it('runs a command with the text after its name, even when it holds ; and brackets', async () => {
+    const run = createRepl(transpile, () => ({}));
+    run.dot('echo', (args) => '[' + args + ']');
+    expect(await run('.echo  a; b { c')).toBe('[a; b { c]');
+    expect(await run('.echo')).toBe('[]');
+    expect(run.incomplete('.echo {')).toBe(false);
+  });
+
+  it('is extended by code typed at the prompt: dot() is in reach', async () => {
+    const run = createRepl(transpile, () => ({}));
+    expect(await run('dot("twice", (a) => String(Number(a) * 2), "doubles a number")')).toBe('[function anonymous]');
+    expect(await run('.twice 21')).toBe('42');
+    await run('const base = 100');
+    await run('dot("plus", (a) => base + Number(a))');
+    expect(await run('.plus 5')).toBe('105');
+    expect(await run('dot.list().map((c) => c.name).join(",")')).toBe('"dots,help,plus,twice"');
+  });
+
+  it('replaces by name, removes, and tells about unknown names and failures', async () => {
+    const run = createRepl(transpile, () => ({}));
+    const off = run.dot('x', () => 'one');
+    run.dot('x', () => 'two');
+    off();
+    expect(await run('.x')).toBe('two');
+    expect(run.dot.remove('x')).toBe(true);
+    expect(await run('.x')).toMatch(/^\?\? \.x is not a dot-command/);
+    run.dot('Boom', () => {
+      throw new Error('bang');
+    });
+    expect(await run('.boom')).toContain('did you mean .Boom?');
+    expect(await run('.Boom')).toBe('?? .Boom: bang');
+    run.dot('later', async () => 'async');
+    expect(await run('.later')).toBe('async');
+    expect(() => run.dot('bad name', () => '')).toThrow(/dot-command name/);
+  });
+
+  it('does not take numbers or method chains for commands', async () => {
+    const run = createRepl(transpile, () => ({}));
+    expect(await run('.5 + 1')).toBe('1.5');
+    expect(run.incomplete('.5 +')).toBe(true);
+  });
+});

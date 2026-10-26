@@ -2058,8 +2058,8 @@ const BG = '#1e1e1e', BAR = '#2d2d2d'
 const INK = { text: '#cccccc', prompt: '#3fb950', result: '#79c0ff', error: '#f85149', dim: '#8b949e', bar: '#e0e0e0' }
 color(BG)
 
-/** The screen: 54 letters across, 23 lines down. Row 0 is the title bar. { lines: false } leaves out the seams between tiles. */
-const g = grid(54, 23, { lines: false })
+/** The screen: 72 letters across, 31 lines down, small like a real terminal. Row 0 is the title bar. { lines: false } leaves out the seams between tiles. */
+const g = grid(72, 31, { lines: false })
 const W = g.cols, H = g.rows
 
 /** A piece of a line (some text in one colour) and a line (a list of pieces). */
@@ -2186,14 +2186,6 @@ const enter = async (): Promise<void> => {
   if (line.trim() && hist[hist.length - 1] !== line) hist.push(line)
   while (hist.length > 100) hist.shift()
   if (!pending.length && !line.trim()) return draw()
-  if (!pending.length && /^\.clear$/.test(line.trim())) {
-    lines.length = 0
-    return draw()
-  }
-  if (!pending.length && /^\.help$/.test(line.trim())) {
-    help()
-    return draw()
-  }
   if (line.trim() || !pending.length) pending.push(line)
   const code = pending.join('\n')
   if (line.trim() && ts.incomplete(code)) return draw()
@@ -2240,13 +2232,23 @@ const interrupt = (): void => {
 }
 
 /** What the terminal tells about itself. */
-const help = (): void => {
+function help(): void {
   say('TypeScript: variables stay, case counts, and one line may hold many statements: const a = [1, 2, 3]; a.map((x) => x * 2); a.length', INK.dim)
   say('An open { ( [ or an operator at the end of a line goes on at the "..  " prompt; an empty line sends it anyway.', INK.dim)
   say('Up / Down: earlier lines. Left, Right, Home, End, Delete edit the line. PageUp / PageDown scroll back.', INK.dim)
   say('Ctrl-C throws the line away (twice: stops a running one), .clear wipes the screen, Esc gives the keyboard back.', INK.dim)
   say('print() and log() write here; at("A1").text reads a cell; await sleep("1s") waits.', INK.dim)
+  say('Dot-commands (a line that starts with a dot): ' + ts.dot.list().map((c) => '.' + c.name).join(' ') + '. .help <name> says more.', INK.dim)
+  say('Add your own, in TypeScript, right here: dot("hi", (args) => "hello " + args, "greets")  then  .hi bob', INK.dim)
 }
+
+/** The commands this terminal brings. More can be added by typing dot(...) at the prompt; .help lists all of them. */
+ts.dot('clear', () => { lines.length = 0 }, 'wipe the screen')
+ts.dot('help', (name) => {
+  const one = ts.dot.list().find((c) => c.name === name.replace(/^\./, ''))
+  if (one) say('.' + one.name + '  ' + (one.help || '(no help text)'), INK.dim)
+  else help()
+}, 'what this terminal can do; .help <name> for one command')
 
 /** While the mouse is over the screen, Enter and the typing keys belong to it (claimKeys keeps Enter from opening the editor; Shift+Enter still does). */
 let give = (): void => {}

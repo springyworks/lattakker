@@ -124,7 +124,29 @@ export function isIncomplete(source: string): boolean {
   return /[+\-*/%&|^<>=,.?:!~]$/.test(s.tail);
 }
 
-export type Repl = ((line: string) => Promise<string>) & { incomplete: (source: string) => boolean };
+/** What a dot-command is given: the text after its name, and the whole line. It may return text to print, or a value (shown like a result), or nothing; it may be async. */
+export type DotHandler = (args: string, line: string) => unknown;
+
+/** A dot-command as listed by `.help`. */
+export interface DotInfo {
+  name: string;
+  help: string;
+}
+
+/** `dot('name', handler, 'what it does')` adds a command (or replaces one of the same name); the returned function takes it away again. `dot.list()` gives them all; `dot.remove(name)` takes one away. */
+export interface DotRegistry {
+  (name: string, handler: DotHandler, help?: string): () => void;
+  list(): DotInfo[];
+  remove(name: string): boolean;
+}
+
+export type Repl = ((line: string) => Promise<string>) & { incomplete: (source: string) => boolean; dot: DotRegistry };
+
+const DOT_LINE = /^\.([A-Za-z_][\w-]*)(?:\s+([\s\S]*))?$/;
+const DOT_NAME = /^[A-Za-z_][\w-]*$/;
+
+/** A line that starts with a dot and a name is a dot-command (never TypeScript: a statement cannot begin with `.name`). */
+export const isDotLine = (line: string): boolean => DOT_LINE.test(line.trim());
 
 /** What a result looks like on paper. */
 export function formatResult(value: unknown): string {
@@ -149,6 +171,38 @@ export function formatResult(value: unknown): string {
  */
 export function createRepl(transpile: ReplTranspile, globals: () => Record<string, unknown>): Repl {
   const scope: Record<string, unknown> = Object.create(null);
+  const commands = new Map<string, { handler: DotHandler; help: string }>();
+
+  const register = (name: string, handler: DotHandler, help = ''): (() => void) => {
+    if (!DOT_NAME.test(name)) throw new Error(`a dot-command name is letters, digits, _ and -, and starts with a letter: ${JSON.stringify(name)}`);
+    if (typeof handler !== 'function') throw new Error('dot(name, handler, help): the handler must be a function');
+    const entry = { handler, help };
+    commands.set(name, entry);
+    return () => void (commands.get(name) === entry && commands.delete(name));
+  };
+  const dot: DotRegistry = Object.assign(register, {
+    list: (): DotInfo[] => [...commands].map(([name, c]) => ({ name, help: c.help })).sort((a, b) => a.name.localeCompare(b.name)),
+    remove: (name: string): boolean => commands.delete(name),
+  });
+
+  // .help is made from the list of commands, so a command added later shows up in it at once. A cell may replace it with dot('help', ...).
+  register('help', () => dot.list().map((c) => `.${c.name}${c.help ? '  ' + c.help : ''}`).join('\n'), 'this list');
+  register('dots', () => dot.list().map((c) => c.name).join(' '), 'the names of all dot-commands');
+
+  const dotted = async (line: string): Promise<string> => {
+    const [, name = '', args = ''] = DOT_LINE.exec(line.trim()) ?? [];
+    const command = commands.get(name);
+    if (!command) {
+      const near = [...commands.keys()].find((n) => n.toLowerCase() === name.toLowerCase());
+      return `?? .${name} is not a dot-command${near ? ` (did you mean .${near}?)` : ''}. .help lists them; dot('${name}', (args) => ..., 'what it does') adds one.`;
+    }
+    try {
+      const value = await command.handler(args.trim(), line.trim());
+      return typeof value === 'string' ? value : formatResult(value);
+    } catch (err) {
+      return '?? .' + name + ': ' + (err instanceof Error ? err.message : String(err));
+    }
+  };
 
   const compile = async (code: string): Promise<string | string[]> => {
     const out = await transpile(code);
@@ -156,7 +210,7 @@ export function createRepl(transpile: ReplTranspile, globals: () => Record<strin
   };
 
   const execute = async (js: string): Promise<void> => {
-    const api = globals();
+    const api: Record<string, unknown> = { ...globals(), dot };
     const names = Object.keys(api).filter((n) => !(n in scope));
     const fn = new AsyncFunction('__s', ...names, `with (__s) {\n${js}\n}`);
     await fn(scope, ...names.map((n) => api[n]));
@@ -195,6 +249,7 @@ export function createRepl(transpile: ReplTranspile, globals: () => Record<strin
   };
 
   const run = async (line: string): Promise<string> => {
+    if (isDotLine(line)) return dotted(line);
     let result = '';
     for (const statement of scan(line).parts) {
       result = await runOne(statement);
@@ -202,5 +257,5 @@ export function createRepl(transpile: ReplTranspile, globals: () => Record<strin
     }
     return result;
   };
-  return Object.assign(run, { incomplete: isIncomplete });
+  return Object.assign(run, { incomplete: (source: string) => !isDotLine(source) && isIncomplete(source), dot });
 }
