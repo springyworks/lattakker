@@ -75,6 +75,9 @@ function charWidth(fam: string): number {
   return w;
 }
 
+/** Where the letters stand on a paper cell: the width of one, the height of a line and the margins, in px at 100%. */
+export const paperMetrics = (o: PaperOptions): { cw: number; lh: number; padX: number; padY: number } => ({ cw: charWidth(family(o)), lh: PAPER_LINE_PX, padX: PAD_X, padY: PAD_Y });
+
 /** How a paper cell looks, as plain maxGraph style: the fill is the paper, the font is the ink. */
 export function paperStyle(o: PaperOptions, printedLines: number, feed?: number, scrollLines = 0, headCol = -1): CellStyle {
   const wear = Math.max(0, Math.min(1, o.wear ?? Math.min(0.9, 0.08 + printedLines / 120)));

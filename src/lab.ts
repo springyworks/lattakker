@@ -25,7 +25,8 @@ export function createLab(view: GameView, smallScreen: boolean): Lab {
     containerId: 'lab',
     panelId: 'lab-panel',
     // The terminal at A1 before it learned input.onPaste, before Ctrl-C skipped the slow typing, before the AI command, and before TypeScript lines could be continued, typed with AltGr or pasted whole.
-    olderVersions: { A1: ['a408c3cb', 'ae1b9f14', '7b4a89e0', '8aae4900'] },
+    // The terminal at K1 before its title line followed the block (cell.path).
+    olderVersions: { A1: ['a408c3cb', 'ae1b9f14', '7b4a89e0', '8aae4900'], K1: ['e7095097'] },
     load: () => upgradeLabStorage(loadLabSaved(), TERMINAL_DEMOS[0][1], saveLabSaved),
     startSave: startLabAutoSave,
   });

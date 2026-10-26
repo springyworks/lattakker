@@ -2148,7 +2148,7 @@ const draw = (): void => {
   g.clear()
   g.fill(BG)
   g.box(0, 0, W, 1, BAR)
-  const title = 'TERMINAL  ts  /lab/K1'
+  const title = 'TERMINAL  ts  ' + cell.path
   g.text(1, 0, title, { snap: true, ink: INK.bar, fill: BAR, w: title.length })
   const hint = busy ? 'running... Ctrl-C stops' : scroll ? 'scrolled back ' + scroll : held ? 'keyboard on  Esc: off' : 'hover or click to type'
   g.text(W - 1 - hint.length, 0, hint, { snap: true, ink: held ? INK.prompt : '#d29922', fill: BAR, w: hint.length })

@@ -40,7 +40,9 @@ import { decideSpan, emptyShape, readSpanCall, rewriteSpanCall, type ShapeState,
 import { SheetCellHandler } from './cellHandler';
 import { Overlays } from './overlays';
 import { plotSvg, tilesSvg, type PlotSpec } from './plot';
-import { advance, feedMs, PAPER_CPS, paperFontReady, paperLayout, paperSpeed, paperStyle, printStep, settle, type PaperLayout, type PaperOptions, type PrintState } from './paper';
+import { advance, feedMs, PAPER_CPS, paperFontReady, paperLayout, paperMetrics, paperSpeed, paperStyle, printStep, settle, type PaperLayout, type PaperOptions, type PrintState } from './paper';
+import { gridPoint, gridSpan, samePlace, type GridPoint, type LetterGrid } from './gridSelect';
+import { screenRows } from '../mcp/outputRead';
 import { registerPaperShape } from './paperShape';
 import { bellOn, primeBell, printChar, setBell } from '../aichat/bell';
 import type { SvgScene } from './svgScene';
@@ -575,6 +577,11 @@ export class Sheet {
       },
       true,
     );
+    window.addEventListener('pointerdown', () => this.clearGridSelection(), true);
+    container.addEventListener('pointerdown', (e: PointerEvent) => this.onGridPress(e), true);
+    window.addEventListener('pointermove', (e) => this.onGridMove(e));
+    window.addEventListener('pointerup', () => this.onGridRelease());
+    window.addEventListener('pointercancel', () => this.onGridRelease());
     container.addEventListener('pointercancel', () => {
       this.cancelContentDrag();
       this.cancelRubber();
@@ -1134,8 +1141,94 @@ export class Sheet {
     const next = Math.max(0, Math.min(maxBack, seen.back + lines));
     if (next === seen.back) return false;
     this.textView.set(address, { back: next, total: d.output.length });
+    this.clearGridSelection();
     this.refreshCell(address);
     return true;
+  }
+
+  // ---------------------------------------------------------------- selecting letters the sheet draws itself
+
+  private gridPress: { address: string; x: number; y: number; moved: boolean; from: GridPoint; to: GridPoint | null } | null = null;
+  private gridSel: { text: string; boxes: Cell[] } | null = null;
+
+  /** Mouse position in model coordinates, from a plain DOM event. */
+  private modelAt(evt: MouseEvent): { x: number; y: number } {
+    const view = this.graph.getView();
+    const rect = this.container.getBoundingClientRect();
+    return { x: (evt.clientX - rect.left + this.container.scrollLeft) / view.scale - view.translate.x, y: (evt.clientY - rect.top + this.container.scrollTop) / view.scale - view.translate.y };
+  }
+
+  /**
+   * The letters of a cell that prints them itself (a tile terminal, a teletype paper), in the one shape the selection works
+   * with. Another kind of cell gets selectable letters by answering here.
+   */
+  letterGridOf(address: string): LetterGrid | null {
+    const d = this.data.get(address);
+    const geo = this.cells.get(address)?.getGeometry();
+    if (!d || !geo || d.error) return null;
+    if (d.tiles) {
+      const t = d.tiles;
+      if (t.rows <= 0 || t.cols <= 0) return null;
+      return { lines: screenRows(t), x: geo.x, y: geo.y, cw: geo.width / t.cols, lh: geo.height / t.rows, cols: t.cols };
+    }
+    const paper = this.paperOf(address);
+    const layout = paper && this.paperLayoutOf(address);
+    if (!paper || !layout) return null;
+    const m = paperMetrics(paper);
+    const lines = layout.label.split('\n').map((l) => l.replace(/\u200b/g, '').replace(/\u00a0/g, ' '));
+    return { lines, x: geo.x + m.padX, y: geo.y + geo.height - m.padY - lines.length * m.lh, cw: m.cw, lh: m.lh, cols: Math.max(1, ...lines.map((l) => l.length)) };
+  }
+
+  /** The text the person has selected on a letter grid, or ''. */
+  gridSelectionText(): string {
+    return this.gridSel?.text ?? '';
+  }
+
+  clearGridSelection(): void {
+    for (const box of this.gridSel?.boxes ?? []) this.overlays.remove(box);
+    this.gridSel = null;
+  }
+
+  /** A press on the letters of a picked block starts a selection instead of carrying the block (the border still carries it). */
+  private onGridPress(e: PointerEvent): void {
+    this.gridPress = null;
+    if (e.button !== 0 || e.defaultPrevented || e.altKey || e.shiftKey || e.ctrlKey || e.metaKey || e.pointerType !== 'mouse') return;
+    const hovered = this.hoveredAddress;
+    const address = hovered && this.ownerOf(hovered);
+    if (!address || !this.picked.has(address)) return;
+    const grid = this.letterGridOf(address);
+    const geo = this.cells.get(address)?.getGeometry();
+    if (!grid || !geo) return;
+    const p = this.modelAt(e);
+    const edge = 6;
+    if (p.x < geo.x + edge || p.y < geo.y + edge || p.x > geo.x + geo.width - edge || p.y > geo.y + geo.height - edge) return;
+    this.gridPress = { address, x: e.clientX, y: e.clientY, moved: false, from: gridPoint(grid, p.x, p.y), to: null };
+  }
+
+  private onGridMove(e: PointerEvent): void {
+    const press = this.gridPress;
+    if (!press) return;
+    if (!(e.buttons & 1)) {
+      this.onGridRelease();
+      return;
+    }
+    if (!press.moved && Math.hypot(e.clientX - press.x, e.clientY - press.y) < 4) return;
+    press.moved = true;
+    const grid = this.letterGridOf(press.address);
+    if (!grid) return;
+    const p = this.modelAt(e);
+    const to = gridPoint(grid, p.x, p.y);
+    if (press.to && samePlace(press.to, to)) return;
+    press.to = to;
+    const { text, boxes } = gridSpan(grid, press.from, to);
+    this.clearGridSelection();
+    this.gridSel = { text, boxes: boxes.map((b) => this.overlays.add(b, { fillColor: '#2f6fed', fillOpacity: 28, strokeColor: 'none' })) };
+  }
+
+  private onGridRelease(): void {
+    const press = this.gridPress;
+    this.gridPress = null;
+    if (press?.moved) this.rubberEndedAt = performance.now();
   }
 
   /** Which tile of a block's grid a mouse event landed on (x across, y down, from 0), or null. */
@@ -1354,6 +1447,7 @@ export class Sheet {
     const next = Math.max(0, Math.min(layout.maxBack, layout.back + lines));
     if (next === layout.back) return false;
     this.paperView.set(address, { back: next, total: layout.total });
+    this.clearGridSelection();
     this.refreshCell(address);
     return true;
   }
@@ -2238,7 +2332,7 @@ export class Sheet {
   }
 
   private onContentMouseDown(me: InternalMouseEvent): void {
-    if (this.contentDrag || this.rubber || this.onResizeHandle(me)) return;
+    if (this.gridPress || this.contentDrag || this.rubber || this.onResizeHandle(me)) return;
     const id = me.getCell()?.getId() ?? '';
     if (!id.startsWith('sheet:')) return;
     const address = id.slice(6);

@@ -167,10 +167,7 @@ export function buildApi(
       get isBoard() {
         return owner.isBoardAddress(address);
       },
-      skipPaper() {
-        sheet.skipTyping(address);
-        return ref;
-      },
+      skipPaper: readOnly,
       span(cols?: number, rows?: number) {
         if (cols !== undefined || rows !== undefined) readOnly();
         trackForeign(owner, sizeNode(address));
@@ -288,6 +285,10 @@ export function buildApi(
         const { paper: _old, ...rest } = d.codeVisual;
         d.codeVisual = options === false ? rest : { ...rest, paper: typeof options === 'object' && options ? { ...options } : {} };
         sheet.refreshSoon(address);
+        return ref;
+      },
+      skipPaper() {
+        sheet.skipTyping(address);
         return ref;
       },
       span(cols?: number, rows?: number) {

@@ -9,6 +9,7 @@ import { GAME_NODE, clickNode, codeNode, describeNode, sizeNode } from '../sheet
 import { buildApi } from '../sheet/api';
 import { runCell } from '../sheet/runtime';
 import { inputPanel } from './InputPanel';
+import { addGridSelectionSource } from './gridSelection';
 import { screenRows, trimEnd } from '../mcp/outputRead';
 import { CellEditor } from '../editor/CellEditor';
 import { CellCodeView } from '../editor/CellCodeView';
@@ -272,6 +273,7 @@ export class SheetPane {
 
   /** Shift + Enter, Delete and Esc act on the picked cells, when the keys are not meant for something else (a text box, the editor). */
   private installKeys(): void {
+    addGridSelectionSource({ text: () => (workspace.current === this.sheet.id ? this.sheet.gridSelectionText() : ''), copy: (text) => this.copy(text, 'the selection') });
     window.addEventListener('keydown', (e) => {
       if (workspace.current !== this.sheet.id || this.editor.isOpen || e.ctrlKey || e.metaKey || e.altKey) return;
       if ((e.target as HTMLElement | null)?.closest?.('input, textarea, select, [contenteditable="true"], .monaco-editor, .ai-side, .ai-mini, .help-card, .input-panel')) return;

@@ -23,7 +23,7 @@ color('#ece3f6')
 /** Shows the title and a map of which cell uses which. */
 print('🔗 Cells that talk')
 print('export in one cell, import in another')
-print('A4 → G4 · A8 → G8 · A11 → G11 · A15 → G15 · A43 → G43 · A43 → A52 (a Roman bakery feeds the philosophers, and a herald reads the helper's state)')`,
+print('A4 → G4 · A8 → G8 · A11 → G11 · A15 → G15 · A43 → G43 · A43 → A52 (a Roman bakery feeds the philosophers; A52 has the kick buttons for the throttles of A43 and G43, and a herald reads the helper state)')`,
   ],
   [
     'A4',
@@ -602,15 +602,17 @@ every('100ms', () => {
     'A43',
     String.raw`// ROME, a bakery (pistrinum) with a donkey mill. Grain goes in on the left, loaves come out of the oven, and every loaf is put on the shelf.
 // The pipeline is four workers, each one a loop that takes from a Channel, works, and sends on. A full Channel makes the sender wait: back-pressure.
-// THIS CELL OFFERS two things to the cell next door (G43, the philosophers): the shelf, and makeMover(), the little engine that walks the figures.
+// THIS CELL OFFERS three things to the cells next door: the shelf, makeMover() (the little engine that walks the figures), and THROTTLE, how hard
+// the bakery works. The throttle is 'auto' (it keeps the shelf half full on average) or a number set by hand, and kick() makes the ovens roar for a while.
+// G43 (the philosophers) and A52 (the herald, with buttons) import these; the baker's wife carries loaves from the shelf to the shop, but never crosses to G43.
 
 /** Sets the size and the colour of this cell. */
-span(6, 8)
+span(6, 9)
 color('#f3e3c3')
 
 /** The drawing: its size, and the sky, the floor and the red border of the bakery. */
 const W = 360
-const H = 480
+const H = 540
 const pic = svg({ width: W, height: H })
 pic.add('rect', { x: 0, y: 0, width: W, height: H, fill: '#f3e3c3' })
 pic.add('rect', { x: 0, y: 66, width: W, height: 120, fill: '#e6cf9f' })
@@ -625,11 +627,13 @@ export interface Sprite {
   ty: number
   speed: number
   bob: number
+  /** Does the throttle of the cell that made the engine speed this figure up and slow it down? (A rat and a shopkeeper do their own thing.) */
+  paced: boolean
   arrived: Array<() => void>
 }
 
-/** Figures that walk. Give it a drawing; sprite() puts a letter or an emoji in it, goTo() walks it somewhere and says when it is there. */
-export function makeMover(scene: SvgScene) {
+/** Figures that walk. Give it a drawing; sprite() puts a letter or an emoji in it, goTo() walks it somewhere and says when it is there. pace() says how fast the paced figures go now: 1 is normal, 0 stands still. */
+export function makeMover(scene: SvgScene, pace: () => number = () => 1) {
   /** Every figure made so far. */
   const all = new Set<Sprite>()
 
@@ -640,7 +644,7 @@ export function makeMover(scene: SvgScene) {
       const dy = s.ty - s.y
       const d = Math.hypot(dx, dy)
       if (d > 0.5) {
-        const step = Math.min(d, s.speed * dt)
+        const step = Math.min(d, s.speed * dt * (s.paced ? pace() : 1))
         s.x += (dx / d) * step
         s.y += (dy / d) * step
       } else {
@@ -657,7 +661,7 @@ export function makeMover(scene: SvgScene) {
     /** Puts a new figure (a letter or an emoji) in the drawing. */
     sprite(glyph: string, x: number, y: number, size = 26): Sprite {
       const el = scene.write(x, y, glyph, { 'font-size': size, 'text-anchor': 'middle', 'dominant-baseline': 'central' })
-      const s: Sprite = { el, x, y, tx: x, ty: y, speed: 80, bob: 0, arrived: [] }
+      const s: Sprite = { el, x, y, tx: x, ty: y, speed: 80, bob: 0, paced: true, arrived: [] }
       all.add(s)
       return s
     },
@@ -678,11 +682,55 @@ export function makeMover(scene: SvgScene) {
   }
 }
 
-/** The shelf is a Channel with 6 places. The baker sends a loaf; a philosopher in G43 receives it. Nothing else is shared. */
+/** The shelf is a Channel with 6 places. The baker sends a loaf; a philosopher in G43 (or the baker's wife) receives it. */
 export const shelf = new Channel<number>(6, 'shelf')
 
-/** The walking engine for this drawing, and a helper that writes a centred label. */
-const mv = makeMover(pic)
+/** How many loaves were baked and sold in the shop, and what the bakery is doing now. */
+let baked = 0
+let sold = 0
+let state = 'starting'
+
+/** How hard the bakery works: 'auto' (a governor keeps the shelf half full on average) or a number from 0 (stopped) to 3 (flat out). */
+let lever: 'auto' | number = 'auto'
+/** What the governor asks for now. */
+let governor = 1.5
+/** Until when a kick makes everything go 2.5 times faster. */
+let kickedUntil = 0
+const KICK = 2.5
+const kicked = () => Date.now() < kickedUntil
+
+/** THE THROTTLE, offered to other cells: import { throttle } from './A43'. */
+export const throttle = {
+  /** How fast everything in the bakery goes now, as a multiple of the old fixed speed. */
+  pace(): number {
+    return Math.min(6, (lever === 'auto' ? governor : lever) * (kicked() ? KICK : 1))
+  },
+  /** throttle.set('auto') lets the governor keep the shelf half full; throttle.set(2) works twice as hard; throttle.set(0) stops the baking. */
+  set(pace: number | 'auto'): string {
+    lever = pace === 'auto' ? 'auto' : Math.min(3, Math.max(0, Number(pace) || 0))
+    return String(lever)
+  },
+  /** Kick the bakery: 2.5 times faster for a while (5 seconds unless you say). It is on top of auto or the hand setting. */
+  kick(ms = 5000): number {
+    kickedUntil = Date.now() + Math.min(30000, Math.max(0, ms))
+    return throttle.pace()
+  },
+  /** What a reader wants to know, as plain data. */
+  status() {
+    return {
+      mode: lever === 'auto' ? 'auto' : 'by hand',
+      pace: Math.round(throttle.pace() * 100) / 100,
+      kicked: kicked(),
+      shelf: shelf.size,
+      target: shelf.capacity / 2,
+      baked,
+      sold,
+    }
+  },
+}
+
+/** The walking engine for this drawing (its figures follow the throttle), and a helper that writes a centred label. */
+const mv = makeMover(pic, () => throttle.pace())
 const label = (x: number, y: number, words: string, size = 10, fill = '#6b3e12') =>
   pic.write(x, y, words, { 'font-size': size, 'text-anchor': 'middle', fill, 'font-family': 'Georgia, serif' })
 
@@ -709,16 +757,18 @@ for (const s of STAGES) {
 /** The millstone, the sack of grain, the fire, the donkey and the baker. */
 pic.add('circle', { cx: 135, cy: Y, r: 11, fill: '#9a9a9a', stroke: '#555' })
 mv.sprite('🌾', 45, Y - 22, 20)
-mv.sprite('🔥', 315, Y - 24, 22).bob = 2
+const fire = mv.sprite('🔥', 315, Y - 24, 22)
+fire.bob = 2
 const donkey = mv.sprite('🐴', 157, Y, 24)
 const baker = mv.sprite('🧑‍🍳', 225, Y - 20, 26)
 
 /** A short name for sleep(). */
 const wait = (ms: number) => sleep(ms)
 
-/** How many loaves were baked, and what the bakery is doing now. */
-let baked = 0
-let state = 'starting'
+/** Work that takes ms at the normal pace: it goes faster when the throttle is up, and stops while it is 0. */
+async function work(ms: number): Promise<void> {
+  for (let done = 0; done < ms; done += 100 * throttle.pace()) await sleep(100)
+}
 
 /** Each stage: an inbox (a Channel of one), a station, what it does to the item, and the shape the item has afterwards. */
 const inbox = [new Channel<Sprite>(1, 'mill'), new Channel<Sprite>(1, 'trough'), new Channel<Sprite>(1, 'oven')]
@@ -732,7 +782,7 @@ void (async () => {
     const grain = mv.sprite('🌾', STAGES[0].x, Y + 6, 22)
     await mv.goTo(grain, door(1), Y + 28, 70)
     await inbox[0].send(grain)
-    await wait(2400)
+    await work(2400)
   }
 })().catch(() => {})
 
@@ -771,7 +821,7 @@ void (async () => {
     const item = await inbox[2].receive()
     await mv.goTo(item, STAGES[3].x, Y + 18, 90)
     state = 'the oven bakes'
-    await wait(1800)
+    await work(1800)
     item.el.text('🍞')
 
     /** The loaf waits at its place BEFORE it is sent: a philosopher takes it in under 40 ms, so the shelf would never be seen filling. */
@@ -795,20 +845,59 @@ const places = Array.from({ length: shelf.capacity }, (_, i) => {
   return pic.write(x, 328, '🍞', { 'font-size': 28, 'text-anchor': 'middle', 'dominant-baseline': 'central' })
 })
 
-/** Three lines of text under the shelf: a note, then the counters, then what the bakery is doing. */
-label(W / 2, 384, '⬇ shelf.receive() in G43 · hungry philosophers take a loaf', 10)
-const info = label(W / 2, 418, '', 12, '#3a2a12')
-const info2 = label(W / 2, 438, '', 11, '#6b3e12')
-const info3 = label(W / 2, 458, 'makeMover() walks the figures here AND in G43', 10, '#8a6a3a')
+/** Under the shelf: who takes the bread. The philosophers in G43 and the baker's wife both call shelf.receive(). */
+label(W / 2, 370, '⬇ shelf.receive() · philosophers (G43) and the baker wife', 10)
+
+/** The shop (taberna) at the right, and the wall at the edge of this cell: beyond it lies the triclinium of G43. */
+const WALL = 346
+pic.add('rect', { x: 236, y: 392, width: 100, height: 58, rx: 8, fill: '#fff6df', stroke: '#b98b4a', 'stroke-width': 2 })
+const shop = label(286, 408, 'TABERNA', 11, '#7b1e1a')
+pic.add('rect', { x: WALL, y: 380, width: 6, height: 84, fill: '#a4302a' })
+label(W - 22, 476, '⛔ triclinium', 9, '#a4302a')
+
+/** The baker's wife (uxor): takes a loaf off the shelf, carries it to the shop and sells it, then fetches the next. She walks at her own pace, and she can never cross the wall. */
+const wife = mv.sprite('👩‍🍳', 70, 424, 26)
+wife.paced = false
+const halt = pic.write(WALL - 28, 400, '✋ not my side!', { 'font-size': 9, 'text-anchor': 'middle', fill: '#a4302a', opacity: 0 })
+let wifeWaits = false
+const walk = (who: Sprite, x: number, y: number) => mv.goTo(who, Math.min(x, WALL - 12), y, 70)
+void (async () => {
+  while (true) {
+    await wait(4500)
+    wifeWaits = true
+    await shelf.receive()
+    wifeWaits = false
+    const loaf = mv.sprite('🍞', wife.x + 14, wife.y - 6, 20)
+    loaf.paced = false
+    await Promise.all([walk(wife, 255, 424), walk(loaf, 269, 418)])
+    mv.drop(loaf)
+    sold++
+    if (Math.random() < 0.35) {
+      await walk(wife, WALL, 424)
+      halt.opacity(1)
+      await wait(1100)
+      halt.opacity(0)
+    }
+    await walk(wife, 70, 424)
+  }
+})().catch(() => {})
+
+/** Three lines at the bottom: the counters, what the bakery is doing, the throttle, and a bar that shows the pace. */
+const info = label(W / 2, 476, '', 12, '#3a2a12')
+const info2 = label(W / 2, 494, '', 11, '#6b3e12')
+const info3 = label(W / 2, 512, '', 10, '#8a6a3a')
+pic.add('rect', { x: 40, y: 520, width: 280, height: 8, rx: 4, fill: '#e8d3a5' })
+const paceBar = pic.add('rect', { x: 40, y: 520, width: 10, height: 8, rx: 4, fill: '#a4302a' })
 
 /** A shy rat 🐀 hunts for crumbs in the corners and bolts from anything big that MOVES: the donkey and the baker. Nobody asked it to be here. */
-const nooks: Array<[number, number]> = [[16, 76], [344, 76], [16, 372], [344, 372], [16, 462], [344, 462], [180, 466]]
-const rat = mv.sprite('🐀', 16, 462, 18)
+const nooks: Array<[number, number]> = [[16, 76], [344, 76], [16, 372], [16, 520], [344, 520], [180, 534]]
+const rat = mv.sprite('🐀', 16, 520, 18)
 rat.bob = 1
+rat.paced = false
 const fright = pic.write(0, 0, '❗', { 'font-size': 11, 'text-anchor': 'middle', opacity: 0 })
 
 /** What the rat watches: the big figures, where they were last time, and the times when it stops sniffing or stops being scared. */
-const bigOnes = [donkey, baker]
+const bigOnes = [donkey, baker, wife]
 const before = bigOnes.map((b) => [b.x, b.y])
 let sniffUntil = 0
 let scaredUntil = 0
@@ -852,11 +941,21 @@ every('120ms', () => {
   fright.opacity(now < scaredUntil ? 1 : 0)
 })
 
-/** Updates the shelf: the bread fades with shelf.size, and the lines tell what is baked, on the shelf, and who is waiting. */
+/** The governor: every fifth of a second it nudges what 'auto' asks for, up when the shelf is under half full and down when it is over, so on average it is half full. */
+every('200ms', () => {
+  if (lever === 'auto') governor = Math.min(5, Math.max(0.15, governor + (shelf.capacity / 2 - shelf.size) * 0.02))
+})
+
+/** Updates the shelf: the bread fades with shelf.size, and the lines tell what is baked, sold, on the shelf, who is waiting, and the pace. */
 every('150ms', () => {
   places.forEach((p, i) => p.opacity(i < shelf.size ? 1 : 0.12))
-  info.text('baked ' + baked + ' · on the shelf ' + shelf.size + ' of ' + shelf.capacity)
-  const hungry = shelf.size === 0 ? shelf.waiting : 0
+  shop.text('TABERNA · sold ' + sold)
+  info.text('baked ' + baked + ' · sold ' + sold + ' · on the shelf ' + shelf.size + ' of ' + shelf.capacity)
+  const pace = throttle.pace()
+  info3.text('throttle ×' + pace.toFixed(1) + (lever === 'auto' ? ' AUTO: the shelf stays half full' : ' BY HAND') + (kicked() ? ' · 🦵 KICKED!' : ''))
+  paceBar.attr({ width: Math.max(8, (280 * pace) / 6), fill: kicked() ? '#e07a1a' : '#a4302a' })
+  fire.el.attr('font-size', kicked() ? 32 : 22)
+  const hungry = shelf.size === 0 ? Math.max(0, shelf.waiting - (wifeWaits ? 1 : 0)) : 0
   info2.text(hungry > 0 ? '👥 ' + hungry + ' hungry customer' + (hungry > 1 ? 's' : '') + ' waiting for bread' : state)
   if (shelf.size < shelf.capacity && state.startsWith('😓')) state = 'the oven bakes'
 })`,
@@ -867,6 +966,7 @@ every('150ms', () => {
 // shelf, a Channel the baker puts loaves on (receive() waits until there is one), and makeMover(), the engine that walks the figures.
 // To eat, a philosopher needs the loaf AND two spoons (Rome had spoons, ligulae, not forks yet). There are only five spoons, one between each two.
 // The spoons are numbered and everybody takes the LOWER number first, so the circle of waiting can never close: no deadlock (see G30).
+// THIS CELL OFFERS a throttle of its own, import { throttle } from './G43': how hungry and how brisk the philosophers are. set(2) twice as brisk, set(0) they sit and wait, kick() a stampede.
 
 /** Sets the size and the colour of this cell. */
 span(10, 8)
@@ -881,7 +981,46 @@ const H = 480
 const pic = svg({ width: W, height: H })
 pic.add('rect', { x: 0, y: 0, width: W, height: H, fill: '#efe0c0' })
 pic.add('rect', { x: 0, y: 0, width: W, height: 8, fill: '#a4302a' })
-const mv = makeMover(pic)
+/** The appetite of the guests: a number from 0 (they freeze) to 3, and a kick that makes them 2.5 times brisker for a while. */
+let appetite = 1
+let kickedUntil = 0
+const kicked = () => Date.now() < kickedUntil
+
+/** THE THROTTLE, offered to other cells (A52 has buttons for it). */
+export const throttle = {
+  /** How brisk the guests are now: 1 is normal. */
+  pace(): number {
+    return Math.min(6, appetite * (kicked() ? 2.5 : 1))
+  },
+  /** throttle.set(2) makes them twice as brisk; set(0) freezes them where they stand. */
+  set(pace: number): number {
+    appetite = Math.min(3, Math.max(0, Number(pace) || 0))
+    return appetite
+  },
+  /** Kick them: 2.5 times brisker for a while (5 seconds unless you say). */
+  kick(ms = 5000): number {
+    kickedUntil = Date.now() + Math.min(30000, Math.max(0, ms))
+    return throttle.pace()
+  },
+  /** What a reader wants to know, as plain data. */
+  status() {
+    return {
+      pace: Math.round(throttle.pace() * 100) / 100,
+      kicked: kicked(),
+      shelf: shelf.size,
+      hungry: phils.filter((p) => p.doing === 'hungry').length,
+      eating: phils.filter((p) => p.doing === 'eats').length,
+      meals: phils.reduce((n, p) => n + p.meals, 0),
+    }
+  },
+}
+
+/** Time that passes at the pace of the guests: it runs faster when they are brisk, and stops when they are frozen. */
+async function work(ms: number): Promise<void> {
+  for (let done = 0; done < ms; done += 100 * throttle.pace()) await sleep(100)
+}
+
+const mv = makeMover(pic, () => throttle.pace())
 const text = (x: number, y: number, words: string, size = 10, fill = '#5a3a14') =>
   pic.write(x, y, words, { 'font-size': size, 'text-anchor': 'middle', fill, 'font-family': 'Georgia, serif' })
 
@@ -1009,8 +1148,8 @@ async function life(i: number): Promise<void> {
     p.doing = 'thinks'
     for (let k = 0; k < 2; k++) {
       say(p, pick(THOUGHTS[i]))
-      await mv.goTo(p.me, 150 + Math.random() * 130, 90 + Math.random() * 340, 45)
-      await sleep(900)
+      await mv.goTo(p.me, 150 + Math.random() * 130, 90 + Math.random() * 320, 45)
+      await work(900)
     }
 
     /** Hungry: walk to the stall and wait in line. shelf.receive() is the call into A43. */
@@ -1024,7 +1163,7 @@ async function life(i: number): Promise<void> {
     const slot = Math.min(shelf.size, shelf.capacity - 1)
     const bread = mv.sprite('🍞', 34 + (slot % 2) * 52, 215 + Math.floor(slot / 2) * 44, 26)
     held++
-    await sleep(500)
+    await work(500)
     held--
 
     /** The loaf flies to the hand, and the guest walks back to his seat. */
@@ -1047,7 +1186,7 @@ async function life(i: number): Promise<void> {
     for (let bite = 0; bite < 3; bite++) {
       await mv.goTo(p.me, sx, sy - 4, 40)
       await mv.goTo(p.me, sx, sy, 40)
-      await sleep(500)
+      await work(500)
     }
 
     /** Done: count the meal, eat the loaf, bring the spoons home and give them back. */
@@ -1060,7 +1199,7 @@ async function life(i: number): Promise<void> {
 
     /** A last thought, a rest, and start again. */
     say(p, pick(THOUGHTS[i]))
-    await sleep(1500)
+    await work(1500)
     hush(p)
   }
 }
@@ -1069,7 +1208,10 @@ async function life(i: number): Promise<void> {
 phils.forEach((_, i) => void life(i).catch(() => {}))
 
 /** The line of text at the bottom. */
-const footer = text(W / 2, 456, '', 11, '#3a2a12')
+const footer = text(W / 2, 440, '', 11, '#3a2a12')
+const gauge = text(W / 2, 458, '', 10, '#8a6a3a')
+pic.add('rect', { x: 150, y: 466, width: 300, height: 8, rx: 4, fill: '#e8d3a5' })
+const paceBar = pic.add('rect', { x: 150, y: 466, width: 10, height: 8, rx: 4, fill: '#a4302a' })
 
 /** Updates the stall (bread, who waits) and the bottom line (hungry, eating, meals) a few times a second. */
 every('150ms', () => {
@@ -1079,6 +1221,9 @@ every('150ms', () => {
   const eating = phils.filter((p) => p.doing === 'eats').length
   const hungry = phils.filter((p) => p.doing === 'hungry').length
   footer.text('🍞 shelf ' + shelf.size + ' · hungry ' + hungry + ' · eating ' + eating + ' · meals ' + phils.reduce((n, p) => n + p.meals, 0))
+  const pace = throttle.pace()
+  gauge.text('appetite ×' + pace.toFixed(1) + (kicked() ? ' · 🦵 KICKED!' : ''))
+  paceBar.attr({ width: Math.max(8, (300 * pace) / 6), fill: kicked() ? '#e07a1a' : '#a4302a' })
 })`,
   ],
   [
@@ -1086,13 +1231,15 @@ every('150ms', () => {
     String.raw`// ROME, the herald (praeco) of the bakery. Every few seconds he asks THE HELPER about itself over MCP (the tool helper / introspect),
 // walks to the forum and reads the answer aloud: which model it is, what it costs, how full its memory is, and how it feels, with a purpose.
 // THIS CELL USES THE WALKING ENGINE AND THE SHELF OF THE BAKERY (A43), the same figures and the same bread.
+// It also has KICK BUTTONS: click one and it calls throttle.set() or throttle.kick() of A43 (the bakery) or of G43 (the philosophers). Those are real calls into the other cells.
 
 /** Sets the size and the colour of this cell. */
 span(16, 6)
 color('#f3e3c3')
 
 /** Brings in the walking engine and the shelf from A43. */
-import { makeMover, shelf } from './A43'
+import { makeMover, shelf, throttle as oven } from './A43'
+import { throttle as appetite } from './G43'
 
 /** The parts of the helper's answer that are read aloud (the full answer has more: print it to see). */
 interface Inside {
@@ -1106,7 +1253,7 @@ interface Inside {
 
 /** The drawing: its size, the floor and the red border, and the walking engine. */
 const W = 720
-const H = 280
+const H = 340
 const pic = svg({ width: W, height: H })
 pic.add('rect', { x: 0, y: 0, width: W, height: H, fill: '#f3e3c3' })
 pic.add('rect', { x: 0, y: 62, width: W, height: 70, fill: '#e6cf9f' })
@@ -1125,6 +1272,26 @@ const bread = text(440, 140, '', 10, '#5a3a14', 'middle')
 const lines = [0, 1, 2, 3].map((i) => text(130, 76 + i * 18, '', 11))
 const rows = [0, 1, 2].map((i) => text(40, 172 + i * 36, '', 11, '#3a2a12'))
 const footer = text(W / 2, 266, '', 10, '#6b3e12', 'middle')
+
+/** A button in the drawing: a box with words, and a function that runs when it is clicked. */
+function button(x: number, y: number, w: number, words: string, onClick: () => void, fill = '#fff6df') {
+  const g = pic.add('g')
+  g.add('rect', { x, y, width: w, height: 24, rx: 6, fill, stroke: '#b98b4a', 'stroke-width': 2 })
+  g.add('text', { x: x + w / 2, y: y + 12, 'font-size': 11, 'text-anchor': 'middle', 'dominant-baseline': 'central', fill: '#5a3a14', 'font-family': 'Georgia, serif', 'pointer-events': 'none' }).text(words)
+  g.on('click', onClick)
+}
+
+/** Two rows of buttons: the bakery (throttle of A43) and the dinner (throttle of G43). Each has stop, half, normal, double, triple and a KICK, and the bakery also AUTO (the half-full shelf). */
+const PACES: Array<[string, number]> = [['⏸ stop', 0], ['×½', 0.5], ['×1', 1], ['×2', 2], ['×3', 3]]
+text(20, 288, '🍞 BAKERY · A43', 11, '#7b1e1a')
+button(150, 276, 52, 'AUTO', () => void oven.set('auto'), '#e3f0d0')
+PACES.forEach(([name, pace], i) => button(208 + i * 58, 276, 52, name, () => void oven.set(pace)))
+button(498, 276, 70, '🦵 KICK', () => void oven.kick(), '#f6c98d')
+text(20, 320, '🍷 DINNER · G43', 11, '#7b1e1a')
+PACES.forEach(([name, pace], i) => button(150 + i * 58, 308, 52, name, () => void appetite.set(pace)))
+button(498, 308, 70, '🦵 KICK', () => void appetite.kick(), '#f6c98d')
+const ovenNow = text(580, 292, '', 10, '#3a2a12')
+const dinnerNow = text(580, 324, '', 10, '#3a2a12')
 
 /** The face for each mood the helper can have. */
 const FACES = { happy: '😊', calm: '🙂', uneasy: '😟', sad: '😢' }
@@ -1152,6 +1319,14 @@ async function round(): Promise<void> {
   footer.text('answered ' + (inside.work_so_far?.answered ?? 0) + ' · failed tool calls ' + (inside.work_so_far?.tool_calls_that_failed ?? 0) + ' · mood ' + (inside.mood ?? '?'))
   await mv.goTo(herald, 60, 100, 90)
 }
+
+/** The readouts next to the buttons: what the two throttles say, asked a few times a second. */
+every('300ms', () => {
+  const o = oven.status()
+  const d = appetite.status()
+  ovenNow.text('×' + o.pace.toFixed(1) + ' ' + o.mode + (o.kicked ? ' 🦵' : '') + ' · shelf ' + o.shelf + '/' + o.target * 2)
+  dinnerNow.text('×' + d.pace.toFixed(1) + (d.kicked ? ' 🦵' : '') + ' · meals ' + d.meals)
+})
 
 /** The herald goes again every five seconds; a helper that is silent is told in the scroll, not in the console. */
 every('5s', () => {

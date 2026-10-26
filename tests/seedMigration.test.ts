@@ -35,6 +35,27 @@ describe('refreshSeeded', () => {
   });
 });
 
+describe('refreshSeeded: a block resized by hand', () => {
+  const OLD = '// terminal\nspan(9, 8)\nconst title = "/lab/K1"';
+  const NEW = '// terminal\nspan(9, 8)\nconst title = cell.path';
+  const seed: Array<[string, string]> = [['K1', NEW]];
+  const older = { K1: [fingerprint(OLD)] };
+  const resized = (code: string): string => code.replace('span(9, 8)', 'span(12, 9)');
+
+  it('is upgraded and keeps its size, where it is and where it was moved to', () => {
+    const { sheet, cells } = fakeSheet({ K1: resized(OLD), C2: resized(OLD) });
+    refreshSeeded(sheet, 'test', seed, older);
+    expect(cells).toEqual({ K1: resized(NEW), C2: resized(NEW) });
+  });
+
+  it('is left alone when more than the size was changed', () => {
+    const mine = resized(OLD) + ' // mine';
+    const { sheet, cells } = fakeSheet({ K1: mine });
+    refreshSeeded(sheet, 'test', seed, older);
+    expect(cells.K1).toBe(mine);
+  });
+});
+
 describe('refreshSeeded: cells added in a later version', () => {
   const store = new Map<string, string>();
   vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) });

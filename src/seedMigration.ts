@@ -21,6 +21,11 @@ export function fingerprint(code: string): string {
   return h.toString(16).padStart(8, '0');
 }
 
+const SPAN_LINE = /^span\([^)\n]*\)[ \t]*$/m;
+const spanLine = (code: string): string | undefined => SPAN_LINE.exec(code)?.[0];
+/** The code with its `span(...)` line (the block size, which a person changes by dragging) set to another one. */
+const withSpan = (code: string, line: string | undefined): string => (line === undefined ? code : code.replace(SPAN_LINE, () => line));
+
 function load(tab: string): Record<string, string> {
   try {
     return JSON.parse(localStorage.getItem(KEY(tab)) ?? '{}') as Record<string, string>;
@@ -69,10 +74,15 @@ export function refreshSeeded(sheet: Sheet, tab: string, seed: ReadonlyArray<rea
     const have = fingerprint(data.code);
     // Blank lines around the code (a cell written through the editor or the MCP bridge) do not make it another version.
     const bare = fingerprint(data.code.trim());
+    // A block resized by hand differs from the shipped version only in its span line: it is still that version.
+    const mine = spanLine(data.code);
+    const sized = mine !== undefined ? withSpan(data.code, spanLine(code)) : data.code;
+    const sizedHave = fingerprint(sized);
+    const sizedBare = fingerprint(sized.trim());
     if (have === shipped || bare === shipped) {
       seeds[address] = shipped;
-    } else if (seeds[address] === have || olderVersions[address]?.some((print) => print === have || print === bare)) {
-      sheet.setCode(address, code);
+    } else if (seeds[address] === have || olderVersions[address]?.some((print) => print === have || print === bare || print === sizedHave || print === sizedBare)) {
+      sheet.setCode(address, withSpan(code, mine));
       seeds[address] = shipped;
       updated++;
     }
@@ -85,7 +95,16 @@ export function refreshSeeded(sheet: Sheet, tab: string, seed: ReadonlyArray<rea
   }
   for (const data of sheet.codeCells()) {
     if (seedAddresses.has(data.address)) continue;
-    const code = newest.get(fingerprint(data.code));
+    const mine = spanLine(data.code);
+    let code = newest.get(fingerprint(data.code));
+    if (code === undefined && mine !== undefined) {
+      for (const [print, candidate] of newest) {
+        if (fingerprint(withSpan(data.code, spanLine(candidate))) === print) {
+          code = withSpan(candidate, mine);
+          break;
+        }
+      }
+    }
     if (code === undefined) continue;
     sheet.setCode(data.address, code);
     updated++;
