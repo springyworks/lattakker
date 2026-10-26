@@ -472,7 +472,15 @@ class InputPanel {
     };
     this.claims.add(drop);
     if (options?.steady) this.steady.add(drop);
+    // A box in the AI sidebar that still has the cursor would swallow every key meant for the cell: the cell that is taking the keyboard now gets them.
+    const focused = document.activeElement as HTMLElement | null;
+    if (focused?.closest?.('.ai-side')) focused.blur();
     return release;
+  }
+
+  /** Is a cell (a terminal) holding the typing keys right now? */
+  get keysClaimed(): boolean {
+    return this.claims.size > 0;
   }
 
   isDown(key: string): boolean {

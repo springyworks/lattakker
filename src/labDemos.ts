@@ -1,4 +1,4 @@
-import { movedForTerminal } from './labLayout';
+import { placedInLab } from './labLayout';
 
 /**
  * The Lab: a second sheet of live demo cells. Every block is real TypeScript, exactly like the cells on the game
@@ -1612,7 +1612,16 @@ const say = (...values: unknown[]): void => put(values.map(String).join(' ') + '
 let sigint = new AbortController()
 
 /** ts is the TypeScript session: it prints on this paper and can see the first Ctrl-C. */
-const ts = repl({ print: say, log: say, interrupted: () => sigint.signal.aborted })
+const shown = (v: unknown): string => {
+  if (typeof v === 'string') return v
+  try {
+    return JSON.stringify(v) ?? String(v)
+  } catch {
+    return String(v)
+  }
+}
+const sayAll = (...values: unknown[]): void => say(values.map(shown).join(' '))
+const ts = repl({ print: sayAll, log: sayAll, console: { log: sayAll, info: sayAll, warn: sayAll, error: sayAll }, interrupted: () => sigint.signal.aborted })
 
 /** FENCE is the three-character marker that fences a code block in the model's answer (built from character code 96). */
 const FENCE = String.fromCharCode(96).repeat(3)
@@ -1844,6 +1853,7 @@ const enter = async (): Promise<void> => {
 
   /** Ready for the next line. */
   put(prompt())
+  void pump()
 }
 
 /** Ctrl-C and Ctrl-D as on a Unix terminal: Ctrl-C drops the line being typed (or abandons the running one) and gives a fresh prompt; on an empty line it leaves TypeScript or the chat. Ctrl-D on an empty line leaves them too, or lets go of the keyboard. */
@@ -1878,6 +1888,7 @@ const interrupt = (): void => {
     return
   }
   lastInt = now
+  ahead.length = 0
   const idle = !busy && !buf && !pending.length
   sigint.abort()
   breaks++
@@ -1976,27 +1987,46 @@ input.onPaste(async (pasted) => {
   flush()
 })
 
-/** Every key: Ctrl-C and Ctrl-D, Escape, Enter, Backspace and plain letters are handled here. */
-input.onKey(async (key, info) => {
+/** A key press, with what the keyboard knew about it. */
+type Press = [string, { text: string }]
+
+/** Keys typed while a line runs wait here and are dealt with one by one afterwards, so none is lost. The key handler must return at once: the page runs a handler one call at a time and keeps only the newest key meanwhile. */
+const ahead: Press[] = []
+let pumping = false
+const pump = async (): Promise<void> => {
+  if (pumping) return
+  pumping = true
+  try {
+    while (ahead.length && !busy) {
+      const [key, info] = ahead.shift()!
+      if (key === 'Escape') drop()
+      else if (key === 'Enter') void enter()
+      else if (key === 'Backspace') {
+        if (buf) put('\b')
+        buf = buf.slice(0, -1)
+      } else {
+        const ch = key === 'Space' ? ' ' : info.text
+        if (!ch) continue
+        buf += ch
+        put(ch)
+      }
+    }
+  } finally {
+    pumping = false
+  }
+}
+
+/** Every key: Ctrl-C and Ctrl-D act at once; Escape, Enter, Backspace and plain letters go through the queue. */
+input.onKey((key, info) => {
   if (!keys || info.alt || (key === 'Enter' && info.shift)) return
   if (info.ctrl) {
     if (key.toLowerCase() === 'c') interrupt()
     else if (key.toLowerCase() === 'd') endOfFile()
     return
   }
-  if (busy) return
-  if (key === 'Escape') {
-    drop()
-  } else if (key === 'Enter') await enter()
-  else if (key === 'Backspace') {
-    if (buf) put('\b')
-    buf = buf.slice(0, -1)
-  } else {
-    const ch = key === 'Space' ? ' ' : info.text
-    if (!ch) return
-    buf += ch
-    put(ch)
-  }
+  if (busy && key === 'Escape') return
+  ahead.push([key, info])
+  void pump()
 })
 
 /** Start with a clean paper, and say so if the last run was killed. */
@@ -2011,7 +2041,357 @@ if (killed) put('KILLED. STARTED AGAIN.\n\n')
 /** The banner, then the first prompt. */
 put('LATTAKKER  ASR-33  TERMINAL\nMOUSE OVER THE PAPER, THEN TYPE.  H = HELP.  ESC = KEYBOARD OFF (CLICK = ON).  DARK PAPER = NO KEYBOARD.\n\n' + prompt())`,
   ],
+  [
+    'K1',
+    String.raw`// A MODERN TERMINAL FOR TYPESCRIPT, like the one in VS Code. Put the mouse over it and type after the prompt.
+// It is the same size as the ASR-33 at A1 (9 columns by 8 rows), but a screen instead of paper: a grid of tiles
+// with one letter in every tile, in a monospace font, so all of the ASCII set is there: { } [ ] ( ) ; : ' " < > | \ ~ ^ @ # $ % & *.
+// Every line goes to repl(), the TypeScript read-eval-print loop of the cell API: variables stay between lines,
+// one line may hold many statements separated by ;  and an open { ( [ or an operator at the end of a line
+// continues on the next line (the prompt turns into ".. ") until the brackets close or you send an empty line.
+
+/** The block is 9 columns wide and 8 rows tall, exactly like the terminal at A1. */
+span(9, 8)
+
+/** The colours of a dark terminal. */
+const BG = '#1e1e1e', BAR = '#2d2d2d'
+const INK = { text: '#cccccc', prompt: '#3fb950', result: '#79c0ff', error: '#f85149', dim: '#8b949e', bar: '#e0e0e0' }
+color(BG)
+
+/** The screen: 54 letters across, 23 lines down. Row 0 is the title bar. { lines: false } leaves out the seams between tiles. */
+const g = grid(54, 23, { lines: false })
+const W = g.cols, H = g.rows
+
+/** A piece of a line (some text in one colour) and a line (a list of pieces). */
+type Seg = { t: string; ink: string }
+type Line = Seg[]
+
+/** The prompts: the first line of a statement, and the lines that continue an open one. */
+const PROMPT = 'ts> ', MORE = '..  '
+
+// memory is this cell's notebook: the screen and the lines you sent come back when the cell runs again.
+if (!memory.lines) memory.lines = []
+if (!memory.hist) memory.hist = []
+
+/** The lines printed so far (the scroll-back): at most 500 are kept. */
+const lines: Line[] = memory.lines
+const hist: string[] = memory.hist
+
+/** What you are typing (buf), where the cursor is in it (pos), the lines of an open statement (pending), how far you scrolled back (scroll), which history line is shown (recall). */
+let buf = ''
+let pos = 0
+let pending: string[] = []
+let scroll = 0
+let recall = -1
+
+/** held: the terminal has the keyboard. busy: a line is running. blink: the cursor is lit. */
+let held = false
+let busy = false
+let blink = true
+
+/** Counts the lines sent: Ctrl-C on a running line abandons it, and its late answer is thrown away. */
+let turn = 0
+let sigint = new AbortController()
+
+/** Counts the Ctrl-C presses: a paste that is still being typed stops when it changes. */
+let breaks = 0
+
+/** Adds a printed line to the scroll-back. */
+const out = (line: Line): void => {
+  lines.push(line)
+  while (lines.length > 500) lines.shift()
+}
+
+/** Adds text, one printed line for every line break in it. */
+const say = (text: string, ink = INK.text): void => {
+  for (const part of text.split('\n')) out([{ t: part, ink }])
+}
+
+/** How print() and log() show their values: text as it is, other things as JSON when they can. */
+const show1 = (v: unknown): string => {
+  if (typeof v === 'string') return v
+  try {
+    return JSON.stringify(v) ?? String(v)
+  } catch {
+    return String(v)
+  }
+}
+
+/** The TypeScript session. print() and log() write on this screen; interrupted() turns true after the first Ctrl-C. */
+const ts = repl({
+  print: (...v: unknown[]) => { say(v.map(show1).join(' ')); draw() },
+  log: (...v: unknown[]) => { say(v.map(show1).join(' ')); draw() },
+  console: {
+    log: (...v: unknown[]) => { say(v.map(show1).join(' ')); draw() },
+    info: (...v: unknown[]) => { say(v.map(show1).join(' ')); draw() },
+    warn: (...v: unknown[]) => { say(v.map(show1).join(' '), '#d29922'); draw() },
+    error: (...v: unknown[]) => { say(v.map(show1).join(' '), INK.error); draw() },
+  },
+  interrupted: () => sigint.signal.aborted,
+})
+
+/** Cuts a line into rows of W letters. A letter is [the letter, its colour, is it under the cursor]. */
+const wrap = (line: Line, cursor = -1): Array<Array<[string, string, boolean]>> => {
+  const chars: Array<[string, string, boolean]> = []
+  for (const s of line) for (const ch of s.t) chars.push([ch, s.ink, false])
+  if (cursor >= 0) {
+    if (cursor >= chars.length) chars.push([' ', INK.text, true])
+    else chars[cursor][2] = true
+  }
+  const rows: Array<Array<[string, string, boolean]>> = []
+  for (let i = 0; i < Math.max(chars.length, 1); i += W) rows.push(chars.slice(i, i + W))
+  return rows
+}
+
+/** Paints the whole screen: the title bar, the scroll-back, and the line you are typing with its cursor. */
+const draw = (): void => {
+  g.clear()
+  g.fill(BG)
+  g.box(0, 0, W, 1, BAR)
+  const title = 'TERMINAL  ts  /lab/K1'
+  g.text(1, 0, title, { snap: true, ink: INK.bar, fill: BAR, w: title.length })
+  const hint = busy ? 'running... Ctrl-C stops' : scroll ? 'scrolled back ' + scroll : held ? 'keyboard on  Esc: off' : 'hover or click to type'
+  g.text(W - 1 - hint.length, 0, hint, { snap: true, ink: held ? INK.prompt : '#d29922', fill: BAR, w: hint.length })
+
+  /** All the rows of the scroll-back, then the line being typed (not while a line runs). */
+  const rows = lines.flatMap((l) => wrap(l))
+  if (!busy) rows.push(...wrap([{ t: pending.length ? MORE : PROMPT, ink: INK.prompt }, { t: buf, ink: INK.text }], (pending.length ? MORE : PROMPT).length + pos))
+
+  /** Show the newest rows that fit, less the ones scrolled away. */
+  const room = H - 1
+  scroll = Math.max(0, Math.min(scroll, rows.length - room))
+  const end = rows.length - scroll
+  const shown = rows.slice(Math.max(0, end - room), end)
+  shown.forEach((row, y) => {
+    let x = 0
+    while (x < row.length) {
+      let n = x + 1
+      while (n < row.length && row[n][1] === row[x][1] && row[n][2] === row[x][2]) n++
+      const text = row.slice(x, n).map((c) => c[0]).join('')
+      const cursor = row[x][2] && held && blink
+      g.text(x, 1 + y, text, { snap: true, ink: cursor ? BG : row[x][1], fill: cursor ? INK.text : null, w: text.length })
+      x = n
+    }
+  })
+}
+
+/** Sends the typed line. An open statement waits for more lines; an empty line sends what there is. */
+const enter = async (): Promise<void> => {
+  const line = buf
+  out([{ t: pending.length ? MORE : PROMPT, ink: INK.prompt }, { t: line, ink: INK.text }])
+  buf = ''
+  pos = 0
+  recall = -1
+  scroll = 0
+  if (line.trim() && hist[hist.length - 1] !== line) hist.push(line)
+  while (hist.length > 100) hist.shift()
+  if (!pending.length && !line.trim()) return draw()
+  if (!pending.length && /^\.clear$/.test(line.trim())) {
+    lines.length = 0
+    return draw()
+  }
+  if (!pending.length && /^\.help$/.test(line.trim())) {
+    help()
+    return draw()
+  }
+  if (line.trim() || !pending.length) pending.push(line)
+  const code = pending.join('\n')
+  if (line.trim() && ts.incomplete(code)) return draw()
+  pending = []
+  busy = true
+  sigint = new AbortController()
+  const mine = ++turn
+  draw()
+  let said = ''
+  try {
+    said = await ts(code)
+  } catch (err) {
+    said = '?? ' + (err instanceof Error ? err.message : String(err))
+  }
+  if (mine !== turn) return
+  busy = false
+  if (said.startsWith('?? ')) say(said.slice(3), INK.error)
+  else if (said) say(said, INK.result)
+  draw()
+  void pump()
+}
+
+/** Ctrl-C: on a running line the first one asks it to stop (interrupted() turns true), the second one abandons it; on a typed line it throws the line away. */
+const interrupt = (): void => {
+  breaks++
+  ahead.length = 0
+  if (busy) {
+    if (!sigint.signal.aborted) {
+      sigint.abort()
+      say('^C', INK.dim)
+    } else {
+      turn++
+      busy = false
+      say('^C  abandoned', INK.error)
+    }
+    return draw()
+  }
+  out([{ t: pending.length ? MORE : PROMPT, ink: INK.prompt }, { t: buf, ink: INK.text }, { t: '^C', ink: INK.dim }])
+  buf = ''
+  pos = 0
+  recall = -1
+  pending = []
+  draw()
+}
+
+/** What the terminal tells about itself. */
+const help = (): void => {
+  say('TypeScript: variables stay, case counts, and one line may hold many statements: const a = [1, 2, 3]; a.map((x) => x * 2); a.length', INK.dim)
+  say('An open { ( [ or an operator at the end of a line goes on at the "..  " prompt; an empty line sends it anyway.', INK.dim)
+  say('Up / Down: earlier lines. Left, Right, Home, End, Delete edit the line. PageUp / PageDown scroll back.', INK.dim)
+  say('Ctrl-C throws the line away (twice: stops a running one), .clear wipes the screen, Esc gives the keyboard back.', INK.dim)
+  say('print() and log() write here; at("A1").text reads a cell; await sleep("1s") waits.', INK.dim)
+}
+
+/** While the mouse is over the screen, Enter and the typing keys belong to it (claimKeys keeps Enter from opening the editor; Shift+Enter still does). */
+let give = (): void => {}
+const grab = (): void => {
+  if (held) return
+  held = true
+  blink = true
+  give()
+  give = input.claimKeys(() => {
+    held = false
+    draw()
+  }, { steady: true })
+  draw()
+}
+const drop = (): void => {
+  held = false
+  give()
+  draw()
+}
+on(cell, 'enter', grab)
+on(cell, 'leave', drop)
+on(cell, 'click', grab)
+
+/** Puts text into the line at the cursor (a tab is two spaces). */
+const typeIn = (chunk: string): void => {
+  const clean = chunk.replace(/\t/g, '  ').replace(/[\x00-\x1f\x7f]/g, '')
+  buf = buf.slice(0, pos) + clean + buf.slice(pos)
+  pos += clean.length
+  recall = -1
+}
+
+/** Pasted text (the cell menu's Paste, or the MCP tool cell_input) is typed like a person would: every line break is an Enter, the last line stays typed. Character 3 is Ctrl-C, 4 is Ctrl-D. */
+input.onPaste(async (pasted: string) => {
+  const mine = breaks
+  let chunk = ''
+  const flush = (): void => {
+    if (chunk) typeIn(chunk)
+    chunk = ''
+  }
+  for (const ch of pasted.replace(/\r\n?/g, '\n')) {
+    while (busy && mine === breaks) await sleep(40)
+    if (mine !== breaks) return
+    if (ch === '\n') {
+      flush()
+      await enter()
+    } else if (ch === '\x03') {
+      flush()
+      interrupt()
+      return
+    } else if (ch === '\x04') {
+      flush()
+      drop()
+    } else chunk += ch
+  }
+  flush()
+  draw()
+})
+
+/** A key press, with what the keyboard knew about it. */
+type Press = [string, { shift: boolean; ctrl: boolean; alt: boolean; text: string }]
+
+/** Keys wait here (type-ahead) and are dealt with one by one, so none is lost while a line runs. The key handler must return at once: the page runs a handler one call at a time and keeps only the newest key meanwhile. */
+const ahead: Press[] = []
+let pumping = false
+const pump = async (): Promise<void> => {
+  if (pumping) return
+  pumping = true
+  try {
+    while (ahead.length && !busy) {
+      const [key, info] = ahead.shift()!
+      await edit(key, info)
+    }
+  } finally {
+    pumping = false
+  }
+}
+
+/** Every key: the line editor. */
+input.onKey((key: string, info: Press[1]) => {
+  if (!held || info.alt || (key === 'Enter' && info.shift)) return
+  blink = true
+  if (info.ctrl) {
+    if (key.toLowerCase() === 'c') interrupt()
+    else if (key.toLowerCase() === 'd') drop()
+    return
+  }
+  if (busy && key === 'Escape') return
+  ahead.push([key, info])
+  void pump()
+})
+
+const edit = async (key: string, info: Press[1]): Promise<void> => {
+  if (key === 'Escape') return drop()
+  if (key === 'Enter') return void enter()
+  if (key === 'Backspace') {
+    if (pos > 0) {
+      buf = buf.slice(0, pos - 1) + buf.slice(pos)
+      pos--
+    }
+  } else if (key === 'Delete') buf = buf.slice(0, pos) + buf.slice(pos + 1)
+  else if (key === 'ArrowLeft') pos = Math.max(0, pos - 1)
+  else if (key === 'ArrowRight') pos = Math.min(buf.length, pos + 1)
+  else if (key === 'Home') pos = 0
+  else if (key === 'End') pos = buf.length
+  else if (key === 'ArrowUp') {
+    if (hist.length && recall < hist.length - 1) {
+      recall++
+      buf = hist[hist.length - 1 - recall]
+      pos = buf.length
+    }
+  } else if (key === 'ArrowDown') {
+    if (recall > 0) {
+      recall--
+      buf = hist[hist.length - 1 - recall]
+    } else {
+      recall = -1
+      buf = ''
+    }
+    pos = buf.length
+  } else if (key === 'PageUp') scroll += H - 3
+  else if (key === 'PageDown') scroll = Math.max(0, scroll - (H - 3))
+  else if (info.text) {
+    scroll = 0
+    typeIn(info.text)
+  }
+  draw()
+}
+
+/** The cursor blinks while the terminal has the keyboard. */
+every('500ms', () => {
+  if (!held || busy) return
+  blink = !blink
+  draw()
+})
+
+/** The first time: the banner. */
+if (!lines.length) {
+  say('Lattakker TypeScript terminal', INK.prompt)
+  say('Hover here and type. .help lists what it can do.', INK.dim)
+  say('Try: const a = [1, 2, 3]; a.map((x) => x * 2)', INK.dim)
+  say('')
+}
+draw()`,
+  ],
 ];
 
 /** The terminal first, then the live demos: the ones in its way sit elsewhere (see labLayout.ts). */
-export const LAB_DEMOS: Array<[string, string]> = [...TERMINAL_DEMOS, ...LIVE_DEMOS.map(([address, code]): [string, string] => [movedForTerminal(address), code])];
+export const LAB_DEMOS: Array<[string, string]> = [...TERMINAL_DEMOS, ...LIVE_DEMOS.map(([address, code]): [string, string] => [placedInLab(address), code])];

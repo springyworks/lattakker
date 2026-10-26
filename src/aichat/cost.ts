@@ -1,5 +1,6 @@
 import { getSettings, paidSlot, type PaidProviderId } from './config';
-import { estimateTokens } from './ammo';
+import { estimateTokens, kilo } from './ammo';
+import { cacheFactor } from './compact';
 
 /**
  * Money. A model on this computer is free; OpenRouter charges per token, and a helper that works on its own can
@@ -172,10 +173,31 @@ async function readCredits(apiKey: string): Promise<Account | null> {
 /** Money counted by this page, per paid provider. */
 const books: Record<PaidProviderId, { spent: number; session: number; last: number | null }> = { openrouter: { spent: 0, session: 0, last: null }, eden: { spent: 0, session: 0, last: null } };
 const book = (): { spent: number; session: number; last: number | null } => books[activeProvider()];
+
+/** What packing and the provider's cache saved on one question. Dollars are estimates (price of the model times the tokens not paid in full). */
+export interface Saving {
+  before: number;
+  after: number;
+  cached: number;
+  prompt: number;
+  dollars: number;
+}
+const savings: Record<PaidProviderId, { last: Saving | null; total: number }> = { openrouter: { last: null, total: 0 }, eden: { last: null, total: 0 } };
+/** The size of the next question before and after packing (set by the chat just before it asks). */
+let packed: { before: number; after: number } | null = null;
+
+function savingOf(f: { price: Price | null; pack: { before: number; after: number } | null; cached: number; promptTokens: number }, model: string): Saving {
+  const before = f.pack?.before ?? 0;
+  const after = f.pack?.after ?? 0;
+  const price = f.price?.prompt ?? 0;
+  const packDollars = (estimateTokens(Math.max(0, before - after)) * price) / 1e6;
+  const cacheDollars = (f.cached * price * (1 - cacheFactor(model))) / 1e6;
+  return { before, after, cached: f.cached, prompt: f.promptTokens, dollars: packDollars + cacheDollars };
+}
 let keyInfo: KeyInfo | null = null;
 let keyAsked = -Infinity;
 /** The question being answered now: its estimated price so far. */
-let flight: { price: Price | null; promptTokens: number; chars: number; known: number | null } | null = null;
+let flight: { model: string; price: Price | null; promptTokens: number; chars: number; known: number | null; pack: { before: number; after: number } | null; cached: number; reported: number } | null = null;
 
 for (const provider of ['openrouter', 'eden'] as const) {
   try {
@@ -236,7 +258,8 @@ export const cost = {
   },
   /** A question goes out. `requestChars` is its size, used for the estimate until the real number arrives. */
   begin(model: string, requestChars: number): void {
-    flight = { price: priceOf(model), promptTokens: estimateTokens(requestChars), chars: 0, known: null };
+    flight = { model, price: priceOf(model), promptTokens: estimateTokens(requestChars), chars: 0, known: null, pack: packed, cached: 0, reported: 0 };
+    savings[activeProvider()].last = savingOf(flight, model);
     notify();
   },
   /** More of the answer has arrived. */
@@ -250,13 +273,36 @@ export const cost = {
     if (flight) flight.known = dollars;
   },
   /** The real token counts for this question (a service that reports tokens but not dollars): priced with the model's price. */
-  tokens(promptTokens: number, completionTokens: number): void {
-    if (flight && flight.known === null && flight.price) flight.known = tokenCost(flight.price, promptTokens, completionTokens);
+  tokens(promptTokens: number, completionTokens: number, cachedTokens = 0): void {
+    if (!flight) return;
+    flight.reported = promptTokens;
+    flight.cached = cachedTokens;
+    if (flight.known === null && flight.price) flight.known = tokenCost(flight.price, promptTokens - cachedTokens + cachedTokens * cacheFactor(flight.model), completionTokens);
+  },
+  /** The chat tells how big the next question is before and after packing (see compact.ts). */
+  pack(before: number, after: number): void {
+    packed = { before, after };
+  },
+  /** How many of the prompt tokens the provider read from its cache (OpenRouter and OpenAI-style servers say so), also when they report dollars themselves. */
+  cached(cachedTokens: number, promptTokens: number): void {
+    if (!flight) return;
+    flight.cached = cachedTokens;
+    flight.reported = promptTokens;
+  },
+  /** What was saved on the last question and in all (this page, since it was opened). */
+  get saving(): { last: Saving | null; total: number } {
+    const s = savings[activeProvider()];
+    return { last: s.last, total: s.total };
   },
   /** The question is over: add it up. Without a real number the estimate counts, since a started answer is paid for. */
   finish(started: boolean): void {
     if (!flight) return;
     const amount = flight.known ?? (started ? cost.inFlight : null);
+    const sv = savings[activeProvider()];
+    if (started || flight.known !== null) {
+      sv.last = savingOf({ ...flight, promptTokens: flight.reported || flight.promptTokens }, flight.model);
+      sv.total += sv.last.dollars;
+    }
     flight = null;
     if (amount !== null && amount > 0) {
       const b = book();
@@ -277,6 +323,7 @@ export const cost = {
     b.spent = 0;
     b.session = 0;
     b.last = null;
+    savings[activeProvider()] = { last: null, total: 0 };
     try {
       localStorage.removeItem(stored(SPENT_KEY, activeProvider()));
     } catch {
@@ -312,6 +359,13 @@ export function costLine(): string {
     const now = cost.inFlight;
     parts.push(now === null ? '⏳ asking… (price of this model unknown)' : `⏳ this answer ≈ ${usd(now)} so far`);
   }
+  const sv = cost.saving;
+  if (sv.last && sv.last.before > 0) {
+    const cut = Math.round((1 - sv.last.after / sv.last.before) * 100);
+    parts.push(`✂ packed ${kilo(sv.last.before)} → ${kilo(sv.last.after)} characters (−${cut}%)`);
+  }
+  if (sv.last && sv.last.cached > 0) parts.push(`♻ cache: ${kilo(sv.last.cached)} of ${kilo(sv.last.prompt)} tokens read cheaply`);
+  if (sv.last && sv.last.dollars > 0) parts.push(`🐖 saved ≈ ${usd(sv.last.dollars)} (${usd(sv.total)} in all)`);
   const acct = cost.account;
   const keyNow = cost.key;
   if (activeProvider() === 'eden') parts.push('🏦 balance: see app.edenai.run');

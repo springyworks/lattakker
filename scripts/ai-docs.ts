@@ -4,7 +4,7 @@ import { runInNewContext } from 'node:vm';
 import { transformWithOxc, type Plugin } from 'vite';
 import { parseDirectives, renderDirectives } from '../src/ai/directives';
 import { mmsGuide, rulesChapter } from '../src/ai/readmeSections';
-import { movedForTerminal } from '../src/labLayout';
+import { placedInLab } from '../src/labLayout';
 
 /**
  * Documents for AI helpers, published next to the page as ordinary files (and served by the dev server):
@@ -36,8 +36,8 @@ export interface AiDoc {
   body: string;
 }
 
-/** Imports the data sources may use (the Lab demos need the terminal's moves). */
-const IMPORTS: Record<string, unknown> = { movedForTerminal };
+/** Imports the data sources may use (the Lab demos need the layout moves). */
+const IMPORTS: Record<string, unknown> = { placedInLab };
 
 /** Reads `export const NAME = value` out of a TypeScript source file: types are stripped, known imports are provided, nothing else is compiled. */
 export async function evalConst(path: string, name: string): Promise<unknown> {

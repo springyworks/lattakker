@@ -1,5 +1,6 @@
 import { DEFAULT_OLLAMA_CONTEXT, getKey, getSettings, localWindow, noteServerWindow, paidSlot, patienceMs, type AiSettings, type PaidProviderId } from './config';
 import { ammo } from './ammo';
+import { needsCacheMarks, withCacheMarks } from './compact';
 import { describeModel, describeTimings, loadEstimate, parsePs, parseTimings, rememberLoad, setLastRun, setLive, type PsModel, type Timings } from './ollamaLoad';
 import { jobs, type JobHandle } from './jobs';
 import { askToContinue, minutesText } from './patience';
@@ -317,7 +318,7 @@ export class OpenAiCompatProvider implements ModelProvider {
         this.onNote?.(note);
       }
     }
-    const wire: Array<Record<string, unknown>> = [{ role: 'system', content: system }];
+    let wire: Array<Record<string, unknown>> = [{ role: 'system', content: system }];
     for (const m of messages) {
       if (m.role === 'user') wire.push({ role: 'user', content: m.text ?? '' });
       else if (m.role === 'tool') wire.push(native ? { role: 'tool', tool_name: m.toolName, content: m.text ?? '' } : { role: 'tool', tool_call_id: m.toolCallId, content: m.text ?? '' });
@@ -333,6 +334,8 @@ export class OpenAiCompatProvider implements ModelProvider {
         wire.push(msg);
       }
     }
+    // Anthropic's models read a repeated start back from a cache at a tenth of the price, but only where they are told it ends.
+    if (!native && this.paid === 'openrouter' && needsCacheMarks(this.model)) wire = withCacheMarks(wire);
     const withTools = tools.length > 0 && this.toolsOk;
     const declared = tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } }));
     let body: Record<string, unknown>;
@@ -475,12 +478,16 @@ export class OpenAiCompatProvider implements ModelProvider {
     let text = '';
     let finish = '';
     const calls = new Map<number, { id: string; name: string; args: string }>();
-    const take = (chunk: { cost?: number; usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number }; choices?: Array<{ finish_reason?: string | null; delta?: { content?: string | null; reasoning?: string | null; reasoning_content?: string | null; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> }; message?: { content?: string | null; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: unknown } }> } }> }): void => {
+    const take = (chunk: { cost?: number; usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number; prompt_tokens_details?: { cached_tokens?: number } }; choices?: Array<{ finish_reason?: string | null; delta?: { content?: string | null; reasoning?: string | null; reasoning_content?: string | null; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> }; message?: { content?: string | null; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: unknown } }> } }> }): void => {
       const dollars = chunk.usage?.cost ?? chunk.cost;
       if (this.paid && typeof dollars === 'number') cost.report(dollars);
       if (chunk.usage?.prompt_tokens) {
         ammo.record(chunk.usage.prompt_tokens, chunk.usage.completion_tokens ?? 0);
-        if (this.paid) cost.tokens(chunk.usage.prompt_tokens, chunk.usage.completion_tokens ?? 0);
+        if (this.paid) {
+          const cached = chunk.usage.prompt_tokens_details?.cached_tokens ?? 0;
+          cost.tokens(chunk.usage.prompt_tokens, chunk.usage.completion_tokens ?? 0, cached);
+          cost.cached(cached, chunk.usage.prompt_tokens);
+        }
       }
       const choice = chunk.choices?.[0];
       if (!choice) return;

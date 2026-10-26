@@ -11,7 +11,8 @@ import { vitals } from './introspect';
 import { addressHints } from './cellPaths';
 import { focusPoints } from '../editor/focusPoints';
 import { ammo, fit, kilo } from './ammo';
-import { paidWindow } from './cost';
+import { cost, paidWindow } from './cost';
+import { packRequest } from './compact';
 import { RULES, docUrls, standingDirectives } from './docs';
 import { bibleFor } from '../ai/bible';
 import { goalPrompt, MAX_PLAY_NUDGES, MAX_PLAY_ROUNDS, playGoalFrom, type PlayGoal } from './playGoal';
@@ -280,7 +281,10 @@ export class Conversation {
         // The model is reached by fetch, not over the router, so the router is told: the chat shows up in its traffic.
         const modelBox = getSettings().provider === 'local' ? 'ollama' : 'helper';
         link = router.notify(CLIENT, modelBox, 'llm/complete', { round: round + 1, messages: this.messages.length, tools: tools.length }, link);
-        const reply = await provider.complete(system, this.messages, tools, this.abort.signal);
+        // What goes over the wire is a packed copy (see compact.ts); the chat's own history stays as it is.
+        const packed = packRequest(system, this.messages, tools);
+        cost.pack(packed.before, packed.after);
+        const reply = await provider.complete(packed.system, packed.messages, packed.tools, this.abort.signal);
         link = router.notify(modelBox, CLIENT, 'llm/reply', { toolCalls: reply.toolCalls.length, characters: reply.text.length }, link);
         setTurnTrace(link);
         this.messages.push({ role: 'assistant', text: reply.text, toolCalls: reply.toolCalls, raw: reply.raw });

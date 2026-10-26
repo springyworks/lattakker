@@ -1,6 +1,7 @@
 import { InternalEvent } from '@maxgraph/core';
 import { MIN_SCALE, type Sheet } from '../sheet/Sheet';
 import { workspace } from '../workspace';
+import { inputPanel } from './InputPanel';
 
 const STEP = 1.15;
 /** One notch of a mouse wheel is exactly one press of the + or − button (a notch reports about 100 pixels, which must not mean "zoom 2.7 times"). */
@@ -167,7 +168,7 @@ export class ZoomControls {
   /** F while the pointer is on the sheet and nobody is typing; Ctrl + Shift + F also while typing in an editor. */
   private fitKey(e: KeyboardEvent): boolean {
     if (e.ctrlKey || e.metaKey) return e.shiftKey;
-    if (e.shiftKey) return false;
+    if (e.shiftKey || inputPanel.keysClaimed) return false;
     const target = e.target instanceof Element ? e.target : null;
     if (target?.closest('input, textarea, select, [contenteditable], .monaco-editor')) return false;
     const rect = this.sheet.container.getBoundingClientRect();

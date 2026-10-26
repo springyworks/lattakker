@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LAB_COLS, LAB_MOVES, movedForTerminal, upgradeLabLayout } from '../src/labLayout';
+import { LAB_COLS, LAB_MOVES, LAB_MOVES_2, movedForTerminal, placedInLab, upgradeLabLayout, upgradeLabLayout2 } from '../src/labLayout';
 import { LAB_DEMOS, TERMINAL_DEMOS } from '../src/labDemos';
 import { fingerprint } from '../src/seedMigration';
 import { parseAddress } from '../src/sheet/address';
@@ -10,8 +10,10 @@ const blockSize = (code: string): [number, number] => {
 };
 
 describe('the Lab layout', () => {
-  it('puts the terminal at A1 and no demo overlaps any other', () => {
+  it('puts the ASR-33 at A1, the screen terminal at K1 as big as it, and no demo overlaps any other', () => {
     expect(LAB_DEMOS[0][0]).toBe('A1');
+    expect(LAB_DEMOS[1][0]).toBe('K1');
+    expect(blockSize(LAB_DEMOS[1][1])).toEqual(blockSize(LAB_DEMOS[0][1]));
     const taken = new Set<string>();
     for (const [address, code] of LAB_DEMOS) {
       const at = parseAddress(address)!;
@@ -33,6 +35,8 @@ describe('the Lab layout', () => {
     expect(left).toContain('A16');
     expect(movedForTerminal('J24')).toBe('J24');
     expect(movedForTerminal('A1')).toBe('J1');
+    expect(placedInLab('A1')).toBe('AJ1');
+    expect(placedInLab('K3')).toBe('T3');
   });
 
   it('moves a saved Lab aside, drops an untouched old terminal and adds the new one', () => {
@@ -58,6 +62,14 @@ describe('the Lab layout', () => {
   it('keeps an old terminal the person changed', () => {
     const out = upgradeLabLayout({ cells: [['R50', 'mine now']] as Array<[string, string]> }, 'T', { R50: fingerprint('as shipped') });
     expect(out.saved.cells.map((c) => c[0])).toEqual(['A1', 'R50']);
+  });
+
+  it('moves the demos in the way of the screen terminal one more time and keeps their seeds', () => {
+    const out = upgradeLabLayout2({ cols: 35, cells: [['A1', 'ASR'], ['J1', 'welcome'], ['K3', 'mine', 'uid-2'], ['J24', 'x']] as Array<[string, string, string?]> }, { J1: 'a', K3: 'b', J24: 'c' });
+    expect(out.saved.cells).toEqual([['A1', 'ASR'], ['AJ1', 'welcome'], ['T3', 'mine', 'uid-2'], ['J24', 'x']]);
+    expect(out.seeds).toEqual({ AJ1: 'a', T3: 'b', J24: 'c' });
+    expect(out.saved.cols).toBe(LAB_COLS);
+    expect(Object.keys(LAB_MOVES_2)).toHaveLength(11);
   });
 
   it('has a move for every demo that was in the terminal block', () => {
