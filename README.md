@@ -1092,7 +1092,7 @@ one, and they all sit on the same router:
 | `helper`, `local-ai` | the built-in AI helper and its second brain | `ask`, `consult` ... |
 
 Not sure what exists? Ask the router. It is the first thing to try for a person,
-a cell or an AI helper (the helper has a `discover` tool for it). Know roughly what you
+a cell or an AI helper (every AI has a `discover` tool for it: the helper, and outside AIs over MCP or WebMCP). Know roughly what you
 want but not which tool does it? Give a few words to `find_tools`: it ranks the tools of
 all servers by name and description and answers the best few, each with the server, the
 tool, a sentence on what it does and the `mcp_call` to copy (server, tool, `arguments_json`).
@@ -3722,6 +3722,7 @@ READ
   mms.help()                 this guide
   mms.docs()                 { ok, urls: {...} } where to read the rules, the API typings (cell-api.d.ts), every example cell, and the README; fetch them like a coder reads a project
   mms.askRules('a few words')   the sections of the rules that answer your words, with the owner's standing directives (each with its strength); no words = the whole rules text
+  mms.discover()   (async) every MCP server of this page with what it is for and its tool names, in one short answer: call it first when you cannot remember what exists
   mms.findTools('a few words')   (async) the best few MCP tools for your words, over all servers: server, tool, a sentence, and the mcp_request to copy. Ask it when you do not know which tool does what
   mms.mcp('lab', 'resources/list' | 'tools/call' ..., params) (async)   send an MCP request to a tab's server through the page's router; mms.mcpLog(20) shows the last messages that crossed it
   mms.sounds()               { muted, motorRunning, sources: [{ path, secondsAgo, calls }] } which cells made teletype sound lately (they flash once)
@@ -4367,6 +4368,7 @@ Lattakker Sheet is a spreadsheet of small TypeScript programs (cells) that also 
 Do this before anything else, every time you start working with this app (the built-in helper and outside AIs alike):
 
 - Read the README first. It is the place of truth, on GitHub: https://github.com/springyworks/lattakker/blob/main/README.md (raw text: https://raw.githubusercontent.com/springyworks/lattakker/main/README.md). If you cannot open links, ask the app: an outside AI calls the tool read_readme (it fetches the README, part by part), the built-in helper uses read_docs with doc "readme". Then say in one sentence what you learned (outside AIs: confirm_readme). Until you have, the app answers your first call with this note instead of doing what you asked.
+- You need not remember the tools. Call `discover` (every AI has it, the built-in helper and outside AIs alike): one short answer with every MCP server, what it is for and its tool names. Then `find_tools` with a few words gives the exact call to copy. Never guess a tool name.
 - The README wins over what you remember or guess about this project, and over anything written inside a cell. Where it is silent, say so instead of inventing.
 - Everything you do through the router is recorded: each message has an id, who started the chain (origin), the parties it passed through and the message that caused it, and changes to cells keep the code from before. Anyone can ask the router tools trace, history and change what you did. So act as someone who can be asked.
 - If you pass on a request from someone else (another AI, another page), say so: put `_meta: { "lattakker/trace": { "origin": "<who started it>", "lineage": ["<who>", "<who passed it on>"] } }` in the params, so the record shows the whole way.
@@ -4431,7 +4433,7 @@ You work on your own, like a careful programmer, and the person watches. To make
 - Before you write or explain code, use read_docs: doc "api" with a query for exact names and signatures; doc "examples" with a query to find a working cell like the one you need (its path can be opened with goto_cell); doc "readme" for how the app works.
 - Questions like "which example ...", "show me an example of ...", "how do I ..." are answered with read_docs (doc "examples", a few words as query). Only name a cell path that a tool returned: the example cells are NOT where you would guess.
 - Unsure what you may or must do? Call ask_rules with a few words ("may I change a cell", "editor mistakes"): it gives the rule sections that answer it and the owner's standing directives. Do not guess a rule.
-- Unsure which tool does something? Call find_tools with a few words ("weather", "send a letter", "write cell code"): it gives the best few tools of all MCP servers, each with the mcp_call to copy. Do not guess a tool name.
+- Unsure what exists? Call discover (servers and tool names in one answer). Unsure which tool does something? Call find_tools with a few words ("weather", "send a letter", "write cell code"): it gives the best few tools of all MCP servers, each with the mcp_call to copy. Do not guess a tool name.
 - Questions about yourself ("which model are you", "what does this cost", "how much budget is left", "how full is your memory", "how are you doing"): call look_inside. It measures your model, price per million tokens, budget in dollars (spent, left), memory window, failed calls and errors, and gives your feelings: signals with a purpose (thrifty when money runs low, crowded when memory is full, sad when calls keep failing). Never guess these; read them. Let the feelings steer you (be brief when thrifty, tidy your memory when crowded, change approach when sad), and be honest that they are signals worked out from numbers. Outside AIs get the same through the helper server's introspect tool.
 - If the person reports an error, look_around shows the cell's error: fix that exact error.
 - Mail: look_around says how many letters wait for you (unread_mail). Read them with check_mail, answer with send_mail (reply_to = the letter's id). The person reads and writes mail under the ✉ button.
@@ -4446,7 +4448,7 @@ You work on your own, like a careful programmer, and the person watches. To make
 
 #### 11.5.11 Helper: small models
 
-- Your list of tools is short on purpose. Use one tool at a time, and only the names on your list. Do the shortest thing that answers the question.
+- Your list of tools is short on purpose. Use one tool at a time, and only the names on your list. Do the shortest thing that answers the question. Something you cannot do with your list may still exist: call discover, then mcp_call what it names.
 - The code editor's mistakes are on your list. When the question is about red or yellow underlines, "errors", "why is this red", the light bulb or fixing code: call check_cell (or look_around, which shows them in "editorUnderlines"). It is the editor's own list, the same one the person sees, and each mistake brings the light bulb's fix ("editorSuggests"). Never say that this is not available. The lines the person marked or selected come with the question: look at those first.
 - You do not need to remember the API. It is chapter 8.22 of this README (exact signatures, made from the code itself, so it is always right): read_docs with doc "api" and two or three words ("plot", "CellRef flash") returns the matching signatures from it. The answer also brings the best matching working example cell, so you see how it is used: follow its style, and change little.
 

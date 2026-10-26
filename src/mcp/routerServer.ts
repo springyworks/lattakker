@@ -46,6 +46,7 @@ const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'obj
 const TOOLS = [
   { name: 'stats', description: 'What the router has counted: messages, errors, messages per second (now and the last 60 s), and per server, client and method: how many, how many failed, how long they took.', inputSchema: { type: 'object', properties: {} } },
   { name: 'catalog', description: 'Everything this app can do over MCP: every server with a sentence on what it is for, its tools (name and description) and how many resources it holds. Start here when you do not know what is possible.', inputSchema: { type: 'object', properties: {} } },
+  { name: 'discover', description: 'Not sure what this app can do? One short answer: every MCP server with what it is for and the names of its tools, plus what the router has counted. Start here, then find_tools (a few words in, the tool to call out) or tools/list of one server for the details.', inputSchema: { type: 'object', properties: {} } },
   {
     name: 'find_tools',
     description: 'Find the tool you need by a few words (like "weather", "write cell code", "send a letter"). Answers the best few tools of all servers: server, tool, one sentence on what it does, and a ready mcp_call (server, tool, arguments_json). Never blocked. When nothing matches it names the servers.',
@@ -364,6 +365,11 @@ export class RouterServer implements McpServer {
         return reply({ ...this.router.stats() });
       case 'catalog':
         return reply({ servers: await buildCatalog(this.router, from) });
+      case 'discover': {
+        const stats = this.router.stats();
+        const servers = (await buildCatalog(this.router, from)).map((s) => ({ server: s.server, for: s.description, tools: s.tools.map((t) => t.name), resources: s.resources }));
+        return reply({ servers, router: { messages: stats.messages, errors: stats.errors, ratePerSecond: stats.ratePerSecond, busiest: stats.servers.slice(0, 3) }, next: 'find_tools with a few words gives the call to copy; tools/list of one server gives its details.' });
+      }
       case 'find_tools': {
         const found = findTools(await buildCatalog(this.router, from, true), typeof args.query === 'string' ? args.query : '', typeof args.n === 'number' ? args.n : 6);
         return reply({ ...found });

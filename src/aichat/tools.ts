@@ -324,7 +324,7 @@ export const TOOL_DECLS: ToolDecl[] = [
 ];
 
 /** What a small model is offered: the tools for looking, going there, trying and suggesting. More tools make small models fumble. */
-const SMALL_MODEL_TOOLS = new Set(['check_mail', 'send_mail', 'look_around', 'check_cell', 'focus_points', 'list_cells', 'read_cell', 'game_state', 'board_text', 'legal_moves', 'make_move', 'start_battle', 'goto_cell', 'flash_cell', 'run_cell', 'check_cell', 'find_free_cell', 'write_code', 'suggest_code', 'click_fix_button', 'put_in_input', 'read_docs', 'ask_rules', 'find_tools', 'mcp_call', 'look_inside']);
+const SMALL_MODEL_TOOLS = new Set(['check_mail', 'send_mail', 'look_around', 'check_cell', 'focus_points', 'list_cells', 'read_cell', 'game_state', 'board_text', 'legal_moves', 'make_move', 'start_battle', 'goto_cell', 'flash_cell', 'run_cell', 'check_cell', 'find_free_cell', 'write_code', 'suggest_code', 'click_fix_button', 'put_in_input', 'read_docs', 'ask_rules', 'discover', 'find_tools', 'mcp_call', 'look_inside']);
 
 /** The shortest list that still lets a model look, go there, try and suggest: for a model whose memory is tiny. */
 const TIGHT_TOOLS = new Set(['look_around', 'check_cell', 'read_cell', 'game_state', 'legal_moves', 'make_move', 'start_battle', 'goto_cell', 'run_cell', 'write_code', 'suggest_code', 'click_fix_button', 'put_in_input']);
@@ -691,17 +691,8 @@ export async function runTool(host: ToolHost, name: string, args: Args, client: 
         return limit(asText(found.ok ? found.value : { error: found.value }));
       }
       case 'discover': {
-        const catalog = inner(await router.request(client, 'router', 'tools/call', { name: 'catalog', arguments: {} }, turnTrace));
-        const stats = inner(await router.request(client, 'router', 'tools/call', { name: 'stats', arguments: {} }, turnTrace));
-        if (!catalog.ok) return asText({ error: catalog.value });
-        const servers = ((catalog.value as { servers?: Array<{ server: string; description: string; tools: Array<{ name: string }>; resources: number | null }> }).servers ?? []).map((s) => ({
-          server: s.server,
-          for: s.description,
-          tools: s.tools.map((t) => t.name),
-          resources: s.resources,
-        }));
-        const s = (stats.value ?? {}) as { messages?: number; errors?: number; ratePerSecond?: number; servers?: Array<{ name: string; requests: number }> };
-        return limit(asText({ servers, router: { messages: s.messages, errors: s.errors, ratePerSecond: s.ratePerSecond, busiest: (s.servers ?? []).slice(0, 3) } }));
+        const found = inner(await router.request(client, 'router', 'tools/call', { name: 'discover', arguments: {} }, turnTrace));
+        return limit(asText(found.ok ? found.value : { error: found.value }));
       }
       case 'mcp_call': {
         // A small model gets things a little wrong: "weather.now" as the server, the params as an object, no method at all. What it meant is done.

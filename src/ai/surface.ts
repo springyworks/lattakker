@@ -355,6 +355,16 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
       }
     },
 
+    /** What this app can do over MCP in one short answer: every server, what it is for, its tool names. */
+    async discover(): Promise<Result> {
+      try {
+        const r = (await router.request('ai', 'router', 'tools/call', { name: 'discover', arguments: {} }, outsideTrace())) as { structuredContent?: Record<string, unknown> };
+        return ok({ ...(r.structuredContent ?? {}), how: "Call a tool with mcp_request: server, method 'tools/call', params { name: tool, arguments: ... }. Not sure of the arguments: find_tools with a few words shows them." });
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err));
+      }
+    },
+
     /** The tool finder of the router: a few words in, the best few tools of every server out. */
     async findTools(query?: unknown): Promise<Result> {
       try {
@@ -753,6 +763,13 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
       run: (a) => api.askRules(a.query),
     },
     {
+      name: 'discover',
+      description: 'Cannot remember what this app can do? Call this first: one short answer with every MCP server of this page, what it is for and the names of its tools, so you need not know them by heart. Then find_tools (a few words) gives the exact call. Never blocked.',
+      inputSchema: obj({}),
+      readOnly: true,
+      run: () => api.discover(),
+    },
+    {
       name: 'find_tools',
       description: 'Find the MCP tool you need by a few words (like "weather", "write cell code", "send a letter"). Gives the best few tools of all servers of this page: server, tool, one sentence on what it does and the call to copy. Never blocked: use it before anything else when you do not know what is possible.',
       inputSchema: obj({ query: str('A few words about what you want to do.') }, ['query']),
@@ -1049,11 +1066,11 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
     if (/request|reply/.test(name)) return 'helper';
     if (name === 'list_tabs' || name === 'mcp_log') return 'router';
     if (name === 'get_docs' || name === 'ask_rules') return 'cells';
-    if (name === 'find_tools') return 'router';
+    if (name === 'find_tools' || name === 'discover') return 'router';
     return 'board';
   };
   // First contact: an AI that came in from outside (the bridge, WebMCP) reads the README before its first call is carried out. The rules themselves are never locked.
-  const OPEN = new Set(['read_readme', 'confirm_readme', 'introduce', 'ask_rules', 'find_tools']);
+  const OPEN = new Set(['read_readme', 'confirm_readme', 'introduce', 'ask_rules', 'discover', 'find_tools']);
   for (const t of tools) {
     const run = t.run.bind(t);
     t.run = (args) => {
@@ -1067,7 +1084,7 @@ export function installAiSurface({ sheet, view, hud }: AiSurfaceDeps) {
     };
   }
   for (const t of tools) {
-    if (t.name === 'mcp_request' || t.name === 'find_tools' || t.name.endsWith('_mail')) continue;
+    if (t.name === 'mcp_request' || t.name === 'find_tools' || t.name === 'discover' || t.name.endsWith('_mail')) continue;
     const run = t.run.bind(t);
     t.run = (args) => {
       router.notify('ai', targetOf(t.name, args), `tools/${t.name}`, args, outsideTrace());
